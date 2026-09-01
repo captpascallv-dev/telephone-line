@@ -1,0 +1,15 @@
+{
+  "protocol_version": "telephone-line-codex-app-server-lead-status-v1",
+  "thread_id": "01a02378-2617-7131-ba20-8e6d5ac625ca",
+  "status": "active",
+  "active_flags": ["waitingOnApproval"],
+  "pending": [
+    {
+      "method": "item/commandExecution/requestApproval",
+      "id": "req-1"
+    }
+  ],
+  "started": false,
+  "mutated": false,
+  "payload": "forbidden"
+}

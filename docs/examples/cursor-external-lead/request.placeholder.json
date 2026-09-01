@@ -1,0 +1,39 @@
+{
+  "protocol_version": "telephone-line-dispatch-v1",
+  "line_job_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1",
+  "project": "example-project",
+  "stage": "example-stage",
+  "role": "execution",
+  "route": "direct-grok-cli",
+  "summary": "example Cursor external Lead dispatch",
+  "lead": {
+    "binding_file": "C:\\example\\lead-binding.json"
+  },
+  "command": {
+    "executable": "C:\\example\\pwsh.exe",
+    "working_directory": "C:\\example\\scratch",
+    "arguments": [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      "C:\\example\\Invoke-DirectGrokRoute.ps1",
+      "-Operation",
+      "start",
+      "-StateRoot",
+      "C:\\example\\grok-state",
+      "-WorkspacePath",
+      "C:\\example\\scratch",
+      "-PromptFile",
+      "C:\\example\\prompt.txt",
+      "-JobId",
+      "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee2",
+      "-GrokTimeoutSeconds",
+      "0",
+      "-WaitTimeoutSeconds",
+      "0"
+    ]
+  }
+}

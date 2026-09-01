@@ -1,0 +1,6 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema","$id":"urn:telephone-line:schema:control-plane-transition:v1","title":"telephone-line-control-plane-transition-v1",
+  "type":"object","additionalProperties":false,"required":["protocol_version","project","project_epoch","wave_id","projection_version","projection_fingerprint","manifest","current_pointer","event","current","capsule","history","created_at_utc"],
+  "properties":{"protocol_version":{"const":"telephone-line-control-plane-transition-v1"},"project":{"type":"string","minLength":1},"project_epoch":{"type":"string","minLength":1},"wave_id":{"type":"string","minLength":1},"projection_version":{"type":"integer","minimum":1},"projection_fingerprint":{"type":"string","pattern":"^[0-9a-f]{64}$"},"manifest":{"$ref":"#/$defs/identity"},"current_pointer":{"$ref":"#/$defs/identity"},"event":{"type":"object"},"current":{"type":"object"},"capsule":{"type":"object"},"history":{"type":"object"},"created_at_utc":{"type":"string","minLength":20}},
+  "$defs":{"identity":{"type":"object","additionalProperties":false,"required":["path","bytes","sha256"],"properties":{"path":{"type":"string","minLength":1},"bytes":{"type":"integer","minimum":0},"sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"}}}}
+}

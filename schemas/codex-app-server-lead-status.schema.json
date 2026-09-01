@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:telephone-line:schema:codex-app-server-lead-status:v1",
+  "title": "telephone-line-codex-app-server-lead-status-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "thread_id",
+    "status",
+    "active_flags",
+    "pending",
+    "started",
+    "mutated"
+  ],
+  "properties": {
+    "protocol_version": {
+      "type": "string",
+      "const": "telephone-line-codex-app-server-lead-status-v1"
+    },
+    "thread_id": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]*$"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["notLoaded", "idle", "systemError", "active"]
+    },
+    "active_flags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["waitingOnApproval", "waitingOnUserInput"]
+      }
+    },
+    "pending": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["method", "id"],
+        "properties": {
+          "method": {
+            "type": "string",
+            "enum": [
+              "item/commandExecution/requestApproval",
+              "item/fileChange/requestApproval",
+              "item/permissions/requestApproval",
+              "item/tool/requestUserInput"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          }
+        }
+      }
+    },
+    "started": {
+      "type": "boolean",
+      "const": false
+    },
+    "mutated": {
+      "type": "boolean",
+      "const": false
+    },
+    "observed_at_utc": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[^\\u0000-\\u001F]+$"
+    },
+    "callback_owner_state": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "callback_active",
+        "recovered",
+        "completed",
+        "failed",
+        "recovery_required"
+      ]
+    }
+  }
+}

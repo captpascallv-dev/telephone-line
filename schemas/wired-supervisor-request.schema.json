@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:telephone-line:schema:wired-supervisor-request:v1",
+  "title": "telephone-line-wired-supervisor-request-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "run_id",
+    "request_sha256",
+    "project",
+    "stage",
+    "lead_session_id",
+    "worktree",
+    "command",
+    "installed_version",
+    "created_at_utc"
+  ],
+  "properties": {
+    "protocol_version": {
+      "type": "string",
+      "const": "telephone-line-wired-supervisor-request-v1"
+    },
+    "run_id": {
+      "$ref": "#/$defs/uuid"
+    },
+    "request_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "project": {
+      "$ref": "#/$defs/opaque_label"
+    },
+    "stage": {
+      "$ref": "#/$defs/opaque_label"
+    },
+    "lead_session_id": {
+      "$ref": "#/$defs/session_id"
+    },
+    "lead_run_id": {
+      "$ref": "#/$defs/session_id"
+    },
+    "summary": {
+      "$ref": "#/$defs/opaque_label"
+    },
+    "worktree": {
+      "$ref": "#/$defs/windows_path"
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "executable",
+        "working_directory",
+        "arguments"
+      ],
+      "properties": {
+        "executable": {
+          "$ref": "#/$defs/windows_path"
+        },
+        "working_directory": {
+          "$ref": "#/$defs/windows_path"
+        },
+        "arguments": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "installed_version": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version_id",
+        "source_sha256",
+        "install_root"
+      ],
+      "properties": {
+        "version_id": {
+          "$ref": "#/$defs/sha256"
+        },
+        "source_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "install_root": {
+          "$ref": "#/$defs/windows_path"
+        }
+      }
+    },
+    "created_at_utc": {
+      "$ref": "#/$defs/utc_timestamp"
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "windows_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32767,
+      "pattern": "^[^\\u0000-\\u001F\"<>|*?]+$"
+    },
+    "opaque_label": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "pattern": "^[^\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F]+$"
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "utc_timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})$"
+    }
+  }
+}

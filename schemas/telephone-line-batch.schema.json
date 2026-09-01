@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:telephone-line:schema:telephone-line-batch:v1",
+  "title": "telephone-line-batch-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "batch_id",
+    "lead_session_id",
+    "lead_worktree",
+    "lead_identity_sha256",
+    "n",
+    "counted",
+    "closed",
+    "acceptance_eligible",
+    "package_ids",
+    "items",
+    "wake_run_id",
+    "wake_key",
+    "retry_of",
+    "implicit",
+    "created_at_utc"
+  ],
+  "properties": {
+    "protocol_version": {
+      "type": "string",
+      "const": "telephone-line-batch-v1"
+    },
+    "batch_id": {
+      "$ref": "#/$defs/uuid"
+    },
+    "lead_session_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "lead_worktree": {
+      "$ref": "#/$defs/windows_path"
+    },
+    "lead_identity_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "n": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "counted": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "closed": {
+      "type": "boolean",
+      "const": true
+    },
+    "acceptance_eligible": {
+      "type": "boolean"
+    },
+    "package_ids": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/opaque_label"
+      }
+    },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "package_id",
+          "line_job_id",
+          "sequence",
+          "classification",
+          "lead_session_id",
+          "lead_worktree",
+          "lead_launcher_path",
+          "lead_identity_sha256",
+          "profile",
+          "dispatch",
+          "receipt"
+        ],
+        "properties": {
+          "package_id": {
+            "$ref": "#/$defs/opaque_label"
+          },
+          "line_job_id": {
+            "$ref": "#/$defs/uuid"
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "classification": {
+            "type": "string",
+            "enum": ["success", "execution_failure", "start_failed"]
+          },
+          "lead_session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "lead_worktree": {
+            "$ref": "#/$defs/windows_path"
+          },
+          "lead_launcher_path": {
+            "$ref": "#/$defs/windows_path"
+          },
+          "lead_identity_sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "profile": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/$defs/file_identity"
+              }
+            ]
+          },
+          "dispatch": {
+            "$ref": "#/$defs/file_identity"
+          },
+          "receipt": {
+            "$ref": "#/$defs/file_identity"
+          }
+        }
+      }
+    },
+    "wake_run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "wake_key": {
+      "$ref": "#/$defs/sha256"
+    },
+    "retry_of": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/uuid"
+        }
+      ]
+    },
+    "implicit": {
+      "type": "boolean"
+    },
+    "created_at_utc": {
+      "$ref": "#/$defs/utc_timestamp"
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "windows_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32767,
+      "pattern": "^[^\\u0000-\\u001F\"<>|*?]+$"
+    },
+    "opaque_label": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "pattern": "^[^\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F]+$"
+    },
+    "utc_timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "file_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "bytes", "sha256"],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/windows_path"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    }
+  }
+}

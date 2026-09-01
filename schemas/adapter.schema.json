@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:telephone-line:schema:adapter:v1",
+  "title": "telephone-line-adapter-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "route_id",
+    "display_name",
+    "windows_entrypoint",
+    "dependency_boundary",
+    "capabilities"
+  ],
+  "properties": {
+    "protocol_version": {
+      "type": "string",
+      "const": "telephone-line-adapter-v1"
+    },
+    "route_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^\\u0000-\\u001F]+$"
+    },
+    "windows_entrypoint": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?!.*(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$))[^\\u0000-\\u001F\"<>|*?]+$"
+    },
+    "dependency_boundary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "follow_up",
+        "recover",
+        "exact_native_session"
+      ],
+      "properties": {
+        "start": {
+          "type": "boolean"
+        },
+        "follow_up": {
+          "type": "boolean"
+        },
+        "recover": {
+          "type": "boolean"
+        },
+        "exact_native_session": {
+          "type": "boolean"
+        }
+      }
+    },
+    "default_model": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+    },
+    "default_reasoning_effort": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "pattern": "^[A-Za-z0-9._:-]{1,32}$"
+    },
+    "allowed_reasoning_effort": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 32,
+        "pattern": "^[A-Za-z0-9._:-]{1,32}$"
+      }
+    }
+  }
+}

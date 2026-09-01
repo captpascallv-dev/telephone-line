@@ -1,0 +1,5 @@
+{
+  "protocol_version": "telephone-line-wired-supervisor-control-v1",
+  "action": "status",
+  "extra": true
+}

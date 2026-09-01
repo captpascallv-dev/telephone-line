@@ -1,0 +1,23 @@
+{
+  "protocol_version": "telephone-line-wired-supervisor-status-v1",
+  "paused_by_pascal": false,
+  "supervisor_alive": true,
+  "supervisor_pid": 4242,
+  "supervisor_start_time_utc_ticks": 638000000000000000,
+  "current_version_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "pinned_version_ids": [
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  ],
+  "inbox_count": 0,
+  "claimed_count": 1,
+  "outbox_count": 0,
+  "active_runs": [
+    {
+      "run_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1",
+      "project": "example-project",
+      "stage": "example-stage",
+      "lead_session_id": "example-session-001",
+      "name": "example-project"
+    }
+  ]
+}

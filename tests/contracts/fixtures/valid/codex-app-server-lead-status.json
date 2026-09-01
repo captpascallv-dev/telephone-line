@@ -1,0 +1,16 @@
+{
+  "protocol_version": "telephone-line-codex-app-server-lead-status-v1",
+  "thread_id": "01a02378-2617-7131-ba20-8e6d5ac625ca",
+  "status": "active",
+  "active_flags": ["waitingOnApproval"],
+  "pending": [
+    {
+      "method": "item/commandExecution/requestApproval",
+      "id": "req-1"
+    }
+  ],
+  "started": false,
+  "mutated": false,
+  "observed_at_utc": "2026-08-21T00:00:00.0000000+00:00",
+  "callback_owner_state": "callback_active"
+}

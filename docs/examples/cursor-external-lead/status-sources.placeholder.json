@@ -1,0 +1,15 @@
+{
+  "protocol_version": "telephone-line-cursor-external-status-sources-v1",
+  "sources": [
+    {
+      "id": "telephone-line",
+      "kind": "telephone-line-jobs",
+      "root": "C:\\example\\telephone-state\\jobs"
+    },
+    {
+      "id": "direct-grok",
+      "kind": "direct-grok-jobs",
+      "root": "C:\\example\\grok-state\\jobs"
+    }
+  ]
+}

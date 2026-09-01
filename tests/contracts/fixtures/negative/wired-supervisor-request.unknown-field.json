@@ -1,0 +1,21 @@
+{
+  "protocol_version": "telephone-line-wired-supervisor-request-v1",
+  "run_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1",
+  "request_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "project": "example-project",
+  "stage": "example-stage",
+  "lead_session_id": "example-session-001",
+  "worktree": "C:\\example\\worktree",
+  "command": {
+    "executable": "C:\\example\\pwsh.exe",
+    "working_directory": "C:\\example\\worktree",
+    "arguments": []
+  },
+  "installed_version": {
+    "version_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "source_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "install_root": "C:\\example\\TelephoneLine"
+  },
+  "created_at_utc": "2026-01-01T00:00:00.0000000Z",
+  "extra": true
+}

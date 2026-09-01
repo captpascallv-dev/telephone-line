@@ -1,0 +1,9 @@
+{
+  "protocol_version": "telephone-line-dashboard-project-descriptor-v1",
+  "project": "example-project",
+  "state_root": "C:\\example\\telephone-state",
+  "lead_session_id": "example-session-001",
+  "lead_run_id": "example-run-001",
+  "terminal_state": "active",
+  "supervisor_state_root": "C:\\example\\telephone-state\\supervisor"
+}

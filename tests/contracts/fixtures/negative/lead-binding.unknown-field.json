@@ -1,0 +1,10 @@
+{
+  "protocol_version": "telephone-line-lead-binding-v1",
+  "session_id": "example-session-001",
+  "worktree": "C:\\example\\worktree",
+  "launcher": {
+    "path": "C:\\example\\lead-launcher.ps1",
+    "arguments": []
+  },
+  "account": "secret-value"
+}

@@ -1,0 +1,16 @@
+{
+  "protocol_version": "telephone-line-lead-binding-v1",
+  "session_id": "YOUR_CODEX_THREAD_ID",
+  "worktree": "C:\\example\\lead-worktree",
+  "launcher": {
+    "path": "C:\\example\\Invoke-CodexAppServerLeadLauncher.ps1",
+    "arguments": [
+      "-StateRoot",
+      "C:\\example\\app-server-lead-state",
+      "-CodexCommand",
+      "C:\\example\\codex.cmd",
+      "-ProfilePath",
+      "C:\\example\\app-server-lead-state\\profile.json"
+    ]
+  }
+}

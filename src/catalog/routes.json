@@ -1,0 +1,193 @@
+{
+  "protocol": "telephone-line-route-catalog-v1",
+  "denominator": 8,
+  "denominator_frozen": true,
+  "built_in_lead": {
+    "route_id": "direct-codex-cli",
+    "statement": "Codex CLI is the only currently built-in Lead. Other frozen routes are execution or review sides. Community Lead adapters remain welcome after passing the contract, privacy checks, compatibility tests, and code review."
+  },
+  "routes": [
+    {
+      "route_id": "deepsea-codex-cli",
+      "display_name": "DeepSea Codex CLI",
+      "family": "deepsea",
+      "adapter_root": "src/adapters/deepsea-codex-cli",
+      "descriptor": "src/adapters/deepsea-codex-cli/adapter.json",
+      "windows_entrypoint": "Invoke-DeepSeaCodexCli.ps1",
+      "dependency_boundary": "dsh-subscription-openai-codex-user-installed",
+      "boundary_declared_not_probed": true,
+      "capabilities": {
+        "start": true,
+        "follow_up": false,
+        "recover": true,
+        "exact_native_session": false
+      },
+      "docs": [
+        "docs/adapters/deepsea-codex-cli.md",
+        "docs/routes.md"
+      ],
+      "default_model": "gpt-5.6-luna",
+      "default_reasoning_effort": "high",
+      "allowed_reasoning_effort": [
+        "minimal",
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "route_id": "deepsea-grok-cli",
+      "display_name": "DeepSea Grok CLI",
+      "family": "deepsea",
+      "adapter_root": "src/adapters/deepsea-grok-cli",
+      "descriptor": "src/adapters/deepsea-grok-cli/adapter.json",
+      "windows_entrypoint": "Invoke-DeepSeaGrok.ps1",
+      "dependency_boundary": "dsh-subscription-xai-user-installed",
+      "boundary_declared_not_probed": true,
+      "capabilities": {
+        "start": true,
+        "follow_up": false,
+        "recover": true,
+        "exact_native_session": false
+      },
+      "docs": [
+        "docs/adapters/deepsea-grok-cli.md",
+        "docs/routes.md"
+      ],
+      "default_model": "grok-4.6",
+      "default_reasoning_effort": "xhigh",
+      "allowed_reasoning_effort": [
+        "low",
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "route_id": "deepsea-v4",
+      "display_name": "DeepSea V4",
+      "family": "deepsea",
+      "adapter_root": "src/adapters/deepsea-v4",
+      "descriptor": "src/adapters/deepsea-v4/adapter.json",
+      "windows_entrypoint": "Invoke-DeepSeaV4Headless.ps1",
+      "dependency_boundary": "dsh-deepseek-official-user-installed",
+      "boundary_declared_not_probed": true,
+      "capabilities": {
+        "start": true,
+        "follow_up": true,
+        "recover": true,
+        "exact_native_session": true
+      },
+      "docs": [
+        "docs/adapters/deepsea-v4.md",
+        "docs/routes.md"
+      ],
+      "default_model": "deepseek-v4-flash",
+      "allowed_reasoning_effort": [
+        "off",
+        "high",
+        "max"
+      ]
+    },
+    {
+      "route_id": "direct-claude-code",
+      "display_name": "Direct Claude Code",
+      "family": "direct",
+      "adapter_root": "src/adapters/direct-claude-code",
+      "descriptor": "src/adapters/direct-claude-code/adapter.json",
+      "windows_entrypoint": "Invoke-DirectClaudeCodeRoute.ps1",
+      "dependency_boundary": "claude-code-user-installed",
+      "boundary_declared_not_probed": true,
+      "capabilities": {
+        "start": true,
+        "follow_up": true,
+        "recover": true,
+        "exact_native_session": true
+      },
+      "docs": [
+        "docs/adapters/direct-claude-code.md",
+        "docs/routes.md"
+      ]
+    },
+    {
+      "route_id": "direct-codex-cli",
+      "display_name": "Direct Codex CLI",
+      "family": "direct",
+      "adapter_root": "src/adapters/direct-codex-cli",
+      "descriptor": "src/adapters/direct-codex-cli/adapter.json",
+      "windows_entrypoint": "Invoke-DirectCodexCliRoute.ps1",
+      "dependency_boundary": "codex-cli-user-installed",
+      "boundary_declared_not_probed": true,
+      "capabilities": {
+        "start": true,
+        "follow_up": true,
+        "recover": true,
+        "exact_native_session": true
+      },
+      "docs": [
+        "docs/adapters/direct-codex-cli.md",
+        "docs/routes.md"
+      ]
+    },
+    {
+      "route_id": "direct-cursor",
+      "display_name": "Direct Cursor",
+      "family": "direct",
+      "adapter_root": "src/adapters/direct-cursor",
+      "descriptor": "src/adapters/direct-cursor/adapter.json",
+      "windows_entrypoint": "Invoke-DirectCursorRoute.ps1",
+      "dependency_boundary": "cursor-agent-cli-user-installed",
+      "boundary_declared_not_probed": true,
+      "capabilities": {
+        "start": true,
+        "follow_up": true,
+        "recover": true,
+        "exact_native_session": true
+      },
+      "docs": [
+        "docs/adapters/direct-cursor.md",
+        "docs/routes.md"
+      ]
+    },
+    {
+      "route_id": "direct-grok-cli",
+      "display_name": "Direct Grok CLI",
+      "family": "direct",
+      "adapter_root": "src/adapters/direct-grok-cli",
+      "descriptor": "src/adapters/direct-grok-cli/adapter.json",
+      "windows_entrypoint": "Invoke-DirectGrokRoute.ps1",
+      "dependency_boundary": "official-grok-cli-user-installed",
+      "boundary_declared_not_probed": true,
+      "capabilities": {
+        "start": true,
+        "follow_up": true,
+        "recover": true,
+        "exact_native_session": true
+      },
+      "docs": [
+        "docs/adapters/direct-grok-cli.md",
+        "docs/routes.md"
+      ]
+    },
+    {
+      "route_id": "direct-pi",
+      "display_name": "Direct PI",
+      "family": "direct",
+      "adapter_root": "src/adapters/direct-pi",
+      "descriptor": "src/adapters/direct-pi/adapter.json",
+      "windows_entrypoint": "Invoke-DirectPiRoute.ps1",
+      "dependency_boundary": "pi-coding-agent-and-node-user-installed",
+      "boundary_declared_not_probed": true,
+      "capabilities": {
+        "start": true,
+        "follow_up": true,
+        "recover": true,
+        "exact_native_session": true
+      },
+      "docs": [
+        "docs/adapters/direct-pi.md",
+        "docs/routes.md"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "protocol_version": "telephone-line-codex-app-server-lead-status-sources-v1",
+  "sources": [
+    {
+      "id": "app-server-lead-runs",
+      "kind": "codex-app-server-lead-runs",
+      "root": "C:\\example\\app-server-lead-state\\runs"
+    }
+  ],
+  "extra": true
+}

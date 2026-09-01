@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:telephone-line:schema:codex-app-server-lead-profile:v1",
+  "title": "telephone-line-codex-app-server-lead-profile-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "codex_command",
+    "codex_version",
+    "schema_file_count",
+    "schema_bytes",
+    "schema_fingerprint",
+    "executable_sha256",
+    "service_tier",
+    "bound_at_utc"
+  ],
+  "properties": {
+    "protocol_version": {
+      "type": "string",
+      "const": "telephone-line-codex-app-server-lead-profile-v1"
+    },
+    "codex_command": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32767,
+      "pattern": "^[^\\u0000-\\u001F\"<>|*?]+$"
+    },
+    "codex_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\u0000-\\u001F]+$"
+    },
+    "schema_file_count": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "schema_bytes": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "schema_fingerprint": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "executable_sha256": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "service_tier": {
+      "type": "string",
+      "const": "default"
+    },
+    "bound_at_utc": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[^\\u0000-\\u001F]+$"
+    }
+  }
+}

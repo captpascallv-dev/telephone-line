@@ -1,0 +1,8 @@
+{
+  "protocol_version": "telephone-line-codex-app-server-lead-owner-v1",
+  "pid": 4242,
+  "start_time_utc_ticks": 638000000000000000,
+  "started_at_utc": "2026-08-21T00:00:00.0000000+00:00",
+  "thread_id": "01a02378-2617-7131-ba20-8e6d5ac625ca",
+  "active_run_id": "telephone-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1"
+}

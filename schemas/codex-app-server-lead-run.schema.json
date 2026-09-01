@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:telephone-line:schema:codex-app-server-lead-run:v1",
+  "title": "telephone-line-codex-app-server-lead-run-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "run_id",
+    "thread_id",
+    "worktree",
+    "callback",
+    "wake_marker",
+    "profile_fingerprint",
+    "codex_version",
+    "executable_sha256",
+    "profile_sha256",
+    "codex_command",
+    "service_tier",
+    "baseline_turn_ids",
+    "selected_turn_id",
+    "disposition",
+    "callback_write_phase",
+    "terminal_target",
+    "fallback_required"
+  ],
+  "properties": {
+    "protocol_version": {
+      "type": "string",
+      "const": "telephone-line-codex-app-server-lead-run-v1"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "thread_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "worktree": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32767,
+      "pattern": "^[^\\u0000-\\u001F\"<>|*?]+$"
+    },
+    "callback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "bytes", "sha256"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32767,
+          "pattern": "^[^\\u0000-\\u001F\"<>|*?]+$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      }
+    },
+    "wake_marker": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^tl-wake:[A-Za-z0-9._:-]+$"
+    },
+    "profile_fingerprint": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "codex_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\u0000-\\u001F]+$"
+    },
+    "executable_sha256": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "profile_sha256": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "codex_command": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32767,
+      "pattern": "^[^\\u0000-\\u001F\"<>|*?]+$"
+    },
+    "service_tier": {
+      "type": "string",
+      "const": "default"
+    },
+    "baseline_turn_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "pattern": "^[A-Za-z0-9._:-]+$"
+      }
+    },
+    "selected_turn_id": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]*$"
+    },
+    "disposition": {
+      "type": "string",
+      "enum": [
+        "in_progress",
+        "completed",
+        "recovered",
+        "failed",
+        "interrupted",
+        "recovery_required",
+        "fallback_required_cli"
+      ]
+    },
+    "callback_write_phase": {
+      "type": "string",
+      "enum": [
+        "none",
+        "turn_start_sending",
+        "turn_bound",
+        "acknowledged",
+        "terminal_publishing",
+        "terminal"
+      ]
+    },
+    "terminal_target": {
+      "type": "string",
+      "enum": ["", "completed", "failed", "interrupted"]
+    },
+    "fallback_required": {
+      "type": "string",
+      "enum": ["", "cli"]
+    },
+    "queue_state": {
+      "type": "string",
+      "enum": ["", "queued", "callback_active", "retired"]
+    }
+  }
+}

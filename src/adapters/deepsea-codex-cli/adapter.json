@@ -1,0 +1,22 @@
+{
+  "protocol_version": "telephone-line-adapter-v1",
+  "route_id": "deepsea-codex-cli",
+  "display_name": "DeepSea Codex CLI",
+  "windows_entrypoint": "Invoke-DeepSeaCodexCli.ps1",
+  "dependency_boundary": "dsh-subscription-openai-codex-user-installed",
+  "capabilities": {
+    "start": true,
+    "follow_up": false,
+    "recover": true,
+    "exact_native_session": false
+  },
+  "default_model": "gpt-5.6-luna",
+  "default_reasoning_effort": "high",
+  "allowed_reasoning_effort": [
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh"
+  ]
+}

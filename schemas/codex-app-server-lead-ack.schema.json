@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:telephone-line:schema:codex-app-server-lead-ack:v1",
+  "title": "telephone-line-lead-wake-ack-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "session_id",
+    "event",
+    "turn_id",
+    "acknowledged_at_utc"
+  ],
+  "properties": {
+    "protocol_version": {
+      "type": "string",
+      "const": "telephone-line-lead-wake-ack-v1"
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "event": {
+      "type": "string",
+      "const": "turn.started"
+    },
+    "turn_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "acknowledged_at_utc": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[^\\u0000-\\u001F]+$"
+    }
+  }
+}

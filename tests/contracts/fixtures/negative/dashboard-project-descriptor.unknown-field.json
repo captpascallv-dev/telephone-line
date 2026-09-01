@@ -1,0 +1,6 @@
+{
+  "protocol_version": "telephone-line-dashboard-project-descriptor-v1",
+  "project": "example-project",
+  "state_root": "C:\\example\\telephone-state",
+  "extra": true
+}

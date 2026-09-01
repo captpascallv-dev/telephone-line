@@ -1,0 +1,236 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:telephone-line:schema:dashboard-projection:v1",
+  "title": "telephone-line-dashboard-projection-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "observational",
+    "updated_at_utc",
+    "groups"
+  ],
+  "properties": {
+    "protocol_version": {
+      "type": "string",
+      "const": "telephone-line-dashboard-projection-v1"
+    },
+    "observational": {
+      "type": "boolean",
+      "const": true
+    },
+    "updated_at_utc": {
+      "$ref": "#/$defs/utc_timestamp"
+    },
+    "config_present": {
+      "type": "boolean"
+    },
+    "stale": {
+      "type": "boolean"
+    },
+    "groups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "project",
+          "lead_session_id",
+          "lead_run_id",
+          "phase",
+          "visible",
+          "disappeared",
+          "color",
+          "findings"
+        ],
+        "properties": {
+          "project": { "$ref": "#/$defs/opaque_label" },
+          "lead_session_id": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9._:-]*$"
+          },
+          "lead_run_id": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9._:-]*$"
+          },
+          "phase": {
+            "type": "string",
+            "enum": ["idle", "lead", "execute", "review", "sync", "modify", "closure", "closed"]
+          },
+          "visible": { "type": "boolean" },
+          "disappeared": { "type": "boolean" },
+          "color": {
+            "type": "string",
+            "enum": ["green", "yellow", "hidden"]
+          },
+          "lead": { "type": "boolean" },
+          "execution": { "type": "boolean" },
+          "final_audit": { "type": "boolean" },
+          "correction": { "type": "boolean" },
+          "closure": { "type": "boolean" },
+          "terminal": { "type": "boolean" },
+          "closure_receipt": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 64,
+            "pattern": "^$|^[0-9a-f]{64}$"
+          },
+          "line_job_id": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 64,
+            "pattern": "^$|^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "stage": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 1000,
+            "pattern": "^[^\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F]*$"
+          },
+          "role": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 64,
+            "pattern": "^$|^execution$|^review$"
+          },
+          "route": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 1000,
+            "pattern": "^[^\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F]*$"
+          },
+          "duplicate_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "provenance": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 64,
+            "pattern": "^$|^[0-9a-f]{64}$"
+          },
+          "supervisor_run_id": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 64,
+            "pattern": "^$|^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "supervisor_status": {
+            "type": "string",
+            "enum": ["", "active", "paused", "cancelled", "failed", "completed", "orphan", "duplicate", "version_drift"]
+          },
+          "paused_by_pascal": {
+            "type": "boolean"
+          },
+          "current_state_version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "current_state_fingerprint": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "current_state_age_seconds": { "type": "integer", "minimum": 0 },
+          "current_state_stale_after_seconds": { "type": "integer", "minimum": 5 },
+          "current_state_stale": { "type": "boolean" },
+          "last_event_at_utc": {
+            "$ref": "#/$defs/utc_timestamp"
+          },
+          "failure_class": {
+            "type": "string",
+            "enum": ["none", "telephone_transport", "executor_session", "shared_host", "state_conflict", "mixed"]
+          },
+          "automatic_action": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 1000,
+            "pattern": "^[^\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F]*$"
+          },
+          "requires_pascal": {
+            "type": "boolean"
+          },
+          "lanes": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["package_id", "line_job_id", "role", "route", "state", "failure_class", "owner_alive", "receipt_present", "delivery_present", "callback_active", "last_evidence_at_utc"],
+              "properties": {
+                "package_id": { "$ref": "#/$defs/opaque_label" },
+                "line_job_id": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+                "role": { "enum": ["execution", "review"] },
+                "route": { "$ref": "#/$defs/opaque_label" },
+                "state": { "enum": ["declared", "starting", "executing", "receipt_ready", "callback_running", "delivered", "handled", "failed", "unknown"] },
+                "failure_class": { "enum": ["none", "telephone_transport", "executor_session", "shared_host", "state_conflict"] },
+                "diagnostic_code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
+                "attempt": { "type": "integer", "minimum": 1 },
+                "retry_of_line_job_id": { "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" }] },
+                "evidence_age_seconds": { "type": "integer", "minimum": 0 },
+                "evidence_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                "owner_alive": { "type": "boolean" },
+                "receipt_present": { "type": "boolean" },
+                "delivery_present": { "type": "boolean" },
+                "callback_active": { "type": "boolean" },
+                "last_evidence_at_utc": { "$ref": "#/$defs/utc_timestamp" }
+              }
+            }
+          },
+          "actions": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["action_id", "kind", "sequence", "state", "reason", "retry_count"],
+              "properties": {
+                "action_id": { "$ref": "#/$defs/opaque_label" },
+                "kind": { "$ref": "#/$defs/opaque_label" },
+                "sequence": { "type": "integer", "minimum": 1 },
+                "state": { "enum": ["pending", "running", "completed", "retryable_failed", "blocked", "conflict", "exhausted"] },
+                "reason": { "$ref": "#/$defs/opaque_label" },
+                "retry_count": { "type": "integer", "minimum": 0, "maximum": 1 }
+              }
+            }
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["code", "severity"],
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[A-Z][A-Z0-9_]*$"
+                },
+                "severity": {
+                  "type": "string",
+                  "enum": ["fail_closed", "info"]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "opaque_label": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "pattern": "^[^\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F]+$"
+    },
+    "utc_timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})$"
+    }
+  }
+}

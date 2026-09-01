@@ -1,0 +1,1500 @@
+{
+  "protocol_version": "telephone-line-release-manifest-v1",
+  "product": "telephone-line",
+  "version": "0.1.0",
+  "license": "MPL-2.0",
+  "platform": "windows",
+  "denominator": 8,
+  "route_ids": [
+    "deepsea-codex-cli",
+    "deepsea-grok-cli",
+    "deepsea-v4",
+    "direct-claude-code",
+    "direct-codex-cli",
+    "direct-cursor",
+    "direct-grok-cli",
+    "direct-pi"
+  ],
+  "artifacts": [
+    {
+      "name": "telephone-line-0.1.0-source.zip",
+      "contains": "src/, schemas/, docs/, .github/, tests/, and root README.md, LICENSE, CONTRIBUTING.md, SECURITY.md, THIRD-PARTY-NOTICES.md, .gitattributes",
+      "bytes": null,
+      "sha256": null
+    },
+    {
+      "name": "telephone-line-0.1.0-windows.zip",
+      "contains": "src/, schemas/, docs/, and root README.md, LICENSE, CONTRIBUTING.md, SECURITY.md, THIRD-PARTY-NOTICES.md, .gitattributes; excludes tests/ and .github/",
+      "bytes": null,
+      "sha256": null
+    }
+  ],
+  "files": [
+    {
+      "path": ".gitattributes",
+      "bytes": 54,
+      "sha256": "b9c5588ae83206dc7a80cf91203fd7555046509ca2af8c028a06c4310ddd978e"
+    },
+    {
+      "path": ".github/ISSUE_TEMPLATE/adapter_proposal.md",
+      "bytes": 1293,
+      "sha256": "cfa204eedd8be781870d3f3377373a01be23f832a59c23511e516c00df2ee456"
+    },
+    {
+      "path": ".github/ISSUE_TEMPLATE/bug_report.md",
+      "bytes": 955,
+      "sha256": "b1d6dda865f38af89a3125598de65aed97db1d2d30f9ac5f69581fcbc5c55a51"
+    },
+    {
+      "path": ".github/ISSUE_TEMPLATE/config.yml",
+      "bytes": 193,
+      "sha256": "039b802a7046731ecec52e34421066bfcabee813d0a4f689d2bf8d277b0f1c93"
+    },
+    {
+      "path": ".github/pull_request_template.md",
+      "bytes": 797,
+      "sha256": "ad5dcde218130cc5a53daba4f7adba4c83f9ee39a3ceeb38623d05249ce1acad"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "bytes": 6523,
+      "sha256": "c56b1a2f7a1299a8ac9774b07bf6359939dc421d1ee0b8afa845ce083acdbfcc"
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "bytes": 2231,
+      "sha256": "9ccc37f0ab6cbc23c09e8ee7b71dbfa288036dd75349d089f98a6d8c71f9adb1"
+    },
+    {
+      "path": "LICENSE",
+      "bytes": 16726,
+      "sha256": "3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04"
+    },
+    {
+      "path": "README.md",
+      "bytes": 10177,
+      "sha256": "4dfee9292de2f184d34c5395ac16fa11021e82a0ba4f45ee8694ac717910ea8e"
+    },
+    {
+      "path": "SECURITY.md",
+      "bytes": 1580,
+      "sha256": "753b0d29a3abf86537e5534a23917f705be531a28348300dc23bdb3c47a99c42"
+    },
+    {
+      "path": "THIRD-PARTY-NOTICES.md",
+      "bytes": 3040,
+      "sha256": "0139a730d35cf3f36a119e120e3e7c4dafc89de8b7bd980a475fd9c734bc728a"
+    },
+    {
+      "path": "docs/adapter-authoring.md",
+      "bytes": 4396,
+      "sha256": "05cca8b733f531bb03742073a0f32db76d40054a1dd1525fc3ccf43af5bcd63c"
+    },
+    {
+      "path": "docs/adapter-interface.md",
+      "bytes": 2852,
+      "sha256": "38451b698c8f35e85f60a84e2344ec450646799dae79eae2c351d28c7c80fe07"
+    },
+    {
+      "path": "docs/adapters/deepsea-codex-cli.md",
+      "bytes": 2576,
+      "sha256": "80849bfed624127bb871bfe88f40733631b36457b216966117cb0213487eb7a8"
+    },
+    {
+      "path": "docs/adapters/deepsea-grok-cli.md",
+      "bytes": 2069,
+      "sha256": "8f7a384da016c2abc57608909dbcde37b59ac623c5895b04a5202a985a11d400"
+    },
+    {
+      "path": "docs/adapters/deepsea-v4.md",
+      "bytes": 1911,
+      "sha256": "8d091cfbbafd2856723355b9a32961fe605b1c78b64fbcc89ec3ccf8ee57703d"
+    },
+    {
+      "path": "docs/adapters/direct-claude-code.md",
+      "bytes": 1056,
+      "sha256": "6006f8a62f7453458e1ce13e4358ff4aabd2d9e055bf08a479cc56c3ef5611b0"
+    },
+    {
+      "path": "docs/adapters/direct-codex-cli.md",
+      "bytes": 1306,
+      "sha256": "0d56945253e90e1a125ffb84c748b745a0dbd7dfb060490f22b920656b3e56fb"
+    },
+    {
+      "path": "docs/adapters/direct-cursor.md",
+      "bytes": 3671,
+      "sha256": "33c6e05e856d26d5f55cc6db4a6474583dc50e66d2543046e653bb7519af8e28"
+    },
+    {
+      "path": "docs/adapters/direct-grok-cli.md",
+      "bytes": 540,
+      "sha256": "3d4ff8dee558931c05d87d056967451dd8176c693369d009c4fb331645e1e61e"
+    },
+    {
+      "path": "docs/adapters/direct-pi.md",
+      "bytes": 837,
+      "sha256": "d86310509e40f64db4aaac71f6e1efa5797a3592c6a7d61c05768df3b4cc0152"
+    },
+    {
+      "path": "docs/architecture.md",
+      "bytes": 15895,
+      "sha256": "17d9f441bcdab3a1c57cd48c3befd0d69489a8000b0af9b7c047bb210ddfddf6"
+    },
+    {
+      "path": "docs/codex-app-server-lead.md",
+      "bytes": 25309,
+      "sha256": "7d7d64ef9234b6fa8af8d4e5757d0c9b9dc0da35b482e7328bde87c28908d636"
+    },
+    {
+      "path": "docs/compatibility-contract.md",
+      "bytes": 6042,
+      "sha256": "1b5e30b0cdf49072330dd9763ce720ed2638b9acb3e2c61c9882bd50e13087aa"
+    },
+    {
+      "path": "docs/control-plane.md",
+      "bytes": 6835,
+      "sha256": "8c80f0362d4bd0f8f8c2e4d66856c2ab844c5e987b09a23d6dd4fdfc11436d35"
+    },
+    {
+      "path": "docs/cursor-external-lead.md",
+      "bytes": 5420,
+      "sha256": "5d49f3d6b24c971b138ec56ca9928201a4a945986cd71ed6e7fc68bb21236f7c"
+    },
+    {
+      "path": "docs/dashboard.md",
+      "bytes": 11300,
+      "sha256": "608b8620fc6013a6b2f062ec0b3ce100c7fe9df95c7d989bafee27d96b12a95a"
+    },
+    {
+      "path": "docs/examples/codex-app-server-lead/README.md",
+      "bytes": 761,
+      "sha256": "5982171a19468cdceb490501f5e185758cbb557d07a38715aeeb855bc4c80d7f"
+    },
+    {
+      "path": "docs/examples/codex-app-server-lead/lead-binding.placeholder.json",
+      "bytes": 453,
+      "sha256": "0f600a977b510ddb406c99d8778a1e9a258003566f26d1afdbff566e947311ab"
+    },
+    {
+      "path": "docs/examples/codex-app-server-lead/profile.placeholder.json",
+      "bytes": 490,
+      "sha256": "d7a6ac8362289efa8dbaa1971638d650abe24c2b41e6eef43ebc31e5ac411ac7"
+    },
+    {
+      "path": "docs/examples/codex-app-server-lead/status-sources.placeholder.json",
+      "bytes": 252,
+      "sha256": "26228fda00caa84ec686ef816fe3710ae3a29d852d120a7165ca9f52d5930a00"
+    },
+    {
+      "path": "docs/examples/cursor-external-lead/README.md",
+      "bytes": 798,
+      "sha256": "0bc77d87ff1cb7dd1b464ed3bc98197ed5370e03637dd793e6a19dd1d63a005b"
+    },
+    {
+      "path": "docs/examples/cursor-external-lead/lead-binding.placeholder.json",
+      "bytes": 233,
+      "sha256": "e689e3c38107cb266e82dfa9c7e32a186fad666166b9daa40307fe018c1b2c9e"
+    },
+    {
+      "path": "docs/examples/cursor-external-lead/request.placeholder.json",
+      "bytes": 991,
+      "sha256": "46d3e8c1bb4301d8a8d411a363505174c6b6307ed6d7cec2b325430f935266a9"
+    },
+    {
+      "path": "docs/examples/cursor-external-lead/status-sources.placeholder.json",
+      "bytes": 347,
+      "sha256": "72c1e892700a7fe6dbead4d7e5919683198441ee0b3c7557cbfc78e3981593a4"
+    },
+    {
+      "path": "docs/examples/dashboard/README.md",
+      "bytes": 1307,
+      "sha256": "e756d95ae95f9049ff0273d2e71c9b1212ec787c94cac4cf761b777f8a2094c1"
+    },
+    {
+      "path": "docs/examples/dashboard/closure.placeholder.json",
+      "bytes": 452,
+      "sha256": "f7764f8aa68bd581f694e35e47056d3565375ae68c53201b92a37bd5d34e4fa0"
+    },
+    {
+      "path": "docs/examples/dashboard/config.placeholder.json",
+      "bytes": 160,
+      "sha256": "2197e5b097b057989e69d76245042d3c33ffc95e0bb3cd4c16e45c6d0dc52b31"
+    },
+    {
+      "path": "docs/examples/dashboard/project.placeholder.json",
+      "bytes": 336,
+      "sha256": "8fbdb8ac80355be97013708c9f30dcd249e4d9e3ac45bcb886b39a45b142a62f"
+    },
+    {
+      "path": "docs/install.md",
+      "bytes": 7363,
+      "sha256": "b5ca3dd95ed214721548ff71ec46420fc5f0e5159b7e2e07de64151a358d5aeb"
+    },
+    {
+      "path": "docs/licensing.md",
+      "bytes": 2386,
+      "sha256": "7ba2e7357833cdd642c44977664457217ba86068b3319601120d80744683d2a8"
+    },
+    {
+      "path": "docs/packaging.md",
+      "bytes": 3903,
+      "sha256": "cde60ea5dabc5f7b5f0c52745b59146bfff74f3d410c86023de3cb1863d773bd"
+    },
+    {
+      "path": "docs/privacy.md",
+      "bytes": 4087,
+      "sha256": "b63f8367e4e65c01464d70f811a51bf172961ba2cc3b50c21ff007ba86a08ff3"
+    },
+    {
+      "path": "docs/quick-start.md",
+      "bytes": 16073,
+      "sha256": "785f81c5b1c2e012a5e49f462371f3aaea784b3ef64d49631fcca3e016548a38"
+    },
+    {
+      "path": "docs/redistribution-audit.md",
+      "bytes": 3272,
+      "sha256": "1275ed664cbeb6047f735458955c5c87b0ed0a1e33ab8a0224cf234d4c349526"
+    },
+    {
+      "path": "docs/routes.md",
+      "bytes": 1719,
+      "sha256": "015360fa16b23dbb19238b72eba6d06cc8be488d7750a3a6f8d61cf15e76dde2"
+    },
+    {
+      "path": "schemas/adapter.schema.json",
+      "bytes": 2143,
+      "sha256": "05bb5d6bc287b8f9074ad0dae5c834dbf91d54d4e828f28845da6282e6101ce8"
+    },
+    {
+      "path": "schemas/catalog.schema.json",
+      "bytes": 4611,
+      "sha256": "517c86e5365fd0b2d788a969de20557083f659fb912d16e3a6cea47632590c25"
+    },
+    {
+      "path": "schemas/codex-app-server-lead-ack.schema.json",
+      "bytes": 964,
+      "sha256": "c503708d07e0cd8216f0c43072c6875c49ab423bd4c2e1c266dcea90affa350d"
+    },
+    {
+      "path": "schemas/codex-app-server-lead-bound-turn.schema.json",
+      "bytes": 1114,
+      "sha256": "8e290273d73609aad69fa1332de3f6a4a2629642ea06e2b90e6b5fd10d9f549e"
+    },
+    {
+      "path": "schemas/codex-app-server-lead-child.schema.json",
+      "bytes": 779,
+      "sha256": "28360753604af32ca31b503d8f797096ae439f5313ae9c8e3fc99b5800925eb7"
+    },
+    {
+      "path": "schemas/codex-app-server-lead-failure.schema.json",
+      "bytes": 2001,
+      "sha256": "465550937212143881ac649eb50f6f32fab439be9ee8709b2b3e5cfa017177ac"
+    },
+    {
+      "path": "schemas/codex-app-server-lead-intent.schema.json",
+      "bytes": 2935,
+      "sha256": "9f73bc2bb876704c43b6c557559b9be3e3047614058d1d21aab3f513d348c500"
+    },
+    {
+      "path": "schemas/codex-app-server-lead-owner.schema.json",
+      "bytes": 1051,
+      "sha256": "ac69dd936a9f508fbc88e14ef34ec048d2cb1f8b9153cc35e780a267188211c0"
+    },
+    {
+      "path": "schemas/codex-app-server-lead-profile.schema.json",
+      "bytes": 1552,
+      "sha256": "6045a720e5bf72216a97aa4394477881a5b3f88318ca928b315e86238dbd612f"
+    },
+    {
+      "path": "schemas/codex-app-server-lead-recovery.schema.json",
+      "bytes": 1541,
+      "sha256": "68f4cf9e238f1a8eed4ca27b87f6058d3ccac1cef4e9fe53f6c60af8f70cb8e9"
+    },
+    {
+      "path": "schemas/codex-app-server-lead-result.schema.json",
+      "bytes": 1058,
+      "sha256": "f5f4932119e794de51996ba0207a59335ec7780d90ac2c336cd4937a37f8bd62"
+    },
+    {
+      "path": "schemas/codex-app-server-lead-run.schema.json",
+      "bytes": 3801,
+      "sha256": "b17466d6f8ad295adbb8f67f4ff91a2ea4b01fb77d837553e5a7188122ce577d"
+    },
+    {
+      "path": "schemas/codex-app-server-lead-status-sources.schema.json",
+      "bytes": 1184,
+      "sha256": "4bc0b2db98f36d7ecc295280eab09a9c02b7c55bdcbcca347ca7c4fbdbc42bd4"
+    },
+    {
+      "path": "schemas/codex-app-server-lead-status.schema.json",
+      "bytes": 2105,
+      "sha256": "0ca07988f910d4b1c0a202f5edf8b3fa0de81f1f05c3cd3016602fcfaed6dfbe"
+    },
+    {
+      "path": "schemas/control-plane-action-intent.schema.json",
+      "bytes": 1651,
+      "sha256": "a65a061d068e6bf0fd7382417d92622f5d069c58c7ef0b68d3f10e403df91b82"
+    },
+    {
+      "path": "schemas/control-plane-action-result.schema.json",
+      "bytes": 2152,
+      "sha256": "b1e8b1a653d3d1624deaafcdf99429536e3be6c027d93803c4fa4382a5115195"
+    },
+    {
+      "path": "schemas/control-plane-continuation-capsule.schema.json",
+      "bytes": 5398,
+      "sha256": "14db4a9e2a5bab956a1141a2cebfe742a183ecdf49a165f08219667516db2f0f"
+    },
+    {
+      "path": "schemas/control-plane-current-pointer.schema.json",
+      "bytes": 1424,
+      "sha256": "b8975a421b57facb0d3ba0e84e849536cbbc4ef5865233262dde8c32b4a58213"
+    },
+    {
+      "path": "schemas/control-plane-current-state.schema.json",
+      "bytes": 8180,
+      "sha256": "de8378dd1f6f37af919933c9f34be933f9b47ab8853e2bdbf7374b29dac5c04e"
+    },
+    {
+      "path": "schemas/control-plane-event.schema.json",
+      "bytes": 1684,
+      "sha256": "f130779bcd2ea89397d626806f32243f00a860d6aa5a10bb8db8de60e40a7b65"
+    },
+    {
+      "path": "schemas/control-plane-failure-matrix-evidence.schema.json",
+      "bytes": 1802,
+      "sha256": "3e55b8a19b26e90d9b6e17681d2ba2d18be03abff85e2dc187a67a96d0e3c368"
+    },
+    {
+      "path": "schemas/control-plane-history-index.schema.json",
+      "bytes": 2088,
+      "sha256": "7a425378a627f3c5d7a1807173a32d4419db13ae352bcb9abf8ee6dff3adfbed"
+    },
+    {
+      "path": "schemas/control-plane-lane-attempt.schema.json",
+      "bytes": 1204,
+      "sha256": "736207ea4c44f2aff2cb716d2f317d35fd7afb53ba0f19e47c89b5a58c1152df"
+    },
+    {
+      "path": "schemas/control-plane-performance-evidence.schema.json",
+      "bytes": 1507,
+      "sha256": "c4cae47d7e92f8fbdeb5209ac8a9296bb5522710970767bed6d8d7c0006d8eb6"
+    },
+    {
+      "path": "schemas/control-plane-release-gates-evidence.schema.json",
+      "bytes": 1926,
+      "sha256": "3fa7aa5a64ad1014f698fbbef827aae26ea66b600c1232b4da5a5640854583f2"
+    },
+    {
+      "path": "schemas/control-plane-transition.schema.json",
+      "bytes": 1270,
+      "sha256": "47ba11bdfc2205ba54aeef05826a4a137958c109ba5bf45a18edd2cf93b291f4"
+    },
+    {
+      "path": "schemas/control-plane-wave-manifest.schema.json",
+      "bytes": 9248,
+      "sha256": "238de20f69dcfef5663924380ebca2448c50ba31b883550f27229b46b537ab31"
+    },
+    {
+      "path": "schemas/control-plane-wave-spec.schema.json",
+      "bytes": 6179,
+      "sha256": "457e12bad6e209987c9803b6968289214e2541d1daa5611b751933189f12bb32"
+    },
+    {
+      "path": "schemas/dashboard-closure.schema.json",
+      "bytes": 1851,
+      "sha256": "ed9818167c495678397f93f047518f98aab085a464dd0bd8ad27da98abd85a9f"
+    },
+    {
+      "path": "schemas/dashboard-config.schema.json",
+      "bytes": 880,
+      "sha256": "3e6576e79d37f7e8476ac36248529d06000d3c15645fd7713489b4600eb25e69"
+    },
+    {
+      "path": "schemas/dashboard-lifecycle-event.schema.json",
+      "bytes": 2907,
+      "sha256": "e68511d987fb6c57dbc1497cccbb7485d212ce763d925cba6f5d4c4a05e4dc58"
+    },
+    {
+      "path": "schemas/dashboard-project-descriptor.schema.json",
+      "bytes": 2905,
+      "sha256": "37ba748599c1a33d9c78e5d18347b76d7a1b7e90e055e5757ca6070508e803df"
+    },
+    {
+      "path": "schemas/dashboard-projection.schema.json",
+      "bytes": 8498,
+      "sha256": "7cd6cc72b56a592fc552baa93741978acc2eeebeb7b6425622160f5822f9b260"
+    },
+    {
+      "path": "schemas/dispatch.schema.json",
+      "bytes": 6791,
+      "sha256": "97cbfb5133b9cf0a9041cdd8baa1ac1612f0ae73cc4c701387b955c319e1d336"
+    },
+    {
+      "path": "schemas/lead-binding.schema.json",
+      "bytes": 1161,
+      "sha256": "e0ff16f5847e16a929d57aa80c3af4073b9228a3dc636e4cbd7819c94e2e8c52"
+    },
+    {
+      "path": "schemas/lifecycle-status.schema.json",
+      "bytes": 1292,
+      "sha256": "8f581622568c132ed4c8a9a24a74c9cae794f1131318073a369090b1cb974e80"
+    },
+    {
+      "path": "schemas/receipt.schema.json",
+      "bytes": 3733,
+      "sha256": "b234cb29753f424e8dd63418d64a973d06f21d4e4866f1aff9c683472e45a34b"
+    },
+    {
+      "path": "schemas/release-manifest.schema.json",
+      "bytes": 3669,
+      "sha256": "1455fc864a75a6a7611317180dd1ad67ad97e854115b63984e407157ff60d12c"
+    },
+    {
+      "path": "schemas/telephone-line-batch.schema.json",
+      "bytes": 4649,
+      "sha256": "23765cb94502412611811d45ae361ea1aa46436ae680c71567bdb7c226f6c825"
+    },
+    {
+      "path": "schemas/wired-supervisor-control.schema.json",
+      "bytes": 856,
+      "sha256": "62b0944ea69b2bfec09cf02867c18dc3661c9da957b41f6bff9540cd8cd36dc3"
+    },
+    {
+      "path": "schemas/wired-supervisor-owner.schema.json",
+      "bytes": 2557,
+      "sha256": "30be6055e283fd42ef2fe265a54b198e080b82b107fc95cc1d2219acc9b686be"
+    },
+    {
+      "path": "schemas/wired-supervisor-request.schema.json",
+      "bytes": 2933,
+      "sha256": "6837aa391995a3e1696d3b3dcfbd7931a98aef93e10c2b5c3b71622a48dd471f"
+    },
+    {
+      "path": "schemas/wired-supervisor-status.schema.json",
+      "bytes": 3006,
+      "sha256": "f872eb8ad9394754df2ad783bf01f048a475efb340326f897b5f0b7e0a954a4d"
+    },
+    {
+      "path": "src/adapters/deepsea-codex-cli/Invoke-DeepSeaCodexCli.ps1",
+      "bytes": 3803,
+      "sha256": "b7da3e3db7ce15a98abff15ae16a7bc10cf8de6ca58ebae29113e4ae149ed178"
+    },
+    {
+      "path": "src/adapters/deepsea-codex-cli/adapter.json",
+      "bytes": 552,
+      "sha256": "9938f7da66223692fdee8c3896236ddc9b7a8192ca429ede4320fd788e4233e2"
+    },
+    {
+      "path": "src/adapters/deepsea-common/DeepSea.Common.ps1",
+      "bytes": 50028,
+      "sha256": "74767ca6a04dd7cd86f03aeccba18d5d7c862faea180318d2f58560d844993b8"
+    },
+    {
+      "path": "src/adapters/deepsea-common/dsh-plugin/headless-runner.mjs",
+      "bytes": 4839,
+      "sha256": "73806dd7a3639ab6d23f61d13b9b5c9b3ab0d71fc350d5408d10d827f3bc0860"
+    },
+    {
+      "path": "src/adapters/deepsea-common/dsh-plugin/headless-startup.mjs",
+      "bytes": 1422,
+      "sha256": "ca14e02c09db9c8b630992be8e114e427dab213ff6a42c2c5961f179809c54a1"
+    },
+    {
+      "path": "src/adapters/deepsea-common/dsh-plugin/llm-plugin.mjs",
+      "bytes": 471,
+      "sha256": "b532d0d9fa1cf410f7766dc9e7be04d9054331b045d7912080508edc8346c84f"
+    },
+    {
+      "path": "src/adapters/deepsea-common/dsh-plugin/login-subscription.mjs",
+      "bytes": 1709,
+      "sha256": "955dcd6fe8fdf73972eed349ba1e3a458c4c8f190d77ffa10731136641a4b1cd"
+    },
+    {
+      "path": "src/adapters/deepsea-common/dsh-plugin/package.json",
+      "bytes": 293,
+      "sha256": "f5fb27cae966c4675b63581885f11cd28e4897d57637e737c83abd1c1c676b59"
+    },
+    {
+      "path": "src/adapters/deepsea-common/dsh-plugin/resolve-modules.mjs",
+      "bytes": 3766,
+      "sha256": "dc506dcb08de1fb957efe1e26b843aad2b291f2fd3139b77af4d6ca3d6db1516"
+    },
+    {
+      "path": "src/adapters/deepsea-common/dsh-plugin/subscription-llm.mjs",
+      "bytes": 11231,
+      "sha256": "097f6f1796a551a127d43bd948690c7de4b2777ea1179688386841df0ddb1116"
+    },
+    {
+      "path": "src/adapters/deepsea-common/dsh-plugin/subscription-store.mjs",
+      "bytes": 13116,
+      "sha256": "1dd6cd2203bf6223314892d68b3b1ed0685fef5ae76b17839ee0f9b9cf52275b"
+    },
+    {
+      "path": "src/adapters/deepsea-grok-cli/Invoke-DeepSeaGrok.ps1",
+      "bytes": 4967,
+      "sha256": "99aaa8da9d6d3a0b516749b093a683d4a673ddacb5592e23edcf7bd97e196d0d"
+    },
+    {
+      "path": "src/adapters/deepsea-grok-cli/adapter.json",
+      "bytes": 505,
+      "sha256": "92a50a271427e6ce076bd8ec7fdd194c2660eeb5528a1565e9ca0c427307b161"
+    },
+    {
+      "path": "src/adapters/deepsea-v4/Invoke-DeepSeaV4Headless.ps1",
+      "bytes": 2089,
+      "sha256": "04e6bdd09acf8ddde7be51ce7cc7b7bbd5d1e0954e7570ad0dca9854f3df82de"
+    },
+    {
+      "path": "src/adapters/deepsea-v4/adapter.json",
+      "bytes": 466,
+      "sha256": "401716c726c6f1ad07939d69258c8c47471ca7142c73f1ef1509f061dd2d7461"
+    },
+    {
+      "path": "src/adapters/direct-claude-code/DirectClaude.Common.ps1",
+      "bytes": 16130,
+      "sha256": "addf31626843abbfc0de808b7f235a44302002359e169dcc89efaa8cc6f89c05"
+    },
+    {
+      "path": "src/adapters/direct-claude-code/Invoke-DirectClaudeCodeRoute.ps1",
+      "bytes": 19852,
+      "sha256": "267bd85c42001e2f53c7837eb96f67a899e35e6e6241c483299d665f6e772f50"
+    },
+    {
+      "path": "src/adapters/direct-claude-code/adapter.json",
+      "bytes": 366,
+      "sha256": "940f02a205e0843088b4dd75900a471bdad7b947545f734c0afbf2915283c3ee"
+    },
+    {
+      "path": "src/adapters/direct-claude-code/invoke_claude.ps1",
+      "bytes": 10393,
+      "sha256": "eec98a92249dcc0f7ef1deed1c9fb61a1ab79f32ca4e49803a09ab77ca970b5b"
+    },
+    {
+      "path": "src/adapters/direct-claude-code/process_file_host.ps1",
+      "bytes": 1303,
+      "sha256": "ea23757f24d94c116c77aab48d1b30bb7da0a1d26acca3901fb5731b132f351b"
+    },
+    {
+      "path": "src/adapters/direct-codex-cli/DirectCodex.Common.ps1",
+      "bytes": 16316,
+      "sha256": "325eae94320322c9344a69d8e67a62456dab8aed06c59d1f5cb015c278cbd642"
+    },
+    {
+      "path": "src/adapters/direct-codex-cli/Invoke-DirectCodexCliRoute.ps1",
+      "bytes": 19115,
+      "sha256": "23075202aa87466fe593d5643d242ab229e36dc878e4eb30c4e2fe4ce9131359"
+    },
+    {
+      "path": "src/adapters/direct-codex-cli/adapter.json",
+      "bytes": 358,
+      "sha256": "b70b20b38a066a7afc2229d80c1acc91c7014ab534582511b167152bc8413119"
+    },
+    {
+      "path": "src/adapters/direct-codex-cli/invoke_codex_exec.ps1",
+      "bytes": 11283,
+      "sha256": "23aca14dce8618466a48d1265779dad63e062818162a00248a38eccb6f0df530"
+    },
+    {
+      "path": "src/adapters/direct-codex-cli/process_file_host.ps1",
+      "bytes": 1303,
+      "sha256": "ea23757f24d94c116c77aab48d1b30bb7da0a1d26acca3901fb5731b132f351b"
+    },
+    {
+      "path": "src/adapters/direct-cursor/DirectCursor.Common.ps1",
+      "bytes": 73380,
+      "sha256": "917584c4e457abff5ce9604ef4372683440a6b2d667d779143aafab46c3ae2f6"
+    },
+    {
+      "path": "src/adapters/direct-cursor/Invoke-DirectCursorRoute.ps1",
+      "bytes": 27832,
+      "sha256": "5f9d6ad5c186b3decee1cea27c176500aacbac2ef299576da231e0330420ace0"
+    },
+    {
+      "path": "src/adapters/direct-cursor/adapter.json",
+      "bytes": 357,
+      "sha256": "be54f1926c2fea820210aac503fb6547d10835d28793ff40d0eb296ff553dd8f"
+    },
+    {
+      "path": "src/adapters/direct-cursor/cursor_job_host.ps1",
+      "bytes": 1358,
+      "sha256": "ec435624507c9b6c7d2f375ae672b8bdbb650193ff605ba05b76edb54dec49f4"
+    },
+    {
+      "path": "src/adapters/direct-cursor/invoke_cursor_agent.ps1",
+      "bytes": 33800,
+      "sha256": "bcf436d4ecd6fe20487c5536b3387f6316a8cabd46cf3f5127fc913e1a123d51"
+    },
+    {
+      "path": "src/adapters/direct-cursor/invoke_cursor_request.ps1",
+      "bytes": 5508,
+      "sha256": "2312411424ae02545d662daf3b73955d30e7a966187e05cea67f4c8209b782d6"
+    },
+    {
+      "path": "src/adapters/direct-cursor/process_file_host.ps1",
+      "bytes": 1354,
+      "sha256": "40e6d4c141d3f134ed4d04f86c90d564864721f211bfe65fb4d370aff48597c6"
+    },
+    {
+      "path": "src/adapters/direct-grok-cli/DirectGrok.Common.ps1",
+      "bytes": 18111,
+      "sha256": "fdd95f116ee88fefa0bd3fc8ec0a728d49ed2cf2a2d47b3f44839c0d5f9eea0b"
+    },
+    {
+      "path": "src/adapters/direct-grok-cli/Invoke-DirectGrokCliEntry.ps1",
+      "bytes": 2176,
+      "sha256": "041287e4a94fea34ed235fcbf4662459aaae703418af05e16742f40fcf84c0b5"
+    },
+    {
+      "path": "src/adapters/direct-grok-cli/Invoke-DirectGrokRoute.ps1",
+      "bytes": 18588,
+      "sha256": "7038596418d9494e34ee629bbefb3a8544d428a5d142ce107a683a8f8ef3c154"
+    },
+    {
+      "path": "src/adapters/direct-grok-cli/adapter.json",
+      "bytes": 360,
+      "sha256": "fe3ddafd8b0df8737d79a2c8cdb747a709f90e0681c50802b4bf04c4a3b72a0f"
+    },
+    {
+      "path": "src/adapters/direct-grok-cli/invoke_grok_build.ps1",
+      "bytes": 10596,
+      "sha256": "f7f33f17b15931bb6db8e6dcdeb60e4ed88328c2dace008b0715fde1ba4d9b20"
+    },
+    {
+      "path": "src/adapters/direct-grok-cli/process_file_host.ps1",
+      "bytes": 1354,
+      "sha256": "40e6d4c141d3f134ed4d04f86c90d564864721f211bfe65fb4d370aff48597c6"
+    },
+    {
+      "path": "src/adapters/direct-pi/DirectPi.Common.ps1",
+      "bytes": 9485,
+      "sha256": "79a9741de3006b2bfca60749a562960e5805de233b4023bb2030fe6cf1aa032e"
+    },
+    {
+      "path": "src/adapters/direct-pi/Invoke-DirectPiRoute.ps1",
+      "bytes": 18390,
+      "sha256": "45c26796e6b65aa61d0f7ed7865eac392153c479d2049c6c7bba83e92ef9b097"
+    },
+    {
+      "path": "src/adapters/direct-pi/adapter.json",
+      "bytes": 353,
+      "sha256": "95437409139c44b58e8ec36499bee79c380288a6e2b682870c3911b6ad45ff25"
+    },
+    {
+      "path": "src/adapters/direct-pi/invoke_pi.ps1",
+      "bytes": 16839,
+      "sha256": "190069784044ccfcf4f4fd833d3de38af332390f093ee107b08646b1290daf48"
+    },
+    {
+      "path": "src/adapters/direct-pi/process_file_host.ps1",
+      "bytes": 1354,
+      "sha256": "40e6d4c141d3f134ed4d04f86c90d564864721f211bfe65fb4d370aff48597c6"
+    },
+    {
+      "path": "src/catalog/routes.json",
+      "bytes": 6058,
+      "sha256": "deed7160e9b8e32431638e99a11bc08fb9f747e46bbb73d8d932c814a36d4693"
+    },
+    {
+      "path": "src/contracts/TelephoneLine.AdapterContract.ps1",
+      "bytes": 4529,
+      "sha256": "1275fb0d2c4115761d78f49b0d1b89540b8cae3b2eb3bf21ad729add6298d597"
+    },
+    {
+      "path": "src/control-plane/Invoke-TelephoneContinuityController.ps1",
+      "bytes": 31490,
+      "sha256": "5a91edf96c7490eb77e0b7c26ff7289a684418727f9b211ee8a5f0afdb8bb0d9"
+    },
+    {
+      "path": "src/control-plane/Invoke-TelephoneControlPlaneWake.ps1",
+      "bytes": 7057,
+      "sha256": "867cc4778c9ce3fd798dbd6d66b7be48e74e977b8ae3f22737d00b0b76f08757"
+    },
+    {
+      "path": "src/control-plane/New-TelephoneWaveManifest.ps1",
+      "bytes": 34491,
+      "sha256": "910d684a2aa66370918797d48cbf6bec95178fe3c4ec1dc97a818550ddf7119f"
+    },
+    {
+      "path": "src/control-plane/Start-TelephoneControlPlaneWave.ps1",
+      "bytes": 8858,
+      "sha256": "aafbb40bfc541d1fe2aa6aed8d12967e87038c18df1e7ba838fa3dec538de28f"
+    },
+    {
+      "path": "src/control-plane/TelephoneControlPlane.Common.ps1",
+      "bytes": 63102,
+      "sha256": "3154960898a6a944d85053a451a1f8916a3941370b30a3ecf787992c3948d278"
+    },
+    {
+      "path": "src/control-plane/Update-TelephoneCurrentState.ps1",
+      "bytes": 790,
+      "sha256": "7f93d432cab4222ee427b7084403767a310e77cbf8ac4453443066864717bcd2"
+    },
+    {
+      "path": "src/core/Invoke-TelephoneLineCommandHost.ps1",
+      "bytes": 6216,
+      "sha256": "85f08542f1bafd03ec8754a9e74a57d6b454ba34536b69c7bfa048230af2f29f"
+    },
+    {
+      "path": "src/core/Invoke-TelephoneLineRelay.ps1",
+      "bytes": 14089,
+      "sha256": "8141b7b74be913fa259190e121c2b2c72fc038a87402e31c77509349562e4378"
+    },
+    {
+      "path": "src/core/Resume-TelephoneLines.ps1",
+      "bytes": 6693,
+      "sha256": "aa20ca9979088c97066a1423fbc59446ca6ab45c8989f54e64a501f6d42b0178"
+    },
+    {
+      "path": "src/core/Start-TelephoneLineJob.ps1",
+      "bytes": 10923,
+      "sha256": "f9f52ffc5b81d6ccc679495ce0c017fcf76a036c1d6c001c3bded89f537e21a4"
+    },
+    {
+      "path": "src/core/TelephoneLine.Common.ps1",
+      "bytes": 187505,
+      "sha256": "878fca4f51d646bf20a258e6b2bac6db6ad7064bbba70e555250e4b7bb0d5cc6"
+    },
+    {
+      "path": "src/dashboard/Ensure-TelephoneDashboard.ps1",
+      "bytes": 630,
+      "sha256": "6fe0463c6501239e382ab968a18a85d36ddd015a1b73352bc8df3657c3f0421d"
+    },
+    {
+      "path": "src/dashboard/Show-TelephoneDashboard.ps1",
+      "bytes": 749,
+      "sha256": "6f885ab59ce6bb68561a23e059a0e9adf175eb0577d3e2d9789ffc6640c6d58a"
+    },
+    {
+      "path": "src/dashboard/TelephoneDashboard.Common.ps1",
+      "bytes": 25227,
+      "sha256": "e6fd91f44ba3fad9afe2b0f392262c9ffbd9e7404acfb389aa526cdac39de627"
+    },
+    {
+      "path": "src/dashboard/TelephoneDashboard.Projection.ps1",
+      "bytes": 133545,
+      "sha256": "b35b26495be6ffdfb5c9033baff45e6879f1405ed5411174e664c57dada690dc"
+    },
+    {
+      "path": "src/dashboard/TelephoneDashboard.Reducer.ps1",
+      "bytes": 8960,
+      "sha256": "30b749b9208992d5cc5664f4af1092efc965996845d8aaa08be56dfa65a19a40"
+    },
+    {
+      "path": "src/dashboard/Watch-TelephoneDashboard.ps1",
+      "bytes": 5612,
+      "sha256": "f7f751c915d40f9d4335d1d0b3858bd506b4f81de05275064da9a538c3e16d6b"
+    },
+    {
+      "path": "src/install/Install-TelephoneLine.ps1",
+      "bytes": 598,
+      "sha256": "e3fa77a0fdd16f55abf2de24dd32dc0bb7cddccfab34647f412042c3833943c4"
+    },
+    {
+      "path": "src/install/Invoke-TelephoneLineDoctor.ps1",
+      "bytes": 514,
+      "sha256": "4804a1cddd4dd40c0849bb6ff5a4b114b7fa3037ebfd3b393b44b281e71b7c65"
+    },
+    {
+      "path": "src/install/TelephoneLineInstall.Common.ps1",
+      "bytes": 65904,
+      "sha256": "ee777a1fc71db797ceaaf3fe371d2d5d0d19f21d95a57a9e0236140d6b843a0a"
+    },
+    {
+      "path": "src/install/Uninstall-TelephoneLine.ps1",
+      "bytes": 523,
+      "sha256": "98ec0ff42973005644db7e5cdec47153a3f2bc9d892f6c016150b5db12a1455c"
+    },
+    {
+      "path": "src/install/Update-TelephoneLine.ps1",
+      "bytes": 517,
+      "sha256": "c05d5e33852c5fbaedd6d0268550eb03ed0d4a17fd762c09a26ff85c0dbdaf7d"
+    },
+    {
+      "path": "src/lead-side/codex-app-server/CodexAppServerCompatibility.psd1",
+      "bytes": 2325,
+      "sha256": "1711c3aeab99fae2be143c9d6e717f221907c810c34a36705b1c443ed781e44a"
+    },
+    {
+      "path": "src/lead-side/codex-app-server/CodexAppServerLead.Common.ps1",
+      "bytes": 163483,
+      "sha256": "2f3f66a6fbf8d74884f77958fbbbffde0b823147e015b579d9580e9a4588139c"
+    },
+    {
+      "path": "src/lead-side/codex-app-server/CodexAppServerLead.Lifecycle.ps1",
+      "bytes": 212015,
+      "sha256": "9e29ab1edfcdfa41b2e8736385be9062d5df6a9f792582aee26eea9cf6bfa5eb"
+    },
+    {
+      "path": "src/lead-side/codex-app-server/Get-CodexAppServerLeadStatus.ps1",
+      "bytes": 1178,
+      "sha256": "07eb438e364c059990942f3eff9dc206c626111d7aa6dfa6a50073aeb85d0178"
+    },
+    {
+      "path": "src/lead-side/codex-app-server/Invoke-CodexAppServerCompatibilityQualification.ps1",
+      "bytes": 4983,
+      "sha256": "f15f36554eb48e8541128bb085cfacfce774b2fff8988cb603e9bcc304fe8aea"
+    },
+    {
+      "path": "src/lead-side/codex-app-server/Invoke-CodexAppServerLeadLauncher.ps1",
+      "bytes": 1380,
+      "sha256": "d7a6308f7c0ebc7c0ae9c464d568f31ec0e72ba3d03b60cf2494ffba22745b59"
+    },
+    {
+      "path": "src/lead-side/codex-app-server/Invoke-CodexAppServerLeadPreflight.ps1",
+      "bytes": 3432,
+      "sha256": "18676aa07b46d211870702c3850d35354762247edb6f94c39c33f2a1e876b0b3"
+    },
+    {
+      "path": "src/lead-side/codex-app-server/Invoke-CodexAppServerLeadProfile.ps1",
+      "bytes": 1053,
+      "sha256": "2b08cf4c0163059949f2fea13b3b401e164630c5978288fbfb907a74de67b2e1"
+    },
+    {
+      "path": "src/lead-side/codex-app-server/Invoke-CodexAppServerLeadWorker.ps1",
+      "bytes": 1807,
+      "sha256": "2d191701267ccf3126219c2367a8e5f870ce0173e5aef31c32b2784602693316"
+    },
+    {
+      "path": "src/lead-side/codex-app-server/Invoke-WirelessTelephoneSmoke.ps1",
+      "bytes": 6895,
+      "sha256": "1669d20d9e972bef18c3b47829207487f643060f2f1ae8abb9e8c4cce97d3d32"
+    },
+    {
+      "path": "src/lead-side/codex-app-server/New-CodexAppServerLeadBinding.ps1",
+      "bytes": 1655,
+      "sha256": "aa2255b9666011ce424e057fcded2b6a2d237df3f2b7c442f82237b5bb6dc37d"
+    },
+    {
+      "path": "src/lead-side/cursor-external-route/CursorExternalLead.Common.ps1",
+      "bytes": 30298,
+      "sha256": "afe7d2316db01c9bc6678b02e426a2d2185c4277cc34044f781a665d08dc12e9"
+    },
+    {
+      "path": "src/lead-side/cursor-external-route/Get-CursorExternalLeadStatus.ps1",
+      "bytes": 4517,
+      "sha256": "be77ba6f0bc5d77210798a31d1e024b9636bfb989c20c20f29cf1c8c72997335"
+    },
+    {
+      "path": "src/lead-side/cursor-external-route/Invoke-CursorExternalLeadPreflight.ps1",
+      "bytes": 3789,
+      "sha256": "a742406ba2e61268e5bb6c1938ff860d1ad1d3337de276fddc3ef76be4c69b1a"
+    },
+    {
+      "path": "src/lead-side/cursor-external-route/New-CursorExternalLeadDispatch.ps1",
+      "bytes": 2998,
+      "sha256": "80f18b597bb3f7d57077b60b28c276f112f29e1b866435f27d758c00dd71a0d1"
+    },
+    {
+      "path": "src/packaging/New-TelephoneReleaseManifest.ps1",
+      "bytes": 544,
+      "sha256": "da4f0c48728b82bc2ed042bbb070367bd72f614409f6e0e086d75996863ea9b6"
+    },
+    {
+      "path": "src/packaging/New-TelephoneReleaseZip.ps1",
+      "bytes": 552,
+      "sha256": "a278b7af955a476899bab35e8ac12c403907be384918df1ddf438e945ddcf6b5"
+    },
+    {
+      "path": "src/packaging/New-TelephoneSourceArchive.ps1",
+      "bytes": 551,
+      "sha256": "4f1b8e06bc4f4d3b4bb63ccca90e7d964791c04e62138f3d17b847e9fdac2a9e"
+    },
+    {
+      "path": "src/packaging/TelephonePackaging.Common.ps1",
+      "bytes": 21130,
+      "sha256": "04f03d586f427f96fbaa871e9426df5133a9d549c8c2951d52e52b57fd31647e"
+    },
+    {
+      "path": "src/packaging/Test-TelephoneOpenSourceReadiness.ps1",
+      "bytes": 18058,
+      "sha256": "17b82030133bb09bf8b57646ea3ed5b9c0da5d4fd3112f46d9790c5d74cbd895"
+    },
+    {
+      "path": "src/supervisor/Invoke-TelephoneSupervisor.ps1",
+      "bytes": 7225,
+      "sha256": "903e000edfc0199aa70fede6536e3af5f5e16e95e72100bb1b26405f2ec9058e"
+    },
+    {
+      "path": "src/supervisor/Invoke-TelephoneSupervisorControl.ps1",
+      "bytes": 6653,
+      "sha256": "727404855d1c5435605be1f5bb9c5c87715edf0c612f3267c0e9d8d9cb3fb6ce"
+    },
+    {
+      "path": "src/supervisor/Invoke-TelephoneSupervisorRunHost.ps1",
+      "bytes": 6497,
+      "sha256": "33d8ea20023bb5e5ef96f4d08368852ea46737201531b5c11b0b2741b6750dec"
+    },
+    {
+      "path": "src/supervisor/Show-TelephoneSupervisorControl.ps1",
+      "bytes": 6248,
+      "sha256": "b8d589cf73e0c188d7c020eccac4b9c67db3b0597fc1bfed28ecb09e382c50b0"
+    },
+    {
+      "path": "src/supervisor/Start-TelephoneWiredRun.ps1",
+      "bytes": 4054,
+      "sha256": "eb0860911b4954191f39e8bb23b38856dd174c88373d71330d705ee8b8866d34"
+    },
+    {
+      "path": "src/supervisor/TelephoneSupervisor.Common.ps1",
+      "bytes": 108990,
+      "sha256": "b24a0aec1d335442a39e720402f4e9cf5f1a17857496706177336e4f50ca317a"
+    },
+    {
+      "path": "tests/Invoke-OfflineTests.ps1",
+      "bytes": 64476,
+      "sha256": "c01b573f343763d57f6d93c1cd476475583c39cf8650afd3b6c3aea7be5aee70"
+    },
+    {
+      "path": "tests/adapters/AdapterTest.Common.ps1",
+      "bytes": 3451,
+      "sha256": "9705f444e9e02fd0d628ad2ca6ae428d6f354ea81fd73eb9d5190032cb0febab"
+    },
+    {
+      "path": "tests/adapters/Invoke-DeepSeaRouteContract.ps1",
+      "bytes": 36318,
+      "sha256": "79202543290340978f057d95a4bae030b9e9c48055a4cad140c2568ca48e4986"
+    },
+    {
+      "path": "tests/adapters/Invoke-ExistingAdapterTests.ps1",
+      "bytes": 7082,
+      "sha256": "4e81377787c27cc4f2671b74dff6ea94db43c8d5e69402b3d0d2b94440932bd0"
+    },
+    {
+      "path": "tests/adapters/deepsea-codex-cli/test_deepsea_codex_cli.ps1",
+      "bytes": 464,
+      "sha256": "93f45f11ea1aff8516b6ab818797fa1310e946fd129f87bca45a6b77276d1d7f"
+    },
+    {
+      "path": "tests/adapters/deepsea-common/test_subscription_store.mjs",
+      "bytes": 11103,
+      "sha256": "63a7b0af46da42c7dcdc8891defb333b2a8e3435a3ae2da7581a6cdf190bc6f3"
+    },
+    {
+      "path": "tests/adapters/deepsea-common/test_subscription_store.ps1",
+      "bytes": 4944,
+      "sha256": "7ef6d30ba4cfbb631ff86a80711b782aff67cf29cda32e1b81b659c4bcbfe8ef"
+    },
+    {
+      "path": "tests/adapters/deepsea-grok-cli/test_launcher_contract.ps1",
+      "bytes": 5805,
+      "sha256": "308d54f976254d8eed709c7bda45765507448505aeb316144656870ec30436e9"
+    },
+    {
+      "path": "tests/adapters/deepsea-v4/test_deepsea_v4.ps1",
+      "bytes": 452,
+      "sha256": "38ee12116198c07dead052b722eab555ab66219daf1373edf1a8cfc4abc0fe13"
+    },
+    {
+      "path": "tests/adapters/direct-claude-code/test_direct_claude_route.ps1",
+      "bytes": 11267,
+      "sha256": "915ca7cac3349762e729c67e3a3e9c4e40c59843ecf79446413ea5dc07da3e60"
+    },
+    {
+      "path": "tests/adapters/direct-codex-cli/test_direct_codex_route.ps1",
+      "bytes": 10949,
+      "sha256": "0cf416c7db768ba2b03ebda5ba306dbed442494e1a2e7d68288257f4bece16be"
+    },
+    {
+      "path": "tests/adapters/direct-cursor/test_direct_cursor_route.ps1",
+      "bytes": 90749,
+      "sha256": "a1ef59f73d335c9b2597e875d9c3018027546aa28ad6e6fbb2a278f87aac4e4c"
+    },
+    {
+      "path": "tests/adapters/direct-grok-cli/test_direct_grok_route.ps1",
+      "bytes": 34788,
+      "sha256": "e1fc03b0e24f142458128de554e07b2e7c2bbd9fd498f356271a53c84c1be65a"
+    },
+    {
+      "path": "tests/adapters/direct-pi/test_direct_pi_route.ps1",
+      "bytes": 13465,
+      "sha256": "8bbb06a55f8851d2a6b18f0b97aad80be1f0c89ac0000b0374530411a387fcd2"
+    },
+    {
+      "path": "tests/adapters/fixtures/mock-dsh-relay.ps1",
+      "bytes": 1413,
+      "sha256": "f3e82b0e2deeaf0f032fd801f33e378da653ee4fd81d5cc0405d51afe28720e9"
+    },
+    {
+      "path": "tests/adapters/fixtures/mock-dsh.cmd",
+      "bytes": 227,
+      "sha256": "3823ca971cf456f3124ced060177133c6dbcd6561d7a318d49cf027d2ab83aa8"
+    },
+    {
+      "path": "tests/adapters/fixtures/mock-headless.ps1",
+      "bytes": 6091,
+      "sha256": "2056baefef3c34f9d7ae3b8426eb6eeb1b0d83324a0a7085c5645defce40a586"
+    },
+    {
+      "path": "tests/adapters/test_adapter_descriptors.ps1",
+      "bytes": 6633,
+      "sha256": "4849f21c1ff6a0ba1d2d39cbc843422079cf4636f8b652bd67878b3628a95358"
+    },
+    {
+      "path": "tests/catalog/test_catalog.ps1",
+      "bytes": 23793,
+      "sha256": "7f95cfd3b2052ed7c406ee2f8582193433edec541b63c28e86d017b9a06cd247"
+    },
+    {
+      "path": "tests/compatibility/compatibility-contract.json",
+      "bytes": 901,
+      "sha256": "2ba60003ff299328fac5279fd03894dee455660ac43aa34207d9123d310d07f6"
+    },
+    {
+      "path": "tests/compatibility/test_compatibility_contract.ps1",
+      "bytes": 12972,
+      "sha256": "33eb1b0b9d5a466b6262062bbf3a30033edd7591af97aba7a97ecc37f0764a32"
+    },
+    {
+      "path": "tests/contracts/fixtures/adapter.one-shot.json",
+      "bytes": 349,
+      "sha256": "c28cc509b14b7c8456350d02d759d53d467f73d1def8b29ac8f744c54ca372da"
+    },
+    {
+      "path": "tests/contracts/fixtures/mock-native-adapter.ps1",
+      "bytes": 2129,
+      "sha256": "90fe7c11ae07196b8536912b8da6f806875d457f1e64a00368a16f1b427a48f1"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/adapter.bad-route-id.json",
+      "bytes": 342,
+      "sha256": "96e290a16a47981db53aa84079e5aae7e5f171aeef26529566c3e80b11dfc6ad"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/adapter.path-escape.json",
+      "bytes": 335,
+      "sha256": "98d3aeb07a9326d2a0fca8acd408edc2b6bbe60751dda549bf313136217dce29"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/adapter.unknown-field.json",
+      "bytes": 368,
+      "sha256": "211869ff2121ec4269017888593a427dfbb094ea7d9e9a23ff380b357f949ef5"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/codex-app-server-lead-ack.unknown-field.json",
+      "bytes": 245,
+      "sha256": "9b8644ec9d602a73524a2836f5a5b51f14faf1dbfee1beb69ad37bf4841d0765"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/codex-app-server-lead-bound-turn.unknown-field.json",
+      "bytes": 253,
+      "sha256": "22864e62e8aeb9ae078c264bf4c2007b6bb3835a4e0f2f6fc2fe242ddd34ce16"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/codex-app-server-lead-child.unknown-field.json",
+      "bytes": 209,
+      "sha256": "0e12bc6f251ce1fa4db029bc0337724751443ccb6c7a79fd2844d4b149c12db9"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/codex-app-server-lead-failure.unknown-field.json",
+      "bytes": 520,
+      "sha256": "2fc20667522cba1b4e8c3fdf6af7ae2cc6eb32117b78a026a6b915c2879ed1c3"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/codex-app-server-lead-intent.unknown-field.json",
+      "bytes": 963,
+      "sha256": "35f6a83c77c15daaf2d048da058ee8f5fdc62b8924ada6f52131e2cc4c3fa47c"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/codex-app-server-lead-owner.unknown-field.json",
+      "bytes": 209,
+      "sha256": "57f9f80dc825c8acb2ea17169fa7ae36dcdb58bb9f6d66032dd1d1c7186c4e01"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/codex-app-server-lead-profile.unknown-field.json",
+      "bytes": 374,
+      "sha256": "d7ba48066ce33b938d5194c1b4c2f5335c6888012e9fb8f0b62198e331e765d5"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/codex-app-server-lead-recovery.unknown-field.json",
+      "bytes": 447,
+      "sha256": "2433cbafe69ff890ca9f29f0bfe964185e3b30fb723f5f3b732d2c0bcc1dfe7b"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/codex-app-server-lead-result.unknown-field.json",
+      "bytes": 263,
+      "sha256": "7e04853d724d3ca5b11f5b566d72c8d7a1f8f4b83af5891a139380396ee221a2"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/codex-app-server-lead-run.unknown-field.json",
+      "bytes": 1077,
+      "sha256": "aaf51abb039d9101e3ddd06b4f4a3ae43d734f9a52e1d9ef6a67f8a7f8d3bdfa"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/codex-app-server-lead-status-sources.unknown-field.json",
+      "bytes": 269,
+      "sha256": "e8364487026deaff43f3bae0c618985803ac5446d942a2d50a3549a2aba7317e"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/codex-app-server-lead-status.unknown-field.json",
+      "bytes": 368,
+      "sha256": "1b73741bebc767f3f3e7bfb4efe7bf88b0a2e87568508e1f505fd02121cf123f"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/dashboard-closure.unknown-field.json",
+      "bytes": 372,
+      "sha256": "8f179c316435b654f734ac1e3df3ba99e710614ce5dbcf7d272587d76794766e"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/dashboard-config.unknown-field.json",
+      "bytes": 98,
+      "sha256": "dc6b9955a88ffd57849486adaa0dbbc95418c5a6dd0bbdc7a5305c88c22d4f7e"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/dashboard-lifecycle-event.unknown-field.json",
+      "bytes": 428,
+      "sha256": "3edbcec82a19d17987eba50b93cdffd513534ffe4461684495a2e7c6f58b97bd"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/dashboard-project-descriptor.direct-job-roots-too-many.json",
+      "bytes": 975,
+      "sha256": "bed3fea6636fde6715304f7384b99d6e47f931d2d6ff941eee1a29707e2a12ce"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/dashboard-project-descriptor.unknown-field.json",
+      "bytes": 172,
+      "sha256": "8c6c244922a0c8434459bbc5cb51ecb31f95f6be56a91f5171010041e46cc4fc"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/dashboard-projection.unknown-field.json",
+      "bytes": 182,
+      "sha256": "530ad0e9d7f48fda48c3e07a85e5b971fc72fe0d484bbdc1fa633d929bb89cc9"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/dispatch.bad-id.json",
+      "bytes": 1087,
+      "sha256": "e32a604e84d4d3e0d8cc48b96d22258b53f681f72d7855c5f91cc9d522bff121"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/dispatch.bad-role.json",
+      "bytes": 1109,
+      "sha256": "62375f86370bb365540dc29e944c54ff3a0943b1cfe41e2f0c091b75aa096b2b"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/dispatch.unknown-field.json",
+      "bytes": 1135,
+      "sha256": "74f49092865967eb426d6a6ea798be1344c228fd532d31f9d03ee105f46cbe0d"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/lead-binding.bad-session.json",
+      "bytes": 216,
+      "sha256": "47198cb63a533298699542746797cedc813f3020ee92c931d0517de4dd4121d9"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/lead-binding.unknown-field.json",
+      "bytes": 253,
+      "sha256": "55b785657aa4b7088a6c925043bb6183ce8d08c5e9578ed8db8bbe1d57def277"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/lifecycle-status.unknown-field.json",
+      "bytes": 295,
+      "sha256": "7ad4e1ecda5830969d70cb60740ed1ec50ffefcf21204632a641a7b89ef7d685"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/malformed.json",
+      "bytes": 17,
+      "sha256": "946fefe1ec51413c960acf53bce99af251f40cfc192d71b4a291909ed0c84121"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/receipt.timeout-true.json",
+      "bytes": 776,
+      "sha256": "34208e179ca2d9bace76d7eaf925f748a4cec3134847cb765473db0655c4a09d"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/receipt.unknown-field.json",
+      "bytes": 793,
+      "sha256": "2f8d072fe3594b740a6ec3dd857c7c43cc40f3bd9c80f8238945216c8e21f2f3"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/telephone-line-batch.unknown-field.json",
+      "bytes": 1958,
+      "sha256": "c28af6beaebd2666a7a52ffa1327d3f63c22b73a410ddee6b1a8248616c86119"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/wired-supervisor-control.unknown-field.json",
+      "bytes": 110,
+      "sha256": "a1a71ad0ce3029b184621b7a38e3ce24296e5144273c92cd18297c741da8032a"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/wired-supervisor-owner.unknown-field.json",
+      "bytes": 268,
+      "sha256": "fa4c2751dfc0573547c81bcdf0c7d1a83b8bea7a45cf332ae33ac87a80b12931"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/wired-supervisor-request.unknown-field.json",
+      "bytes": 810,
+      "sha256": "525c446539439d68d145a865cba5009f7435440f324c8ad54e0bbfc9870e83b6"
+    },
+    {
+      "path": "tests/contracts/fixtures/negative/wired-supervisor-status.unknown-field.json",
+      "bytes": 200,
+      "sha256": "c8af36637133381bc813cc19fb7c0730bb83f1d6175f67ba218293fe189a6876"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/adapter.json",
+      "bytes": 343,
+      "sha256": "f83887ce7c4160527ba911d10c48a2925684a238d0a53bb5c818c739642a1cfc"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/adapter.one-shot.json",
+      "bytes": 349,
+      "sha256": "c28cc509b14b7c8456350d02d759d53d467f73d1def8b29ac8f744c54ca372da"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/codex-app-server-lead-ack.json",
+      "bytes": 228,
+      "sha256": "880bb0839dac6cad08d68e8a8541b88190708f1c5ffec778aa79fcd4d2cf1276"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/codex-app-server-lead-bound-turn.json",
+      "bytes": 236,
+      "sha256": "c79d42d1f1ff57db4f66036e58de1425f09d93b0d7522f94c6af3fde38e30d01"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/codex-app-server-lead-child.json",
+      "bytes": 192,
+      "sha256": "0a0d23bec458232088fa64062f081eeb195b94798b6dcf4edd8d6bde4f10c5c0"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/codex-app-server-lead-failure.json",
+      "bytes": 503,
+      "sha256": "f483e72e37a33fe033897591666ddbdcbce1b7fc1d46b2b0154d0b6e286fe435"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/codex-app-server-lead-intent.json",
+      "bytes": 946,
+      "sha256": "198f925cb0883bdde5de3c90f637a6b8965d20e06aa59ca6e653f00039af2696"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/codex-app-server-lead-owner.json",
+      "bytes": 316,
+      "sha256": "b28864210928270cc9561f0b57031a681571c99419877b76dfa2961a3bbcce8d"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/codex-app-server-lead-profile.json",
+      "bytes": 477,
+      "sha256": "b309997394d411f9de1074862ed3d1ca402d099a3506303e578535af74e09b04"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/codex-app-server-lead-recovery.json",
+      "bytes": 430,
+      "sha256": "56eb985c21f427ab57c97654f240b7e77d56bcbf4e6da5ae4bad5f0c61a4b34e"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/codex-app-server-lead-result.json",
+      "bytes": 246,
+      "sha256": "7e96bc799eeaa4080f399a8e1f35dfa7093541282f859c76d996aa2d3e592a70"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/codex-app-server-lead-run.json",
+      "bytes": 1075,
+      "sha256": "7f63ec215ccd0f2bc7ec03a580997c308e1ddaa2be0ceb94da10e42b094243ff"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/codex-app-server-lead-status-sources.json",
+      "bytes": 252,
+      "sha256": "26228fda00caa84ec686ef816fe3710ae3a29d852d120a7165ca9f52d5930a00"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/codex-app-server-lead-status.json",
+      "bytes": 445,
+      "sha256": "0d8d80e59cce8b4b20a1e13a81941c298f703af81588717769924902fce8d916"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/dashboard-closure.json",
+      "bytes": 452,
+      "sha256": "f7764f8aa68bd581f694e35e47056d3565375ae68c53201b92a37bd5d34e4fa0"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/dashboard-config.json",
+      "bytes": 160,
+      "sha256": "2197e5b097b057989e69d76245042d3c33ffc95e0bb3cd4c16e45c6d0dc52b31"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/dashboard-lifecycle-event.json",
+      "bytes": 450,
+      "sha256": "ef03e062663b4fca19a41491f79edd06dbf6d97ed2c518356e4d01bb7ffafc8b"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/dashboard-project-descriptor.json",
+      "bytes": 265,
+      "sha256": "134f343762887936731785bc7cdc22bcf27320f32772f2db7bd14030aeab6731"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/dashboard-projection.json",
+      "bytes": 834,
+      "sha256": "d2d5f5eddb8f7904efc87e745781922a42df4742ca0cbeddc0dc5d3fd67dc483"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/dispatch.json",
+      "bytes": 1146,
+      "sha256": "16eb373d548ed6d8561e10342c736f550868d2a66e71ed7aac339c5a8bc8b91f"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/lead-binding.json",
+      "bytes": 224,
+      "sha256": "85ebfcfec83570404a922af821b1da76a09b155dfba31542b483fe55b9bfdfd5"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/lifecycle-status.json",
+      "bytes": 278,
+      "sha256": "3b559d382f3df782378979f67e2d569057aac58d70e773481fa25e76e16f3c52"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/receipt.json",
+      "bytes": 777,
+      "sha256": "ee39306666761bcd7c8a8ee353479f6135cae32210263984e8631680c3ed0e42"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/telephone-line-batch.json",
+      "bytes": 2806,
+      "sha256": "c3d0be2813f88822a4e840caf0939c2c4d7943c8765d8e5d7b297003c54a317d"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/wired-supervisor-control.json",
+      "bytes": 93,
+      "sha256": "b5d05e58053c4ab73579ace762343895cab4ee7f06e9dc987ae0abdde26526c4"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/wired-supervisor-owner.json",
+      "bytes": 895,
+      "sha256": "b20e350fb08252c813e2d4176213e367fd1d23fdf246363d81e7cb69b5419121"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/wired-supervisor-request.json",
+      "bytes": 913,
+      "sha256": "c7ac310bca6c0d324afe368ccd69ed434a863a8bd607bdcc904ab43555dd0827"
+    },
+    {
+      "path": "tests/contracts/fixtures/valid/wired-supervisor-status.json",
+      "bytes": 707,
+      "sha256": "55cd82d391cf7070ff02c58bc818a3b90a907e11ae51bb7f540f34420fc521c4"
+    },
+    {
+      "path": "tests/contracts/test_contracts.ps1",
+      "bytes": 27898,
+      "sha256": "fb36c392f1663fe73ab472695691650f173970e98f3058d6f4afdda573c5a2de"
+    },
+    {
+      "path": "tests/control-plane/test_control_plane.ps1",
+      "bytes": 65018,
+      "sha256": "9bf5df42cd1f071e74f5a49770e90b2e8024d339ae891cdcccd1def538ff0091"
+    },
+    {
+      "path": "tests/core/fixtures/mock-lead-launcher.ps1",
+      "bytes": 7007,
+      "sha256": "a632a8106e4e2dbf33d6e3079e46b1f5deb1915f013d97081c03c363caae9930"
+    },
+    {
+      "path": "tests/core/fixtures/mock-route.ps1",
+      "bytes": 749,
+      "sha256": "d4b4d19e17295904b0d67787ae82c88680ac01c9055ce3fc8c45fdfd4b2b284d"
+    },
+    {
+      "path": "tests/core/fixtures/mock-stdin-route.ps1",
+      "bytes": 453,
+      "sha256": "08e97fdaf0e645851ede1e8b42e50d66e988139ee8667d72d660228fd13d467e"
+    },
+    {
+      "path": "tests/core/test_autonomous_event_chain.ps1",
+      "bytes": 33479,
+      "sha256": "049ce587983ba0a9f219a87eeb5c936163215f117e5f410d7fd2ca9af1379db3"
+    },
+    {
+      "path": "tests/core/test_telephone_line.ps1",
+      "bytes": 86648,
+      "sha256": "edd70aaff6943e1d26c44be8191a4aa1a4a9ae50388955d0caf956dc8ba5eeb5"
+    },
+    {
+      "path": "tests/dashboard/test_dashboard.ps1",
+      "bytes": 157570,
+      "sha256": "c0b84ffb72c488cf6a3c18ed3a26d3b20a3921714982f83896b16d1e0f490a36"
+    },
+    {
+      "path": "tests/docs/test_public_docs.ps1",
+      "bytes": 23589,
+      "sha256": "3cd412251de51a1b1b040d7df5469a24fe803a9a3c623b715b1b6605ecf12728"
+    },
+    {
+      "path": "tests/install/test_install_lifecycle.ps1",
+      "bytes": 56162,
+      "sha256": "afbf5558d9fc23fa3f174df3e943a7cc86e44d1c5057faca451a729c096d841a"
+    },
+    {
+      "path": "tests/lead-side/codex-app-server/fixtures/Mock-CodexAppServer.ps1",
+      "bytes": 47767,
+      "sha256": "11f48c12422b085a8b85e54abe2ed3e411318fda2ac9230f4673c84fa07938c8"
+    },
+    {
+      "path": "tests/lead-side/codex-app-server/fixtures/Spy-CliLeadLauncher.ps1",
+      "bytes": 906,
+      "sha256": "705409a48b1afb1d14c86daf3f728e104aba9738b14e21749dc40d127c0e1a47"
+    },
+    {
+      "path": "tests/lead-side/codex-app-server/test_codex_app_server_lead.ps1",
+      "bytes": 715853,
+      "sha256": "48168897556e3fc42c47c2fa2d80839cafc71c24703917f08c698a176c45a707"
+    },
+    {
+      "path": "tests/lead-side/cursor-external-route/fixtures/Receive-CursorExternalLeadArgs.ps1",
+      "bytes": 639,
+      "sha256": "e3ea3b4ecf317e87443d27933cfec4c080ccbf1f985205e20b6612323910972a"
+    },
+    {
+      "path": "tests/lead-side/cursor-external-route/fixtures/Spy-LeadLauncher.ps1",
+      "bytes": 895,
+      "sha256": "e93fb1facc0c6971ddcd380551d7ec903acf53afb844850bff692047272ac52a"
+    },
+    {
+      "path": "tests/lead-side/cursor-external-route/test_cursor_external_lead.ps1",
+      "bytes": 61477,
+      "sha256": "f639b83a0dedd50e91f8b97f206b84c901d3497c76e9d8526ba98951355ea83a"
+    },
+    {
+      "path": "tests/packaging/test_packaging.ps1",
+      "bytes": 33220,
+      "sha256": "76287c0b9adec571d65fd59ac67eaa8f5bbf94e25da1cb132622dcdbedde50ac"
+    },
+    {
+      "path": "tests/supervisor/fixtures/mock-owned-child.ps1",
+      "bytes": 1869,
+      "sha256": "6f4f0b1206b3569bbf37c14006ca63c677e723fa7f498b61adf9ce92328e82a6"
+    },
+    {
+      "path": "tests/supervisor/fixtures/mock-scheduler.ps1",
+      "bytes": 3997,
+      "sha256": "11e47745718050075facb12d55b8137d7a641678e1d57b2a85733894862df8b5"
+    },
+    {
+      "path": "tests/supervisor/fixtures/mock-wired-lead.ps1",
+      "bytes": 11490,
+      "sha256": "2eabbcba12cd579be207414dae1bb56d2552ae06a05507f3b993a2c8633545ea"
+    },
+    {
+      "path": "tests/supervisor/test_wired_supervisor.ps1",
+      "bytes": 96766,
+      "sha256": "942c7fb69bf3fd774a20419b19ffb96e039b6326f62cf9ecacd42836980df85c"
+    }
+  ],
+  "counts": {
+    "files": 289,
+    "bytes": 3801775
+  },
+  "excluded": [
+    ".control/**",
+    ".git/**",
+    "**/node_modules/**",
+    "**/logs/**",
+    "**/log/**",
+    "**/receipts/**",
+    "**/dispatches/**",
+    "**/deliveries/**",
+    "**/delivery/**",
+    "**/cache/**",
+    "**/caches/**",
+    "**/state/**",
+    "**/*.{exe,dll,sys,com,scr,msi,msix,iso,img,so,dylib}",
+    "user-profile/**",
+    "root files other than README.md, LICENSE, CONTRIBUTING.md, SECURITY.md, THIRD-PARTY-NOTICES.md, and .gitattributes"
+  ]
+}

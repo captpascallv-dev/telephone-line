@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:telephone-line:schema:codex-app-server-lead-failure:v1",
+  "title": "telephone-line-codex-app-server-lead-failure-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "category",
+    "code",
+    "run_id",
+    "run_root",
+    "thread_id",
+    "turn_id",
+    "callback_write_phase",
+    "disposition",
+    "at_utc"
+  ],
+  "properties": {
+    "protocol_version": {
+      "type": "string",
+      "const": "telephone-line-codex-app-server-lead-failure-v1"
+    },
+    "category": {
+      "type": "string",
+      "enum": ["worker", "launcher", "preflight", "builder", "status", "protocol", "chain"]
+    },
+    "code": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_]+$"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "run_root": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32767,
+      "pattern": "^[^\\u0000-\\u001F\"<>|*?]+$"
+    },
+    "thread_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "turn_id": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]*$"
+    },
+    "callback_write_phase": {
+      "type": "string",
+      "enum": [
+        "none",
+        "turn_start_sending",
+        "turn_bound",
+        "acknowledged",
+        "terminal_publishing",
+        "terminal"
+      ]
+    },
+    "disposition": {
+      "type": "string",
+      "enum": [
+        "in_progress",
+        "completed",
+        "recovered",
+        "failed",
+        "interrupted",
+        "recovery_required",
+        "fallback_required_cli"
+      ]
+    },
+    "at_utc": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[^\\u0000-\\u001F]+$"
+    }
+  }
+}

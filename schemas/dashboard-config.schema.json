@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:telephone-line:schema:dashboard-config:v1",
+  "title": "telephone-line-dashboard-config-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "projects"
+  ],
+  "properties": {
+    "protocol_version": {
+      "type": "string",
+      "const": "telephone-line-dashboard-config-v1"
+    },
+    "projects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["descriptor_file"],
+        "properties": {
+          "descriptor_file": {
+            "$ref": "#/$defs/windows_path"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "windows_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32767,
+      "pattern": "^[^\\u0000-\\u001F\"<>|*?]+$"
+    }
+  }
+}

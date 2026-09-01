@@ -1,0 +1,148 @@
+name: offline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Verification mode. Automatic pull_request and main push always use smoke. Choose full only for the explicit final candidate.
+        required: true
+        type: choice
+        default: smoke
+        options:
+          - smoke
+          - full
+
+concurrency:
+  group: telephone-line-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Print PowerShell version
+        shell: pwsh
+        run: $PSVersionTable.PSVersion.ToString()
+      - name: Classify verification mode
+        id: mode
+        shell: pwsh
+        run: |
+          $eventName = '${{ github.event_name }}'
+          $requested = '${{ github.event.inputs.mode }}'
+          $mode = 'smoke'
+          $docsOnly = 'false'
+          if ($eventName -eq 'workflow_dispatch' -and $requested -eq 'full') {
+            $mode = 'full'
+          } elseif ($eventName -eq 'pull_request' -or $eventName -eq 'push') {
+            $mode = 'smoke'
+          } else {
+            $mode = 'smoke'
+          }
+          if ($mode -eq 'full' -and $eventName -ne 'workflow_dispatch') {
+            throw 'Full verification is manual workflow_dispatch only.'
+          }
+          if ($eventName -eq 'pull_request') {
+            $docsPrefixes = @(
+              'docs/',
+              'README.md',
+              'CONTRIBUTING.md',
+              'LICENSE',
+              'SECURITY.md',
+              'THIRD-PARTY-NOTICES.md',
+              '.github/ISSUE_TEMPLATE/',
+              '.github/pull_request_template.md'
+            )
+            $changed = @(git diff --name-only '${{ github.event.pull_request.base.sha }}' '${{ github.event.pull_request.head.sha }}')
+            if ($LASTEXITCODE -ne 0 -or $changed.Count -eq 0) { exit 1 }
+            $nonDocs = @($changed | Where-Object {
+              $path = [string]$_
+              $ok = $false
+              foreach ($prefix in $docsPrefixes) {
+                if ($path -ceq $prefix -or $path.StartsWith($prefix, [StringComparison]::Ordinal)) { $ok = $true; break }
+              }
+              -not $ok
+            })
+            if ($nonDocs.Count -eq 0) { $docsOnly = 'true' }
+          }
+          "mode=$mode" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "docs_only=$docsOnly" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+      - name: Assert required files
+        shell: pwsh
+        run: |
+          $required = @(
+            '.github/workflows/ci.yml',
+            'release-manifest.json',
+            'tests/Invoke-OfflineTests.ps1',
+            'tests/core/test_telephone_line.ps1',
+            'tests/contracts/test_contracts.ps1',
+            'tests/docs/test_public_docs.ps1',
+            'tests/packaging/test_packaging.ps1',
+            'tests/lead-side/codex-app-server/test_codex_app_server_lead.ps1',
+            'src/core/TelephoneLine.Common.ps1',
+            'src/lead-side/codex-app-server/CodexAppServerLead.Common.ps1',
+            'src/lead-side/codex-app-server/CodexAppServerLead.Lifecycle.ps1'
+          )
+          foreach ($rel in $required) {
+            if (-not [IO.File]::Exists((Join-Path (Get-Location) ($rel.Replace('/', '\'))))) {
+              throw "Required file missing: $rel"
+            }
+          }
+      - name: Assert workflow mode
+        shell: pwsh
+        run: |
+          $eventName = '${{ github.event_name }}'
+          $mode = '${{ steps.mode.outputs.mode }}'
+          if (($eventName -eq 'pull_request' -or $eventName -eq 'push') -and $mode -cne 'smoke') {
+            throw 'Automatic pull_request and main push must remain smoke.'
+          }
+          if ($mode -eq 'full' -and $eventName -cne 'workflow_dispatch') {
+            throw 'Full verification leaked onto an automatic event.'
+          }
+      - name: Run schema and contract smoke
+        if: steps.mode.outputs.mode == 'smoke' && steps.mode.outputs.docs_only != 'true'
+        shell: pwsh
+        run: |
+          $testRoot = Join-Path $env:RUNNER_TEMP ('telephone-contracts-' + [guid]::NewGuid().ToString('N'))
+          & pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/contracts/test_contracts.ps1 -TestRoot $testRoot
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run core Telephone smoke
+        if: steps.mode.outputs.mode == 'smoke' && steps.mode.outputs.docs_only != 'true'
+        shell: pwsh
+        run: |
+          $testRoot = Join-Path $env:RUNNER_TEMP ('telephone-core-' + [guid]::NewGuid().ToString('N'))
+          & pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/core/test_telephone_line.ps1 -TestRoot $testRoot
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run callback-owner smoke
+        if: steps.mode.outputs.mode == 'smoke' && steps.mode.outputs.docs_only != 'true'
+        shell: pwsh
+        run: |
+          $testRoot = Join-Path $env:RUNNER_TEMP ('telephone-owner-' + [guid]::NewGuid().ToString('N'))
+          & pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/lead-side/codex-app-server/test_codex_app_server_lead.ps1 -TestRoot $testRoot -CallbackOwnerOnly
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run docs and manifest smoke
+        if: steps.mode.outputs.mode == 'smoke'
+        shell: pwsh
+        run: |
+          $docsRoot = Join-Path $env:RUNNER_TEMP ('telephone-docs-' + [guid]::NewGuid().ToString('N'))
+          & pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/docs/test_public_docs.ps1 -TestRoot $docsRoot
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $packRoot = Join-Path $env:RUNNER_TEMP ('telephone-pack-' + [guid]::NewGuid().ToString('N'))
+          & pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/packaging/test_packaging.ps1 -TestRoot $packRoot
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run full offline suite
+        if: steps.mode.outputs.mode == 'full'
+        shell: pwsh
+        run: |
+          & pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/Invoke-OfflineTests.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -1,0 +1,15 @@
+{
+  "protocol_version": "telephone-line-dashboard-lifecycle-event-v1",
+  "ordinal": 1,
+  "kind": "lead",
+  "transport": "wired",
+  "project": "example-project",
+  "lead_session_id": "example-session-001",
+  "lead_run_id": "example-run-001",
+  "line_job_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1",
+  "receipt_sha256": null,
+  "provenance": null,
+  "duplicate": false,
+  "duplicate_count": 0,
+  "created_at_utc": "2026-01-01T00:00:00.0000000+00:00"
+}

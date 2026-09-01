@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:telephone-line:schema:control-plane-wave-spec:v1",
+  "title": "telephone-line-control-plane-wave-spec-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol_version", "project", "project_epoch", "goal_summary", "authority_path", "lead", "control_state_root", "lanes"],
+  "properties": {
+    "protocol_version": { "const": "telephone-line-control-plane-wave-spec-v1" },
+    "project": { "$ref": "#/$defs/label" }, "project_epoch": { "$ref": "#/$defs/label" }, "goal_summary": { "$ref": "#/$defs/label" },
+    "authority_path": { "$ref": "#/$defs/path" }, "lead_binding_file": { "$ref": "#/$defs/path" }, "wave_id": { "$ref": "#/$defs/label" }, "batch_id": { "$ref": "#/$defs/uuid" },
+    "control_state_root": { "$ref": "#/$defs/path" }, "supervisor_state_root": { "$ref": "#/$defs/path" }, "install_root": { "$ref": "#/$defs/path" }, "dashboard_config_path": { "$ref": "#/$defs/path" },
+    "projection_stale_after_seconds": { "type": "integer", "minimum": 5, "maximum": 86400 },
+    "lead": { "$ref": "#/$defs/lead" }, "next_transition": { "$ref": "#/$defs/next" },
+    "lanes": { "type": "array", "minItems": 1, "maxItems": 32, "items": { "$ref": "#/$defs/lane" } },
+    "actions": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/action" } }
+  },
+  "$defs": {
+    "label": { "type": "string", "minLength": 1, "maxLength": 2000, "pattern": "^[^\\u0000-\\u001F]+$" },
+    "path": { "type": "string", "minLength": 1, "maxLength": 32767, "pattern": "^[^\\u0000-\\u001F\"<>|*?]+$" },
+    "uuid": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+    "lead": { "type": "object", "additionalProperties": false, "required": ["transport", "session_id", "run_id"], "properties": { "transport": { "enum": ["wired", "wireless"] }, "session_id": { "$ref": "#/$defs/label" }, "run_id": { "$ref": "#/$defs/label" }, "owner_file": { "$ref": "#/$defs/path" } } },
+    "command": { "type": "object", "additionalProperties": false, "required": ["executable", "working_directory", "arguments"], "properties": { "executable": { "$ref": "#/$defs/path" }, "working_directory": { "$ref": "#/$defs/path" }, "arguments": { "type": "array", "maxItems": 256, "items": { "type": "string", "maxLength": 32767 } }, "stdin_file": { "$ref": "#/$defs/path" } } },
+    "lane": {
+      "type": "object", "additionalProperties": false,
+      "required": ["package_id", "role", "route", "telephone_state_root", "workspace", "allowed_write_paths"],
+      "properties": {
+        "package_id": { "$ref": "#/$defs/label" }, "stage": { "$ref": "#/$defs/label" }, "summary": { "$ref": "#/$defs/label" }, "role": { "enum": ["execution", "review"] }, "route": { "$ref": "#/$defs/label" },
+        "line_job_id": { "$ref": "#/$defs/uuid" }, "request_file": { "$ref": "#/$defs/path" }, "telephone_state_root": { "$ref": "#/$defs/path" }, "workspace": { "$ref": "#/$defs/path" },
+        "card_file": { "$ref": "#/$defs/path" }, "card_text": { "type": "string", "minLength": 1, "maxLength": 12000 }, "command": { "$ref": "#/$defs/command" }, "starter_command": { "$ref": "#/$defs/command" },
+        "allowed_write_paths": { "type": "array", "maxItems": 128, "items": { "type": "string", "minLength": 1, "maxLength": 4096 } },
+        "launch_grace_seconds": { "type": "integer", "minimum": 0, "maximum": 86400 }, "callback_grace_seconds": { "type": "integer", "minimum": 0, "maximum": 86400 }
+      }
+    },
+    "trigger": { "type": "object", "additionalProperties": false, "required": ["kind"], "properties": { "kind": { "enum": ["always", "all_lanes_delivered", "all_lanes_terminal", "lane_failed", "file_exists", "file_text_equals", "json_true"] }, "path": { "$ref": "#/$defs/path" }, "expected_text": { "type": "string", "maxLength": 4096 }, "json_property": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$" }, "target_package_id": { "$ref": "#/$defs/label" } } },
+    "postcondition": { "type": "object", "additionalProperties": false, "required": ["kind"], "properties": { "kind": { "enum": ["exit_zero", "file_exists", "file_text_equals", "json_true", "current_wave", "lane_job_exists"] }, "path": { "$ref": "#/$defs/path" }, "expected_text": { "type": "string", "maxLength": 4096 }, "json_property": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$" }, "project_epoch": { "$ref": "#/$defs/label" }, "wave_id": { "$ref": "#/$defs/label" }, "telephone_state_root": { "$ref": "#/$defs/path" }, "line_job_id": { "$ref": "#/$defs/uuid" } } },
+    "replacement": { "type": "object", "additionalProperties": false, "required": ["package_id", "line_job_id", "retry_of_line_job_id", "attempt", "request_file"], "properties": { "package_id": { "$ref": "#/$defs/label" }, "line_job_id": { "$ref": "#/$defs/uuid" }, "retry_of_line_job_id": { "$ref": "#/$defs/uuid" }, "attempt": { "type": "integer", "minimum": 2, "maximum": 16 }, "request_file": { "$ref": "#/$defs/path" } } },
+    "action": {
+      "type": "object", "additionalProperties": false, "required": ["action_id", "kind", "idempotency_key", "trigger", "command"],
+      "properties": {
+        "action_id": { "$ref": "#/$defs/label" }, "kind": { "enum": ["admission", "second_turn", "lane_recovery", "next_wave", "custom_authorized"] }, "sequence": { "type": "integer", "minimum": 1, "maximum": 1024 },
+        "depends_on": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/label" } }, "idempotency_key": { "$ref": "#/$defs/label" }, "trigger": { "$ref": "#/$defs/trigger" },
+        "command": { "$ref": "#/$defs/command" }, "expected_postcondition": { "$ref": "#/$defs/postcondition" }, "retry_policy": { "enum": ["conflict_if_ambiguous", "safe_once_if_no_effect"] }, "replacement": { "$ref": "#/$defs/replacement" }
+      }
+    },
+    "next": { "type": "object", "additionalProperties": false, "required": ["transition_id", "kind", "authorized", "idempotency_key"], "properties": { "transition_id": { "$ref": "#/$defs/label" }, "kind": { "$ref": "#/$defs/label" }, "authorized": { "type": "boolean" }, "idempotency_key": { "$ref": "#/$defs/label" } } }
+  }
+}

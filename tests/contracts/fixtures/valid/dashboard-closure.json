@@ -1,0 +1,12 @@
+{
+  "protocol_version": "telephone-line-dashboard-closure-v1",
+  "project": "example-project",
+  "lead_session_id": "example-session-001",
+  "lead_run_id": "example-run-001",
+  "receipt": {
+    "path": "C:\\example\\telephone-state\\jobs\\aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1\\receipt.json",
+    "bytes": 12,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "closed_at_utc": "2026-01-01T00:00:00.0000000+00:00"
+}

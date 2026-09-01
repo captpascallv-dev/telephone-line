@@ -1,0 +1,32 @@
+{
+  "protocol": "telephone-line-compatibility-contract-v1",
+  "no_paid_model": true,
+  "no_network": true,
+  "stages": [
+    {
+      "name": "dispatch",
+      "proving_test": "tests/core/test_telephone_line.ps1",
+      "proving_counter": "asynchronous_lead_exit"
+    },
+    {
+      "name": "detached execution",
+      "proving_test": "tests/core/test_telephone_line.ps1",
+      "proving_counter": "detached_worker_stdio"
+    },
+    {
+      "name": "durable receipt",
+      "proving_test": "tests/core/test_telephone_line.ps1",
+      "proving_counter": "atomic_receipt_and_wake_ack"
+    },
+    {
+      "name": "exact Lead wake",
+      "proving_test": "tests/core/test_telephone_line.ps1",
+      "proving_counter": "exact_session_wake"
+    },
+    {
+      "name": "next turn",
+      "proving_test": "tests/core/test_telephone_line.ps1",
+      "proving_counter": "ambiguous_wake_at_most_once"
+    }
+  ]
+}

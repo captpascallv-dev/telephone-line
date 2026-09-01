@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:telephone-line:schema:control-plane-event:v1",
+  "title": "telephone-line-control-plane-event-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol_version", "event_id", "project", "project_epoch", "wave_id", "projection_version", "projection_fingerprint", "kind", "idempotency_key", "at_utc", "transition"],
+  "properties": {
+    "protocol_version": { "const": "telephone-line-control-plane-event-v1" },
+    "event_id": { "$ref": "#/$defs/sha" },
+    "project": { "$ref": "#/$defs/label" },
+    "project_epoch": { "$ref": "#/$defs/label" },
+    "wave_id": { "$ref": "#/$defs/label" },
+    "projection_version": { "type": "integer", "minimum": 1 },
+    "projection_fingerprint": { "$ref": "#/$defs/sha" },
+    "kind": { "$ref": "#/$defs/label" },
+    "idempotency_key": { "$ref": "#/$defs/label" },
+    "at_utc": { "$ref": "#/$defs/time" },
+    "transition": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/identity" }] }
+  },
+  "$defs": {
+    "label": { "type": "string", "minLength": 1, "maxLength": 2000, "pattern": "^[^\\u0000-\\u001F]+$" },
+    "path": { "type": "string", "minLength": 1, "maxLength": 32767 },
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "identity": { "type": "object", "additionalProperties": false, "required": ["path", "bytes", "sha256"], "properties": { "path": { "$ref": "#/$defs/path" }, "bytes": { "type": "integer", "minimum": 0 }, "sha256": { "$ref": "#/$defs/sha" } } },
+    "time": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})$" }
+  }
+}

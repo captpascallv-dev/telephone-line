@@ -1,0 +1,38 @@
+{
+  "protocol_version": "telephone-line-dispatch-v1",
+  "line_job_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1",
+  "project": "example-project",
+  "stage": "example-stage",
+  "role": "execution",
+  "route": "example-route",
+  "summary": "example summary",
+  "lead": {
+    "protocol_version": "telephone-line-lead-binding-v1",
+    "session_id": "example-session-001",
+    "worktree": "C:\\example\\worktree",
+    "launcher": {
+      "path": "C:\\example\\lead-launcher.ps1",
+      "arguments": []
+    }
+  },
+  "command": {
+    "executable": "C:\\example\\pwsh.exe",
+    "working_directory": "C:\\example\\worktree",
+    "arguments": [],
+    "stdin": null
+  },
+  "source_request": {
+    "path": "C:\\example\\request.json",
+    "bytes": 12,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "lead_binding": {
+    "path": "C:\\example\\lead-binding.json",
+    "bytes": 12,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "created_at_utc": "2026-01-01T00:00:00.0000000+00:00",
+  "absolute_task_timeout": false,
+  "project_judgment": false,
+  "unexpected": true
+}

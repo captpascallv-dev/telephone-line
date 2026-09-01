@@ -1,0 +1,20 @@
+{
+  "protocol_version": "telephone-line-adapter-v1",
+  "route_id": "deepsea-grok-cli",
+  "display_name": "DeepSea Grok CLI",
+  "windows_entrypoint": "Invoke-DeepSeaGrok.ps1",
+  "dependency_boundary": "dsh-subscription-xai-user-installed",
+  "capabilities": {
+    "start": true,
+    "follow_up": false,
+    "recover": true,
+    "exact_native_session": false
+  },
+  "default_model": "grok-4.6",
+  "default_reasoning_effort": "xhigh",
+  "allowed_reasoning_effort": [
+    "low",
+    "high",
+    "xhigh"
+  ]
+}

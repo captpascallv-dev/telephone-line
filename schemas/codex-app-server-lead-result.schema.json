@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:telephone-line:schema:codex-app-server-lead-result:v1",
+  "title": "telephone-line-codex-app-server-lead-result-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "started",
+    "existing",
+    "state",
+    "run_id",
+    "run_root"
+  ],
+  "properties": {
+    "started": {
+      "type": "boolean"
+    },
+    "existing": {
+      "type": "boolean"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "in_progress",
+        "completed",
+        "recovered",
+        "failed",
+        "interrupted",
+        "recovery_required",
+        "fallback_required_cli"
+      ]
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "run_root": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32767,
+      "pattern": "^[^\\u0000-\\u001F\"<>|*?]+$"
+    },
+    "fallback_required": {
+      "type": "string",
+      "enum": ["", "cli"]
+    }
+  }
+}

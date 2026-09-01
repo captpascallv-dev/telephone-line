@@ -1,0 +1,8 @@
+{
+  "name": "telephone-line-dsh-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MPL-2.0",
+  "description": "Replaceable Cordis/DSH plugin for Telephone Line DeepSea routes. DSH owns the agent loop and subscription OAuth; PI coding-agent is not required."
+}

@@ -1,0 +1,13 @@
+{
+  "protocol_version": "telephone-line-adapter-v1",
+  "route_id": "direct-grok-cli",
+  "display_name": "Direct Grok CLI",
+  "windows_entrypoint": "Invoke-DirectGrokRoute.ps1",
+  "dependency_boundary": "official-grok-cli-user-installed",
+  "capabilities": {
+    "start": true,
+    "follow_up": true,
+    "recover": true,
+    "exact_native_session": true
+  }
+}

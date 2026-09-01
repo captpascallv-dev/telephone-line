@@ -1,0 +1,8 @@
+{
+  "protocol_version": "telephone-line-dashboard-config-v1",
+  "projects": [
+    {
+      "descriptor_file": "C:\\example\\dashboard\\project.json"
+    }
+  ]
+}

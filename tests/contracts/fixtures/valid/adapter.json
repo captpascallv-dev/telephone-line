@@ -1,0 +1,13 @@
+{
+  "protocol_version": "telephone-line-adapter-v1",
+  "route_id": "mock-native",
+  "display_name": "Mock Native Adapter",
+  "windows_entrypoint": "mock-native-adapter.ps1",
+  "dependency_boundary": "offline-mock-route",
+  "capabilities": {
+    "start": true,
+    "follow_up": true,
+    "recover": true,
+    "exact_native_session": true
+  }
+}

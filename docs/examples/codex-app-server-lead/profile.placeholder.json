@@ -1,0 +1,11 @@
+{
+  "protocol_version": "telephone-line-codex-app-server-lead-profile-v1",
+  "codex_command": "C:\\example\\codex.cmd",
+  "codex_version": "codex-cli YOUR_INSTALLED_VERSION",
+  "schema_file_count": 1,
+  "schema_bytes": 1,
+  "schema_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "executable_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "service_tier": "default",
+  "bound_at_utc": "2026-08-21T00:00:00.0000000+00:00"
+}

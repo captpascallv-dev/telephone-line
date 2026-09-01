@@ -1,0 +1,21 @@
+{
+  "protocol_version": "telephone-line-wired-supervisor-owner-v1",
+  "kind": "run",
+  "run_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1",
+  "request_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "pid": 4242,
+  "start_time_utc_ticks": 638000000000000000,
+  "started_at_utc": "2026-01-01T00:00:00.0000000Z",
+  "lead_pid": 4343,
+  "lead_start_time_utc_ticks": 638000000000000001,
+  "lead_started_at_utc": "2026-01-01T00:00:00.1000000Z",
+  "job_name": "Local\\TelephoneLine.WiredRun.aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1",
+  "project": "example-project",
+  "stage": "example-stage",
+  "lead_session_id": "example-session-001",
+  "lead_run_id": "example-run-001",
+  "installed_version": {
+    "version_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "source_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }
+}

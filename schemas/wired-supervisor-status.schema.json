@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:telephone-line:schema:wired-supervisor-status:v1",
+  "title": "telephone-line-wired-supervisor-status-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "paused_by_pascal",
+    "active_runs",
+    "inbox_count",
+    "claimed_count",
+    "outbox_count"
+  ],
+  "properties": {
+    "protocol_version": {
+      "type": "string",
+      "const": "telephone-line-wired-supervisor-status-v1"
+    },
+    "paused_by_pascal": {
+      "type": "boolean"
+    },
+    "supervisor_alive": {
+      "type": "boolean"
+    },
+    "supervisor_pid": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "supervisor_start_time_utc_ticks": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "current_version_id": {
+      "$ref": "#/$defs/sha256"
+    },
+    "pinned_version_ids": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/sha256"
+      }
+    },
+    "inbox_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "claimed_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "outbox_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "active_runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "run_id",
+          "project",
+          "stage"
+        ],
+        "properties": {
+          "run_id": {
+            "$ref": "#/$defs/uuid"
+          },
+          "project": {
+            "$ref": "#/$defs/opaque_label"
+          },
+          "stage": {
+            "$ref": "#/$defs/opaque_label"
+          },
+          "lead_session_id": {
+            "$ref": "#/$defs/session_id"
+          },
+          "name": {
+            "$ref": "#/$defs/opaque_label"
+          },
+          "lead_identity_sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "mailbox_batch_id": {
+            "$ref": "#/$defs/uuid"
+          },
+          "mailbox_counted": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "mailbox_n": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "mailbox_state": {
+            "$ref": "#/$defs/opaque_label"
+          },
+          "collector_pid": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "collector_in_job": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "opaque_label": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "pattern": "^[^\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F]+$"
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    }
+  }
+}

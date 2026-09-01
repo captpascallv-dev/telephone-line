@@ -1,0 +1,19 @@
+{
+  "protocol_version": "telephone-line-adapter-v1",
+  "route_id": "deepsea-v4",
+  "display_name": "DeepSea V4",
+  "windows_entrypoint": "Invoke-DeepSeaV4Headless.ps1",
+  "dependency_boundary": "dsh-deepseek-official-user-installed",
+  "capabilities": {
+    "start": true,
+    "follow_up": true,
+    "recover": true,
+    "exact_native_session": true
+  },
+  "default_model": "deepseek-v4-flash",
+  "allowed_reasoning_effort": [
+    "off",
+    "high",
+    "max"
+  ]
+}

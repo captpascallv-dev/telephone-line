@@ -1,0 +1,6 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema","$id":"urn:telephone-line:schema:control-plane-lane-attempt:v1","title":"telephone-line-control-plane-lane-attempt-v1",
+  "type":"object","additionalProperties":false,"required":["protocol_version","package_id","original_line_job_id","line_job_id","retry_of_line_job_id","attempt","request","action_intent","activated_at_utc"],
+  "properties":{"protocol_version":{"const":"telephone-line-control-plane-lane-attempt-v1"},"package_id":{"type":"string","minLength":1},"original_line_job_id":{"$ref":"#/$defs/uuid"},"line_job_id":{"$ref":"#/$defs/uuid"},"retry_of_line_job_id":{"$ref":"#/$defs/uuid"},"attempt":{"type":"integer","minimum":2,"maximum":16},"request":{"$ref":"#/$defs/identity"},"action_intent":{"$ref":"#/$defs/identity"},"activated_at_utc":{"type":"string","minLength":20}},
+  "$defs":{"uuid":{"type":"string","pattern":"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"},"identity":{"type":"object","additionalProperties":false,"required":["path","bytes","sha256"],"properties":{"path":{"type":"string","minLength":1},"bytes":{"type":"integer","minimum":0},"sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"}}}}
+}

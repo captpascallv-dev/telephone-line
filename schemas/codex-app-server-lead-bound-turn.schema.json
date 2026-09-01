@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:telephone-line:schema:codex-app-server-lead-bound-turn:v1",
+  "title": "telephone-line-codex-app-server-lead-bound-turn-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "thread_id",
+    "turn_id",
+    "state",
+    "bound_at_utc"
+  ],
+  "properties": {
+    "protocol_version": {
+      "type": "string",
+      "const": "telephone-line-codex-app-server-lead-bound-turn-v1"
+    },
+    "thread_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "turn_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "active",
+        "pending",
+        "completed",
+        "failed",
+        "interrupted",
+        "recovery_required"
+      ]
+    },
+    "bound_at_utc": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[^\\u0000-\\u001F]+$"
+    }
+  }
+}

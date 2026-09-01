@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:telephone-line:schema:catalog:v1",
+  "title": "telephone-line-route-catalog-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol",
+    "denominator",
+    "denominator_frozen",
+    "built_in_lead",
+    "routes"
+  ],
+  "properties": {
+    "protocol": {
+      "type": "string",
+      "const": "telephone-line-route-catalog-v1"
+    },
+    "denominator": {
+      "type": "integer",
+      "const": 8
+    },
+    "denominator_frozen": {
+      "type": "boolean",
+      "const": true
+    },
+    "built_in_lead": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "route_id",
+        "statement"
+      ],
+      "properties": {
+        "route_id": {
+          "type": "string",
+          "const": "direct-codex-cli"
+        },
+        "statement": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "pattern": "^[^\\u0000-\\u001F]+$"
+        }
+      }
+    },
+    "routes": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "route_id",
+          "display_name",
+          "family",
+          "adapter_root",
+          "descriptor",
+          "windows_entrypoint",
+          "dependency_boundary",
+          "boundary_declared_not_probed",
+          "capabilities",
+          "docs"
+        ],
+        "properties": {
+          "route_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[^\\u0000-\\u001F]+$"
+          },
+          "family": {
+            "type": "string",
+            "enum": [
+              "direct",
+              "deepsea"
+            ]
+          },
+          "adapter_root": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^src/adapters/[a-z0-9]+(?:-[a-z0-9]+)*$"
+          },
+          "descriptor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^src/adapters/[a-z0-9]+(?:-[a-z0-9]+)*/adapter\\.json$"
+          },
+          "windows_entrypoint": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^(?!.*(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$))[^\\u0000-\\u001F\"<>|*?]+$"
+          },
+          "dependency_boundary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+          },
+          "boundary_declared_not_probed": {
+            "type": "boolean",
+            "const": true
+          },
+          "capabilities": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "start",
+              "follow_up",
+              "recover",
+              "exact_native_session"
+            ],
+            "properties": {
+              "start": {
+                "type": "boolean"
+              },
+              "follow_up": {
+                "type": "boolean"
+              },
+              "recover": {
+                "type": "boolean"
+              },
+              "exact_native_session": {
+                "type": "boolean"
+              }
+            }
+          },
+          "docs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024,
+              "pattern": "^docs/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*\\.md$"
+            }
+          },
+          "default_model": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]{1,128}$"
+          },
+          "default_reasoning_effort": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32,
+            "pattern": "^[A-Za-z0-9._:-]{1,32}$"
+          },
+          "allowed_reasoning_effort": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32,
+              "pattern": "^[A-Za-z0-9._:-]{1,32}$"
+            }
+          }
+        }
+      }
+    }
+  }
+}

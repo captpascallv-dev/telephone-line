@@ -1,0 +1,13 @@
+{
+  "protocol_version": "telephone-line-adapter-v1",
+  "route_id": "direct-claude-code",
+  "display_name": "Direct Claude Code",
+  "windows_entrypoint": "Invoke-DirectClaudeCodeRoute.ps1",
+  "dependency_boundary": "claude-code-user-installed",
+  "capabilities": {
+    "start": true,
+    "follow_up": true,
+    "recover": true,
+    "exact_native_session": true
+  }
+}

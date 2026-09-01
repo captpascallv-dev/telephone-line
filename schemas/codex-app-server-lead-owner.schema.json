@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:telephone-line:schema:codex-app-server-lead-owner:v1",
+  "title": "telephone-line-codex-app-server-lead-owner-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "pid",
+    "start_time_utc_ticks",
+    "started_at_utc"
+  ],
+  "properties": {
+    "protocol_version": {
+      "type": "string",
+      "const": "telephone-line-codex-app-server-lead-owner-v1"
+    },
+    "pid": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "start_time_utc_ticks": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "started_at_utc": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[^\\u0000-\\u001F]+$"
+    },
+    "thread_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "active_run_id": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]*$"
+    }
+  }
+}

@@ -1,0 +1,9 @@
+# DeepSea V4
+
+DeepSea V4 is an execution and review side for the built-in Codex CLI Lead. It is not a Lead entry and it is not a downstream Harness route.
+
+The required shape is Codex Lead -> Telephone Line -> DSH Harness -> stock `deepseek-official` inside DSH -> exact original Codex Lead callback. DSH owns the agent loop, tools, permissions, workflow, and session. Start and follow-up use the DSH `agents.create` / `agents.resume` session runner and preserve the exact native DSH session id.
+
+Provider `deepseek-official` is frozen for this route. Model and reasoning effort use the same validated configuration mechanism as the other DeepSea routes. The declared default model is `deepseek-v4-flash`. This route sends no reasoning effort unless one is configured. When an effort is configured, the allowed values are `off`, `high`, and `max`, which are the values the stock DeepSeek adapter accepts. Override the model, and the effort when wanted, on the Windows entrypoint with `-Model` and `-ReasoningEffort`. An explicit `off` is a caller choice and is not the same as sending nothing. When an effort is set, it is written into the contained DSH headless-runner config and installed into DSH model selection so it reaches the provider call. Empty or malformed model ids, an effort outside that allowed set, and any Fast, priority, or ultrafast model variant are rejected before Headless starts. Rejections use the durable generic-error catalog and do not copy caller values into durable state. The adapter does not load a secret file and does not ask a model to choose a route.
+
+`start`, `follow_up`, and `recover` are supported. `follow_up` is exact-id only. `recover` returns already durable transport state without rerunning. `exact_native_session` is `true`. Duplicate or incomplete start never reruns. Prompt identity in durable state is bytes and SHA-256. There is no absolute whole-task timeout.

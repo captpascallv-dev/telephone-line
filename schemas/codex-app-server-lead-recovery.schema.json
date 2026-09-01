@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:telephone-line:schema:codex-app-server-lead-recovery:v1",
+  "title": "telephone-line-codex-app-server-lead-recovery-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "state",
+    "run_id",
+    "run_root",
+    "thread_id",
+    "turn_id",
+    "callback_write_phase",
+    "at_utc"
+  ],
+  "properties": {
+    "protocol_version": {
+      "type": "string",
+      "const": "telephone-line-codex-app-server-lead-recovery-v1"
+    },
+    "state": {
+      "type": "string",
+      "const": "recovery_required"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "run_root": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32767,
+      "pattern": "^[^\\u0000-\\u001F\"<>|*?]+$"
+    },
+    "thread_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "turn_id": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]*$"
+    },
+    "callback_write_phase": {
+      "type": "string",
+      "enum": [
+        "none",
+        "turn_start_sending",
+        "turn_bound",
+        "acknowledged",
+        "terminal_publishing",
+        "terminal"
+      ]
+    },
+    "at_utc": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[^\\u0000-\\u001F]+$"
+    }
+  }
+}

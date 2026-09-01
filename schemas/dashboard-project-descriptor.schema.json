@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:telephone-line:schema:dashboard-project-descriptor:v1",
+  "title": "telephone-line-dashboard-project-descriptor-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "project",
+    "state_root"
+  ],
+  "properties": {
+    "protocol_version": {
+      "type": "string",
+      "const": "telephone-line-dashboard-project-descriptor-v1"
+    },
+    "project": {
+      "$ref": "#/$defs/opaque_label"
+    },
+    "state_root": {
+      "$ref": "#/$defs/windows_path"
+    },
+    "lead_session_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "lead_run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "terminal_state": {
+      "type": "string",
+      "enum": ["active", "terminal", "retired", "idle"]
+    },
+    "successor_lead_session_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "successor_line_job_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "current_line_job_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "successor_lead_run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "retired_direct_session_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "pattern": "^[A-Za-z0-9._:-]+$"
+      }
+    },
+    "fresh_direct_session_required": {
+      "type": "boolean"
+    },
+    "direct_job_roots": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "$ref": "#/$defs/windows_path"
+      }
+    },
+    "session_events_root": {
+      "$ref": "#/$defs/windows_path"
+    },
+    "supervisor_state_root": {
+      "$ref": "#/$defs/windows_path"
+    },
+    "current_state_file": {
+      "$ref": "#/$defs/windows_path"
+    },
+    "current_pointer_file": { "$ref": "#/$defs/windows_path" },
+    "manifest_file": { "$ref": "#/$defs/windows_path" },
+    "registration_file": { "$ref": "#/$defs/windows_path" },
+    "activation_generation": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+  "$defs": {
+    "opaque_label": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "pattern": "^[^\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F]+$"
+    },
+    "windows_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32767,
+      "pattern": "^[^\\u0000-\\u001F\"<>|*?]+$"
+    }
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:telephone-line:schema:wired-supervisor-control:v1",
+  "title": "telephone-line-wired-supervisor-control-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "action"
+  ],
+  "properties": {
+    "protocol_version": {
+      "type": "string",
+      "const": "telephone-line-wired-supervisor-control-v1"
+    },
+    "action": {
+      "type": "string",
+      "enum": [
+        "status",
+        "cancel-one",
+        "pause",
+        "emergency-stop-all",
+        "resume"
+      ]
+    },
+    "run_id": {
+      "$ref": "#/$defs/uuid"
+    },
+    "confirm": {
+      "type": "boolean"
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    }
+  }
+}

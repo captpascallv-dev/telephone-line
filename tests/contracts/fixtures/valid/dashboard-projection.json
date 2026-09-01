@@ -1,0 +1,31 @@
+{
+  "protocol_version": "telephone-line-dashboard-projection-v1",
+  "observational": true,
+  "updated_at_utc": "2026-01-01T00:00:00.0000000+00:00",
+  "config_present": true,
+  "groups": [
+    {
+      "project": "example-project",
+      "lead_session_id": "example-session-001",
+      "lead_run_id": "example-run-001",
+      "phase": "execute",
+      "visible": true,
+      "disappeared": false,
+      "color": "green",
+      "lead": true,
+      "execution": true,
+      "final_audit": false,
+      "correction": false,
+      "closure": false,
+      "terminal": false,
+      "closure_receipt": "",
+      "line_job_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1",
+      "stage": "example-stage",
+      "role": "execution",
+      "route": "example-route",
+      "duplicate_count": 0,
+      "provenance": "",
+      "findings": []
+    }
+  ]
+}

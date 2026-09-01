@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:telephone-line:schema:control-plane-continuation-capsule:v1",
+  "title": "telephone-line-control-plane-continuation-capsule-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version", "project", "project_epoch", "authority", "manifest", "source_spec", "current_pointer",
+    "lead", "wave_id", "batch_id", "activation_generation", "projection_version", "projection_fingerprint", "lanes", "actions", "next_transition",
+    "recovery_postconditions", "created_at_utc"
+  ],
+  "properties": {
+    "protocol_version": { "const": "telephone-line-control-plane-continuation-capsule-v1" },
+    "project": { "$ref": "#/$defs/label" },
+    "project_epoch": { "$ref": "#/$defs/label" },
+    "authority": { "$ref": "#/$defs/identity" },
+    "manifest": { "$ref": "#/$defs/identity" },
+    "source_spec": { "$ref": "#/$defs/identity" },
+    "current_pointer": { "$ref": "#/$defs/identity" },
+    "lead": { "$ref": "#/$defs/lead" },
+    "wave_id": { "$ref": "#/$defs/label" },
+    "batch_id": { "$ref": "#/$defs/uuid" },
+    "activation_generation": { "$ref": "#/$defs/sha" },
+    "projection_version": { "type": "integer", "minimum": 1 },
+    "projection_fingerprint": { "$ref": "#/$defs/sha" },
+    "lanes": { "type": "array", "minItems": 1, "maxItems": 32, "items": { "$ref": "#/$defs/lane" } },
+    "actions": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/action_state" } },
+    "next_transition": { "$ref": "#/$defs/next" },
+    "recovery_postconditions": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["action_id", "kind", "contract_fingerprint", "expected_postcondition"],
+        "properties": {
+          "action_id": { "$ref": "#/$defs/label" },
+          "kind": { "$ref": "#/$defs/label" },
+          "contract_fingerprint": { "$ref": "#/$defs/sha" },
+          "expected_postcondition": { "type": "object" }
+        }
+      }
+    },
+    "created_at_utc": { "$ref": "#/$defs/time" }
+  },
+  "$defs": {
+    "label": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "path": { "type": "string", "minLength": 1, "maxLength": 32767 },
+    "uuid": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "time": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})$" },
+    "identity": {
+      "type": "object", "additionalProperties": false, "required": ["path", "bytes", "sha256"],
+      "properties": { "path": { "$ref": "#/$defs/path" }, "bytes": { "type": "integer", "minimum": 0 }, "sha256": { "$ref": "#/$defs/sha" } }
+    },
+    "owner": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "object", "required": ["pid", "start_time_utc_ticks", "alive"], "properties": { "pid": { "type": "integer" }, "start_time_utc_ticks": { "type": "integer" }, "alive": { "type": "boolean" } } }
+      ]
+    },
+    "lead": {
+      "type": "object", "additionalProperties": false, "required": ["transport", "session_id", "run_id", "owner"],
+      "properties": { "transport": { "enum": ["wired", "wireless"] }, "session_id": { "$ref": "#/$defs/label" }, "run_id": { "$ref": "#/$defs/label" }, "owner": { "$ref": "#/$defs/owner" } }
+    },
+    "lane": {
+      "type": "object",
+      "required": ["package_id", "original_line_job_id", "line_job_id", "attempt", "state", "failure_class", "diagnostic_code", "request", "card", "workspace", "allowed_write_paths", "write_lease_id", "evidence_fingerprint"],
+      "properties": {
+        "package_id": { "$ref": "#/$defs/label" }, "original_line_job_id": { "$ref": "#/$defs/uuid" }, "line_job_id": { "$ref": "#/$defs/uuid" },
+        "attempt": { "type": "integer", "minimum": 1 }, "state": { "$ref": "#/$defs/label" }, "failure_class": { "$ref": "#/$defs/label" }, "diagnostic_code": { "$ref": "#/$defs/label" },
+        "request": { "$ref": "#/$defs/identity" }, "card": { "$ref": "#/$defs/identity" }, "workspace": { "$ref": "#/$defs/path" }, "allowed_write_paths": { "type": "array" },
+        "write_lease_id": { "$ref": "#/$defs/sha" }, "evidence_fingerprint": { "$ref": "#/$defs/sha" }
+      }
+    },
+    "action_state": { "type": "object", "additionalProperties": false, "required": ["action_id", "kind", "sequence", "idempotency_key", "state", "reason", "retry_count", "result"], "properties": { "action_id": { "$ref": "#/$defs/label" }, "kind": { "$ref": "#/$defs/label" }, "sequence": { "type": "integer", "minimum": 1 }, "idempotency_key": { "$ref": "#/$defs/label" }, "state": { "enum": ["pending", "running", "completed", "retryable_failed", "blocked", "conflict", "exhausted"] }, "reason": { "$ref": "#/$defs/label" }, "retry_count": { "type": "integer", "minimum": 0, "maximum": 1 }, "result": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/identity" }] } } },
+    "next": {
+      "type": "object", "additionalProperties": false, "required": ["transition_id", "kind", "authorized", "idempotency_key"],
+      "properties": { "transition_id": { "$ref": "#/$defs/label" }, "kind": { "$ref": "#/$defs/label" }, "authorized": { "type": "boolean" }, "idempotency_key": { "$ref": "#/$defs/label" } }
+    }
+  }
+}

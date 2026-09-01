@@ -1,0 +1,25 @@
+{
+  "protocol_version": "telephone-line-codex-app-server-lead-run-v1",
+  "run_id": "telephone-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1",
+  "thread_id": "01a02378-2617-7131-ba20-8e6d5ac625ca",
+  "worktree": "C:\\example\\worktree",
+  "callback": {
+    "path": "C:\\example\\wake-prompt.md",
+    "bytes": 12,
+    "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "wake_marker": "tl-wake:telephone-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1",
+  "profile_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "codex_version": "codex-cli 0.147.0",
+  "executable_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "profile_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "codex_command": "C:\\example\\codex.cmd",
+  "service_tier": "default",
+  "baseline_turn_ids": ["turn-1"],
+  "selected_turn_id": "turn-2",
+  "disposition": "completed",
+  "callback_write_phase": "terminal",
+  "terminal_target": "completed",
+  "fallback_required": "",
+  "queue_state": "retired"
+}

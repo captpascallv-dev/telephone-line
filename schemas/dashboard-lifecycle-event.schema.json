@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:telephone-line:schema:dashboard-lifecycle-event:v1",
+  "title": "telephone-line-dashboard-lifecycle-event-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol_version",
+    "ordinal",
+    "kind",
+    "transport",
+    "project",
+    "lead_session_id",
+    "lead_run_id",
+    "line_job_id",
+    "duplicate",
+    "created_at_utc"
+  ],
+  "properties": {
+    "protocol_version": {
+      "type": "string",
+      "const": "telephone-line-dashboard-lifecycle-event-v1"
+    },
+    "ordinal": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "lead",
+        "execute",
+        "review",
+        "sync",
+        "modify",
+        "closure",
+        "commit_closure",
+        "restart",
+        "duplicate"
+      ]
+    },
+    "transport": {
+      "type": "string",
+      "enum": ["wired", "wireless"]
+    },
+    "project": {
+      "$ref": "#/$defs/opaque_label"
+    },
+    "lead_session_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]+$"
+    },
+    "lead_run_id": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9._:-]*$"
+    },
+    "line_job_id": {
+      "type": "string",
+      "minLength": 0,
+      "maxLength": 64,
+      "pattern": "^$|^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "receipt_sha256": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/sha256" }
+      ]
+    },
+    "provenance": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/file_identity" }
+      ]
+    },
+    "duplicate": {
+      "type": "boolean"
+    },
+    "duplicate_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "provenance_ambiguous": {
+      "type": "boolean"
+    },
+    "created_at_utc": {
+      "$ref": "#/$defs/utc_timestamp"
+    }
+  },
+  "$defs": {
+    "opaque_label": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "pattern": "^[^\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F]+$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "utc_timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "windows_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32767,
+      "pattern": "^[^\\u0000-\\u001F\"<>|*?]+$"
+    },
+    "file_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "bytes", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/windows_path" },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

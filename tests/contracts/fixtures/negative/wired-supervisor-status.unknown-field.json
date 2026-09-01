@@ -1,0 +1,9 @@
+{
+  "protocol_version": "telephone-line-wired-supervisor-status-v1",
+  "paused_by_pascal": false,
+  "active_runs": [],
+  "inbox_count": 0,
+  "claimed_count": 0,
+  "outbox_count": 0,
+  "extra": true
+}

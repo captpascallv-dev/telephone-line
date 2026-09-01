@@ -1,0 +1,26 @@
+{
+  "protocol_version": "telephone-line-receipt-v1",
+  "line_job_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1",
+  "project": "example-project",
+  "stage": "example-stage",
+  "role": "execution",
+  "route": "example-route",
+  "summary": "example summary",
+  "dispatch": {
+    "path": "C:\\example\\dispatch.json",
+    "bytes": 12,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "transport_complete": true,
+  "command_exit_code": 0,
+  "command_error_code": null,
+  "command_error_message": null,
+  "stdout": null,
+  "stderr": null,
+  "started_at_utc": "2026-01-01T00:00:01.0000000+00:00",
+  "completed_at_utc": "2026-01-01T00:00:02.0000000+00:00",
+  "absolute_task_timeout": false,
+  "automatic_rerun": false,
+  "project_judgment": false,
+  "pass": true
+}
