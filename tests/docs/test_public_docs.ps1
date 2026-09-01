@@ -309,7 +309,15 @@ try {
         Assert-DocsTest ([regex]::IsMatch($pair.text, '(?i)\btelemetry\b') -eq $false) "$($pair.label) announces telemetry."
         Assert-DocsTest ([regex]::IsMatch($pair.text, '(?i)\bmarketplace\b') -eq $false) "$($pair.label) announces a marketplace."
         Assert-DocsTest ([regex]::IsMatch($pair.text, '(?i)\bbilling\b') -eq $false) "$($pair.label) announces billing."
-        Assert-DocsTest ([regex]::IsMatch($pair.text, '(?i)\bmacOS\b|\bLinux\b|Mac OS') -eq $false) "$($pair.label) claims another OS."
+        $mentionsAnotherOs = [regex]::IsMatch($pair.text, '(?i)\bmacOS\b|\bLinux\b|Mac OS')
+        if ([string]$pair.label -ceq 'README') {
+            Assert-DocsTest $mentionsAnotherOs 'README omits the requested macOS porting guidance.'
+            Assert-DocsTest ($pair.text.Contains('Windows is the only v0.1 production target.')) 'README weakens the Windows-only v0.1 boundary.'
+            Assert-DocsTest ($pair.text.Contains('macOS users should not force-run the Windows installer')) 'README does not deny unsupported macOS installation.'
+            Assert-DocsTest ([regex]::IsMatch($pair.text, '(?i)\bsupports\s+(?:macOS|Linux)\b|(?:macOS|Linux)\s+is\s+supported') -eq $false) 'README claims unsupported operating-system support.'
+        } else {
+            Assert-DocsTest (-not $mentionsAnotherOs) "$($pair.label) claims another OS."
+        }
     }
     $eight_routes_consistent = 1
 

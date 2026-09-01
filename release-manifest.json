@@ -1417,8 +1417,8 @@
     },
     {
       "path": "tests/docs/test_public_docs.ps1",
-      "bytes": 23589,
-      "sha256": "3cd412251de51a1b1b040d7df5469a24fe803a9a3c623b715b1b6605ecf12728"
+      "bytes": 24315,
+      "sha256": "a44446588f490092dd638edd7621b1b3a577f28a9d2e0c3d40bf65fc08ae8a29"
     },
     {
       "path": "tests/install/test_install_lifecycle.ps1",
@@ -1483,7 +1483,7 @@
   ],
   "counts": {
     "files": 290,
-    "bytes": 3838144
+    "bytes": 3838870
   },
   "excluded": [
     ".control/**",
