@@ -1437,8 +1437,8 @@
     },
     {
       "path": "tests/lead-side/codex-app-server/test_codex_app_server_lead.ps1",
-      "bytes": 715853,
-      "sha256": "48168897556e3fc42c47c2fa2d80839cafc71c24703917f08c698a176c45a707"
+      "bytes": 716065,
+      "sha256": "9b775f98e514fef05858ad26993d24f63985cf3c27ef9ab7c5c6f6ff56a85d9a"
     },
     {
       "path": "tests/lead-side/cursor-external-route/fixtures/Receive-CursorExternalLeadArgs.ps1",
@@ -1483,7 +1483,7 @@
   ],
   "counts": {
     "files": 290,
-    "bytes": 3837932
+    "bytes": 3838144
   },
   "excluded": [
     ".control/**",

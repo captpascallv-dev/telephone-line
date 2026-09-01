@@ -6129,7 +6129,10 @@ Set-StrictMode -Version Latest
         $env:TELEPHONE_TEST_APP_SERVER_HOLD_COMPLETED_PATH = $holdPath
         $env:TELEPHONE_TEST_APP_SERVER_EVENT_LOG = $holdLog
         $env:TELEPHONE_TEST_APP_SERVER_OWNER_IDLE_MS = '20000'
-        $env:TELEPHONE_TEST_APP_SERVER_ACK_TIMEOUT_SECONDS = '2'
+        # This case proves queue ownership, not a two-second process-start SLA.
+        # Leave enough room for a fresh hosted runner to start the mock client
+        # while keeping the failure window bounded.
+        $env:TELEPHONE_TEST_APP_SERVER_ACK_TIMEOUT_SECONDS = '15'
         $firstHold = Invoke-CasIntLauncher -Harness $hHold -ThreadId $tidHold -RunId 'run-hold-a'
         Assert-CasInt ($firstHold.exit_code -eq 0) ("Held first callback failed: $($firstHold.stderr) $($firstHold.stdout)")
         Assert-CasInt (Test-CasIntThreadOwnerAlive -Harness $hHold -ThreadId $tidHold) 'Held first callback has no live thread owner.'
