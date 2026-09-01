@@ -17,7 +17,7 @@ This project is for Codex CLI users who want Codex to keep the high-value Lead w
 
 v0.1 is Codex-first. Codex CLI is the only currently built-in Lead implemented and maintained by the original project team. Cursor, Grok/SuperGrok, PI, Claude Code, and DSH are execution or review sides, not substitute Lead entries. Direct Codex CLI is one of the eight frozen routes invoked by the Lead. It is not a second built-in Lead entry.
 
-The frozen denominator is exactly eight routes; no ninth is planned. Each route's `dependency_boundary` is declared, not probed. The user installs that Harness; this package does not ship it.
+The v0.1 denominator is exactly eight routes. Each route's `dependency_boundary` is declared, not probed. The user installs that Harness; this package does not ship it.
 
 - `deepsea-codex-cli` — DSH with a ChatGPT Plus/Pro Codex subscription
 - `deepsea-grok-cli` — DSH with SuperGrok or X Premium OAuth
@@ -27,6 +27,48 @@ The frozen denominator is exactly eight routes; no ninth is planned. Each route'
 - `direct-cursor` — Cursor Agent CLI
 - `direct-grok-cli` — official Grok CLI
 - `direct-pi` — PI coding agent and Node
+
+## Install and start ordinary work
+
+Run these commands from the extracted product directory. Installation is per-user, requires no elevation, and defaults to `%LOCALAPPDATA%\TelephoneLine`:
+
+```powershell
+pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\src\install\Install-TelephoneLine.ps1
+pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\TelephoneLine\src\install\Invoke-TelephoneLineDoctor.ps1"
+```
+
+Do not dispatch work until Doctor reports `healthy=true` and `code=HEALTHY`. Telephone Line uses strict identity, path, and JSON contracts. Most users should let a local Agent generate requests from [Quick start](docs/quick-start.md), [Install](docs/install.md), [Routes](docs/routes.md), and the selected adapter documentation instead of copying another machine's absolute paths.
+
+If a resumable Codex Lead binding already exists, an ordinary single job uses one `telephone-line-dispatch-v1` request:
+
+```powershell
+pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+  -File "$env:LOCALAPPDATA\TelephoneLine\src\core\Start-TelephoneLineJob.ps1" `
+  -RequestFile "YOUR_TASK_REQUEST.json" `
+  -StateRoot "YOUR_LINE_STATE_ROOT"
+```
+
+For new work, wired is the recommended default. Have the Agent create a valid `telephone-line-wired-supervisor-request-v1`, then publish it to the per-user supervisor:
+
+```powershell
+pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+  -File "$env:LOCALAPPDATA\TelephoneLine\src\supervisor\Start-TelephoneWiredRun.ps1" `
+  -RequestFile "YOUR_WIRED_START_REQUEST.json"
+```
+
+That supervisor request starts the owning Codex Lead; the Lead then creates the single-job requests or finite wave it owns. Installation also creates the per-user desktop controls `有线电话｜控制台` and `有线电话｜紧急停止`. Use those controls, or `Invoke-TelephoneSupervisorControl.ps1`, for status, exact-run cancellation, pause/resume, and confirmed emergency stop. Do not kill an arbitrary `pwsh`, Codex, or Harness process by PID.
+
+For a wireless Lead, first create and freeze the real thread binding described in [Codex App Server Lead](docs/codex-app-server-lead.md). After its first turn is accepted, use that same binding for ordinary dispatch. Never switch an accepted wireless thread to wired recovery or substitute a new session for the original one.
+
+When one phase has several non-conflicting execution lanes, start one finite wave spec instead of assembling jobs by hand:
+
+```powershell
+pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+  -File "$env:LOCALAPPDATA\TelephoneLine\src\control-plane\Start-TelephoneControlPlaneWave.ps1" `
+  -SpecFile "YOUR_FINITE_WAVE.json"
+```
+
+Before launch, resolve the Lead session, worktree, installed `current.json`, route, and write paths from the current machine. Keep task cards, bindings, state roots, and private project data outside the product installation. Never copy someone else's session id, absolute paths, hashes, or credentials, and do not rename a Codex thread merely to display a Telephone label. When launch returns `lead_should_exit_now=true`, end the owning Lead turn and let the supervisor, relay, and callback continue instead of waiting online.
 
 ## Why multiple Harnesses rather than merely multiple models
 
@@ -87,19 +129,80 @@ silently skipped behind a green dashboard.
 Keep these invariants: bounded package acceptance; no model waiting online;
 no absolute task timeout; no blind rerun; and one final independent audit only at a major terminal.
 
+The following practices reduce completed work getting stuck before delivery and prevent one failed lane from restarting an entire wave:
+
+- Begin with 3–6 lanes. Increase concurrency only when workspaces, write scopes, machine capacity, and route quotas are genuinely independent.
+- Give each card one finite outcome, known inputs, exact allowed write paths, expected artifacts, and an unambiguous terminal. Direct Cursor cards must remain within the 1–12,000 character contract.
+- Put concurrent writers in separate worktrees and do not let them edit the same file. Parallelize mechanical search, implementation, tests, and evidence; reserve final judgment for the Lead.
+- Keep large logs and artifacts in files. A callback should carry identity, terminal state, and durable paths rather than dumping full output into the Lead context.
+- Freeze the exact package set and `N` at batch start. Success, explicit failure, and mechanically proven `START_FAILED` with no session are terminal envelopes; ambiguous state is not failure and must not be blindly rerun.
+- If `receipt.json` exists but `delivery.json` does not, recover relay/callback first. If execution failed, recover only that lane. Never relaunch successful lanes.
+- Do not impose an absolute whole-task timeout. Use bounded startup, silence, and callback grace only to inspect durable owner, receipt, delivery, and relay-error truth.
+- Do not send messages from Codex App into the same task while a CLI Lead owns an active turn, and do not manually send a second result while a callback is queued.
+- Observe the HUD bound to atomic `current.json`; do not infer current health from historical directories. Investigate yellow or unknown state before deleting state or rebuilding a wave.
+
+## Add a Heartbeat to the Codex task
+
+The Telephone supervisor owns transport continuity. A Heartbeat is an additional project observer and recovery safety net, not a high-frequency poller. Hourly is a good default; for work expected to finish within an hour, 15–30 minutes can be reasonable. More frequent checks spend more Codex quota without making the external Harness run faster.
+
+Create a recurring Heartbeat for the **exact Codex project task** and use the following prompt. Do not share one Heartbeat across unrelated projects:
+
+```text
+This is the Telephone Line continuity Heartbeat for <project>. On every wake, perform one bounded pass and then exit; do not wait online.
+
+1. Read the current project authority, wave manifest, control-plane current.json, and the latest dispatch, receipt, delivery, relay-error, owner, and terminal evidence. Also inspect supervisor status, Doctor, and the current HUD projection. History may explain a failure but must not override current.json.
+2. Classify each anomaly as a project-content block, an executor Harness/session incident, a Telephone transport fault, or a shared-host cause. Do not disturb healthy work. If there is no ACTIVE work, report that and exit.
+3. If the current wave is complete and authority already names one authorized next action, continue it idempotently. Otherwise wait for the user; do not expand scope, change acceptance, or declare PASS.
+4. For transport faults, perform the smallest same-session, same-run, same-batch recovery. Recover relay/callback and proven no-effect startup first. Replace only one lane with evidence of real failure; never rerun successful lanes, rebuild the whole wave, or create duplicate callbacks. Preserve ambiguous state and report it.
+5. If the cause is a reproducible general Telephone Line defect, a minimal fix and bounded verification may be prepared in an isolated branch/worktree without private project data. Show the user a sanitized reproduction, diff, and evidence; open an Issue or Pull Request only after user approval.
+6. End with a short plain-language report: what was checked, the failure class, what was actually recovered or fixed, the state on exit, and whether the user must act. Do not paste large raw logs.
+```
+
+A Heartbeat never replaces callback and must not call a job failed merely because time passed. In the healthy case it confirms continuity and exits. It intervenes only when durable evidence identifies a silent gap or an already-authorized next transition.
+
+## Let an Agent install and debug it
+
+The easiest setup path is to give the source tree or Release ZIP to a trusted local Codex or other Agent with a bounded instruction such as:
+
+```text
+Install and configure Harness Telephone Line for the current project. Before changing anything, read README, docs/quick-start.md, docs/install.md, docs/routes.md, docs/adapter-interface.md, and the documentation for my selected route. Inspect the OS, PowerShell, any existing install, current.json, Doctor, the exact Codex session/worktree, and external Harness dependencies before choosing an action.
+
+Use a per-user install and wired Lead by default. Do not request elevation or change system PATH, Codex/GitHub credentials, or external Harness configuration without my explicit approval. Keep bindings, task cards, state, and logs outside the product package. Resolve real local paths and identities; never copy sample session ids, hashes, or absolute paths.
+
+After installation, run Doctor, then use one real, finite, reversible task to prove dispatch -> receipt -> delivery -> exact-session callback. If debugging fails, preserve evidence and distinguish executor failure from transport failure. Recover from the smallest same-session checkpoint; do not blindly rerun, delete successful envelopes, or rebuild the wave. Report the install path, version identity, Doctor result, start method, state root, task terminal, and any decision still needed from me.
+```
+
+Do not let the Agent paste credentials, full prompts, sessions, or private project logs into an Issue. It must not install or sign in to third-party Harnesses automatically, treat test success as project PASS, or rewrite historical terminals to make the dashboard look green. For a general Telephone defect, reproduce and minimally fix it in isolation, then follow [Contributing](CONTRIBUTING.md) with sanitized material.
+
 ## What it is not
 
 The telephone line never judges scope, correctness, PASS, stage, or denominator. A green transport receipt is not project acceptance. Direct Codex CLI is an execution route, not a second Lead.
 
 ## v0.1 boundary
 
-Windows is the only v0.1 production target. The frozen denominator is exactly eight routes; no ninth is planned. See [docs/routes.md](docs/routes.md).
+Windows is the only v0.1 production target. The v0.1 denominator is exactly eight routes. See [docs/routes.md](docs/routes.md).
 
 This repository is licensed under MPL-2.0. The license text is [LICENSE](LICENSE). File-level modification expectations are in [docs/licensing.md](docs/licensing.md).
 
 Community Lead adapters are welcome as contributions. They are not current capability and not a team commitment. A community Lead adapter is included only after it passes the unified contract, native-session recovery, Lead sleep and callback, no whole-task timeout, privacy checks, compatibility tests, and code review.
 
 Execution consumption moves to the other Harness's independent subscription quota pool, and the Lead avoids waiting online. That is the transport fact. This README does not promise a savings figure.
+
+## What macOS users can do
+
+v0.1 supports Windows as its only production target. macOS users should not force-run the Windows installer or treat an accidental Wine/VM success as native support. The safest current options are to run Telephone Line on a Windows host while using macOS as the project workstation, or to build a native port in an isolated fork.
+
+A port should preserve the public protocols, eight adapter contracts, durable dispatch/receipt/delivery, exact-session callback, no blind rerun, and no whole-task timeout. Replace only the operating-system layer:
+
+| Windows implementation | Suggested macOS counterpart |
+| --- | --- |
+| Per-user Task Scheduler task | Per-user `launchd` LaunchAgent, never a root daemon |
+| Windows Job and exact process-tree control | Dedicated process group/session, durable owner identity, and LaunchAgent supervision; cancellation must prove zero orphan processes |
+| `%LOCALAPPDATA%\TelephoneLine` | `~/Library/Application Support/TelephoneLine` |
+| Windows paths, shortcuts, and recycle-bin API | Native paths/permissions, optional `.app` or shell controls, and the system Trash |
+| Windows-specific PowerShell/process APIs | Keep portable `pwsh` logic and isolate/rewrite Windows-only code |
+
+Support Apple Silicon first. Claim Intel Mac support only after separate evidence. A porting Agent should produce a platform-gap inventory and design note before implementation, work in an isolated worktree, and never weaken identity checks, atomic persistence, exactly-once callback, stop/uninstall behavior, or privacy just to make a demo run. Minimum acceptance covers install, Doctor, single- and multi-lane work, continuation after Codex exits, one callback to the exact session, machine-restart recovery, precise cancel, update, uninstall, zero duplicate execution, and zero orphan processes. Opening an Issue to align the design before a reviewable Pull Request is welcome.
 
 ## Docs
 
