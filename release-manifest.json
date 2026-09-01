@@ -802,8 +802,8 @@
     },
     {
       "path": "src/install/TelephoneLineInstall.Common.ps1",
-      "bytes": 65904,
-      "sha256": "ee777a1fc71db797ceaaf3fe371d2d5d0d19f21d95a57a9e0236140d6b843a0a"
+      "bytes": 65928,
+      "sha256": "faa6d3125d0dae74a69cd9cf198dfe2fb139f31ca725ace5f8ffff966ce20ded"
     },
     {
       "path": "src/install/Uninstall-TelephoneLine.ps1",
@@ -942,8 +942,8 @@
     },
     {
       "path": "src/supervisor/TelephoneSupervisor.Common.ps1",
-      "bytes": 108990,
-      "sha256": "b24a0aec1d335442a39e720402f4e9cf5f1a17857496706177336e4f50ca317a"
+      "bytes": 110537,
+      "sha256": "454a0111eb0f9cc89733a2026dffba6d9e7ef9ccd48002963521a366cd6b47d2"
     },
     {
       "path": "tests/Invoke-OfflineTests.ps1",
@@ -1422,8 +1422,8 @@
     },
     {
       "path": "tests/install/test_install_lifecycle.ps1",
-      "bytes": 56162,
-      "sha256": "afbf5558d9fc23fa3f174df3e943a7cc86e44d1c5057faca451a729c096d841a"
+      "bytes": 57108,
+      "sha256": "1370664ca2c86f3f334aeea9103d95f9433465206db32ee2f704162711ed065a"
     },
     {
       "path": "tests/lead-side/codex-app-server/fixtures/Mock-CodexAppServer.ps1",
@@ -1467,8 +1467,8 @@
     },
     {
       "path": "tests/supervisor/fixtures/mock-scheduler.ps1",
-      "bytes": 3997,
-      "sha256": "11e47745718050075facb12d55b8137d7a641678e1d57b2a85733894862df8b5"
+      "bytes": 4021,
+      "sha256": "94cf064dec440f1b0477ecfbb38fc54870ce9dde086090bd0b49a024c878b129"
     },
     {
       "path": "tests/supervisor/fixtures/mock-wired-lead.ps1",
@@ -1477,13 +1477,13 @@
     },
     {
       "path": "tests/supervisor/test_wired_supervisor.ps1",
-      "bytes": 96766,
-      "sha256": "942c7fb69bf3fd774a20419b19ffb96e039b6326f62cf9ecacd42836980df85c"
+      "bytes": 97553,
+      "sha256": "e5b09cbd5b23f6b7b6e3fcecb674ea295c8940b4dfcdd7e2a7385ae2aa567ba1"
     }
   ],
   "counts": {
     "files": 290,
-    "bytes": 3834323
+    "bytes": 3837651
   },
   "excluded": [
     ".control/**",

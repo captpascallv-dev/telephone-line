@@ -78,7 +78,7 @@ function New-TelephoneInstallResult {
 
 function Get-TelephoneInstallSha256 {
     [CmdletBinding()]
-    param([Parameter(Mandatory = $true)][byte[]]$Bytes)
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][byte[]]$Bytes)
     return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($Bytes)).ToLowerInvariant()
 }
 

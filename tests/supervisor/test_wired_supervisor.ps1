@@ -304,12 +304,17 @@ try {
     $taskLogicalArgs = '-InstallRoot "' + $repoRoot + '" -StateRoot "' + $script:supState + '"'
     $encodedTaskArgs = New-TelephoneSupervisorEncodedTaskArguments -ActionScript $taskAction -ActionArguments $taskLogicalArgs
     Assert-Sup ($encodedTaskArgs -match '(?i)-EncodedCommand\s+[A-Za-z0-9+/=]+$') 'Task action is not one encoded command.'
+    Assert-Sup ($encodedTaskArgs -match '(?i)-WindowStyle\s+Hidden\s+-EncodedCommand\s+') 'Task action does not hide the interactive PowerShell host.'
     Assert-Sup (-not $encodedTaskArgs.Contains('-File')) 'Encoded task action retained the fragile -File argument surface.'
     $encodedPayload = [regex]::Match($encodedTaskArgs, '(?i)-EncodedCommand\s+([A-Za-z0-9+/=]+)').Groups[1].Value
     $decodedTaskCommand = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($encodedPayload))
     Assert-Sup ($decodedTaskCommand.Contains('$scriptSucceeded=$?')) 'Encoded task action does not capture the script invocation result.'
     Assert-Sup ($decodedTaskCommand.EndsWith('; exit 0', [StringComparison]::Ordinal)) 'Encoded task action does not normalize successful script completion to zero.'
     Assert-Sup ((Get-TelephoneSupervisorTaskActionScript -Arguments $encodedTaskArgs) -ceq $taskAction) 'Encoded task action cannot recover its exact script identity.'
+    $taskDefinition = New-TelephoneSupervisorTaskActionDefinition -ActionScript $taskAction -ActionArguments $taskLogicalArgs
+    Assert-Sup ([string]$taskDefinition.execute -like '*\WindowsPowerShell\v1.0\powershell.exe') 'Scheduled task does not use the hidden Windows PowerShell host.'
+    Assert-Sup ([string]$taskDefinition.arguments -match '(?i)-WindowStyle\s+Hidden\s+-EncodedCommand\s+') 'Outer scheduled-task host is not hidden.'
+    Assert-Sup ((Get-TelephoneSupervisorTaskActionScript -Arguments ([string]$taskDefinition.arguments)) -ceq $taskAction) 'Nested task action cannot recover its exact supervisor script identity.'
     $encodedProbe = Invoke-SupRawArguments -Arguments $encodedTaskArgs
     Assert-Sup ($encodedProbe.exit_code -eq 0) ('Encoded task action failed: ' + $encodedProbe.stderr + $encodedProbe.stdout)
     $staleNativeScript = Join-Path $testRoot 'task-stale-native.ps1'

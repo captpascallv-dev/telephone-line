@@ -27,6 +27,7 @@ $recycleForeignOwnerRefused = 0
 $uninstallConvergentLifecycle = 0
 $uninstallRemoveState = 0
 $localAppDataSafeOracle = 0
+$emptyFileFingerprint = 0
 
 function Assert-InstallTest {
     param([bool]$Condition, [string]$Message)
@@ -203,6 +204,15 @@ function Stop-InstallExactProcess {
 }
 
 try {
+    $emptyFingerprintRoot = Join-Path $testRoot 'empty-fingerprint'
+    [IO.Directory]::CreateDirectory($emptyFingerprintRoot) | Out-Null
+    $emptyFingerprintFile = Join-Path $emptyFingerprintRoot 'empty.lock'
+    [IO.File]::WriteAllBytes($emptyFingerprintFile, [byte[]]@())
+    $emptyIdentity = Get-TelephoneInstallFileIdentity -Path $emptyFingerprintFile
+    $emptyTreeIdentity = Get-TelephoneInstallTreeFingerprint -Root $emptyFingerprintRoot
+    Assert-InstallTest ([int64]$emptyIdentity.bytes -eq 0 -and [string]$emptyIdentity.sha256 -ceq 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855') 'Zero-byte file identity is incorrect.'
+    Assert-InstallTest ([int]$emptyTreeIdentity.file_count -eq 1) 'Tree fingerprint rejected a zero-byte runtime file.'
+    $script:emptyFileFingerprint = 1
     $userPathBefore = [Environment]::GetEnvironmentVariable('Path', 'User')
     $defaultInstall = Join-Path ([string]$env:LOCALAPPDATA) 'TelephoneLine'
     $defaultExisted = [IO.Directory]::Exists($defaultInstall)
@@ -824,6 +834,7 @@ try {
         uninstall_convergent_lifecycle = $uninstallConvergentLifecycle
         uninstall_remove_state = $uninstallRemoveState
         local_appdata_safe_oracle = $localAppDataSafeOracle
+        empty_file_fingerprint = $emptyFileFingerprint
         residue = $false
     } | ConvertTo-Json -Compress
 } catch {
@@ -848,6 +859,7 @@ try {
         uninstall_convergent_lifecycle = $uninstallConvergentLifecycle
         uninstall_remove_state = $uninstallRemoveState
         local_appdata_safe_oracle = $localAppDataSafeOracle
+        empty_file_fingerprint = $emptyFileFingerprint
     } | ConvertTo-Json -Compress
     exit 1
 }

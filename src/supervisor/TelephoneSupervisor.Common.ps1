@@ -656,6 +656,8 @@ function Get-TelephoneSupervisorTaskActionScript {
     if ($encoded.Success) {
         try {
             $command = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String([string]$encoded.Groups[1].Value))
+            $nested = Get-TelephoneSupervisorTaskActionScript -Arguments $command
+            if (-not [string]::IsNullOrWhiteSpace($nested)) { return $nested }
             $invocation = [regex]::Match($command, "&\s+'((?:''|[^'])+)'")
             if ($invocation.Success) { return [string]$invocation.Groups[1].Value.Replace("''", "'") }
         } catch { }
@@ -700,7 +702,28 @@ function New-TelephoneSupervisorEncodedTaskArguments {
     # failed; otherwise normalize successful completion to zero.
     $command = "`$ErrorActionPreference='Stop'; & " + ([string]::Join(' ', $parts)) + "; `$scriptSucceeded=`$?; `$scriptExitCode=`$LASTEXITCODE; if (-not `$scriptSucceeded) { if (`$null -ne `$scriptExitCode) { exit [int]`$scriptExitCode }; exit 1 }; exit 0"
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
-    return '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ' + $encoded
+    # Task Scheduler's Hidden setting hides the task entry, not the console host.
+    # The explicit pwsh window style prevents the one-minute supervisor trigger
+    # from flashing a transient terminal in the interactive user session.
+    return '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand ' + $encoded
+}
+
+function New-TelephoneSupervisorTaskActionDefinition {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$ActionScript,
+        [AllowNull()][string]$ActionArguments
+    )
+    $pwsh = Assert-TelephoneRegularFilePath -Path ([string]([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)) -Label 'PowerShell host'
+    $windowsPowerShell = Assert-TelephoneRegularFilePath -Path (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -Label 'Hidden scheduled-task host'
+    $innerArguments = New-TelephoneSupervisorEncodedTaskArguments -ActionScript $ActionScript -ActionArguments $ActionArguments
+    $outerCommand = "& '" + $pwsh.Replace("'", "''") + "' " + $innerArguments + "; if (`$null -ne `$LASTEXITCODE) { exit [int]`$LASTEXITCODE }; exit 0"
+    $outerEncoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($outerCommand))
+    return [ordered]@{
+        execute = $windowsPowerShell
+        arguments = '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand ' + $outerEncoded
+        inner_arguments = $innerArguments
+    }
 }
 
 function Invoke-TelephoneSupervisorTaskOperation {
@@ -826,9 +849,8 @@ function Invoke-TelephoneSupervisorRealTaskOperation {
     }
     switch ([string]$Operation) {
         'register' {
-            $pwsh = [string]([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
-            $arg = New-TelephoneSupervisorEncodedTaskArguments -ActionScript $ActionScript -ActionArguments $ActionArguments
-            $action = New-ScheduledTaskAction -Execute $pwsh -Argument $arg -WorkingDirectory ([string]$InstallRoot)
+            $definition = New-TelephoneSupervisorTaskActionDefinition -ActionScript $ActionScript -ActionArguments $ActionArguments
+            $action = New-ScheduledTaskAction -Execute ([string]$definition.execute) -Argument ([string]$definition.arguments) -WorkingDirectory ([string]$InstallRoot)
             $principal = New-ScheduledTaskPrincipal -UserId ([string]$env:USERNAME) -LogonType Interactive -RunLevel Limited
             $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -MultipleInstances IgnoreNew
             $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User ([string]$env:USERNAME)
@@ -840,7 +862,7 @@ function Invoke-TelephoneSupervisorRealTaskOperation {
                 hidden = $true
                 logon_type = 'InteractiveToken'
                 action_script = [string]$ActionScript
-                action_arguments = [string]$arg
+                action_arguments = [string]$definition.arguments
                 install_root = [string]$InstallRoot
                 restart_trigger = 'at-logon+one-minute-periodic'
                 registered = $true

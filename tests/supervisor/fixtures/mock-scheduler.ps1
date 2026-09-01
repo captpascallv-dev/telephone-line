@@ -61,7 +61,7 @@ switch ($op) {
         $info.UseShellExecute = $true
         $info.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
         $argText = [string]$record.action_arguments
-        if ($argText -match '(?i)^-NoLogo\s+-NoProfile\s+-NonInteractive\s+-ExecutionPolicy\s+Bypass\s+-EncodedCommand\s+') {
+        if ($argText -match '(?i)^-NoLogo\s+-NoProfile\s+-NonInteractive\s+-ExecutionPolicy\s+Bypass\s+-WindowStyle\s+Hidden\s+-EncodedCommand\s+') {
             # Mirror the real scheduler action: EncodedCommand is the complete
             # pwsh argument surface and already contains the exact script path.
             $info.Arguments = $argText
