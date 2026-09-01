@@ -1407,8 +1407,8 @@
     },
     {
       "path": "tests/core/test_telephone_line.ps1",
-      "bytes": 86648,
-      "sha256": "edd70aaff6943e1d26c44be8191a4aa1a4a9ae50388955d0caf956dc8ba5eeb5"
+      "bytes": 86879,
+      "sha256": "57f4b801ad9c3988bad9f282b5b7411a46524f92567068c6d6b55388facd5fcd"
     },
     {
       "path": "tests/dashboard/test_dashboard.ps1",
@@ -1483,7 +1483,7 @@
   ],
   "counts": {
     "files": 290,
-    "bytes": 3837651
+    "bytes": 3837882
   },
   "excluded": [
     ".control/**",

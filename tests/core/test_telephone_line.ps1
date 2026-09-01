@@ -315,7 +315,10 @@ function Complete-TelephoneTestCleanup {
 }
 
 function Wait-TelephoneTestPath {
-    param([string]$Path, [int]$Seconds = 20)
+    # The product permits up to 30 seconds for a cold mailbox collector to
+    # publish its owner.  Keep the smoke oracle above that startup contract so
+    # a fresh hosted runner does not reject an otherwise healthy first wake.
+    param([string]$Path, [int]$Seconds = 60)
     $deadline = [DateTimeOffset]::UtcNow.AddSeconds($Seconds)
     while ([DateTimeOffset]::UtcNow -lt $deadline) {
         if ([IO.File]::Exists($Path)) { return }
