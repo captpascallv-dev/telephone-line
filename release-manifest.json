@@ -72,8 +72,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 10177,
-      "sha256": "4dfee9292de2f184d34c5395ac16fa11021e82a0ba4f45ee8694ac717910ea8e"
+      "bytes": 10215,
+      "sha256": "536421e7dfda694e401dc5c8dd39a4b887332b8022d33f00e58371715022943d"
     },
     {
       "path": "SECURITY.md",
@@ -84,6 +84,11 @@
       "path": "THIRD-PARTY-NOTICES.md",
       "bytes": 3040,
       "sha256": "0139a730d35cf3f36a119e120e3e7c4dafc89de8b7bd980a475fd9c734bc728a"
+    },
+    {
+      "path": "docs/README.zh-CN.md",
+      "bytes": 10082,
+      "sha256": "d42e5349efb9739c99faf47488fe8de3c31c987b19e26f28819e2f041fb600ea"
     },
     {
       "path": "docs/adapter-authoring.md",
@@ -1477,8 +1482,8 @@
     }
   ],
   "counts": {
-    "files": 289,
-    "bytes": 3802345
+    "files": 290,
+    "bytes": 3812465
   },
   "excluded": [
     ".control/**",

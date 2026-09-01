@@ -1,5 +1,7 @@
 # Harness Telephone Line
 
+[简体中文](docs/README.zh-CN.md)
+
 Codex stays the Lead. Other harnesses do the heavy work. Codex sleeps while they run and resumes on the exact callback.
 
 The primary purpose is operational, not publication: in the original deployment, substantive implementation and independent review default to Telephone so every available Harness and subscription quota pool can be used. Direct in-task execution is the explicit opt-out. Open-source distribution is a secondary benefit for reuse, external feedback, and compatibility contributions.
