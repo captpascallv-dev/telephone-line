@@ -936,14 +936,19 @@
       "sha256": "b8d589cf73e0c188d7c020eccac4b9c67db3b0597fc1bfed28ecb09e382c50b0"
     },
     {
+      "path": "src/supervisor/Start-TelephoneSupervisorHostVisible.ps1",
+      "bytes": 1589,
+      "sha256": "b445409c74ba1cc37f83befbd8acc3e8013c256e005bd6d79d49186eff5b10a5"
+    },
+    {
       "path": "src/supervisor/Start-TelephoneWiredRun.ps1",
       "bytes": 4054,
       "sha256": "eb0860911b4954191f39e8bb23b38856dd174c88373d71330d705ee8b8866d34"
     },
     {
       "path": "src/supervisor/TelephoneSupervisor.Common.ps1",
-      "bytes": 110537,
-      "sha256": "454a0111eb0f9cc89733a2026dffba6d9e7ef9ccd48002963521a366cd6b47d2"
+      "bytes": 111417,
+      "sha256": "e7a51e527b1f21c060a71f7748aa0cf221a06f43ca582199f1741435c249792c"
     },
     {
       "path": "tests/Invoke-OfflineTests.ps1",
@@ -1477,13 +1482,13 @@
     },
     {
       "path": "tests/supervisor/test_wired_supervisor.ps1",
-      "bytes": 97553,
-      "sha256": "e5b09cbd5b23f6b7b6e3fcecb674ea295c8940b4dfcdd7e2a7385ae2aa567ba1"
+      "bytes": 97701,
+      "sha256": "0ec2e4114f5b660d225f77434b8fea92df3ae89c9813934bdf597809fc3a7ecf"
     }
   ],
   "counts": {
-    "files": 290,
-    "bytes": 3838870
+    "files": 291,
+    "bytes": 3841487
   },
   "excluded": [
     ".control/**",

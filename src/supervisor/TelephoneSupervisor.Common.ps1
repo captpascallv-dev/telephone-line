@@ -652,6 +652,12 @@ function Get-TelephoneSupervisorTaskActionScript {
     param([AllowNull()][string]$Arguments)
     $text = [string]$Arguments
     if ([string]::IsNullOrWhiteSpace($text)) { return '' }
+    $supervisorSingle = [regex]::Match($text, "(?i)-SupervisorScript\s+'((?:''|[^'])+)'")
+    if ($supervisorSingle.Success) { return [string]$supervisorSingle.Groups[1].Value.Replace("''", "'") }
+    $supervisorQuoted = [regex]::Match($text, '(?i)-SupervisorScript\s+"([^"]+)"')
+    if ($supervisorQuoted.Success) { return [string]$supervisorQuoted.Groups[1].Value }
+    $supervisorBare = [regex]::Match($text, '(?i)-SupervisorScript\s+(\S+)')
+    if ($supervisorBare.Success) { return [string]$supervisorBare.Groups[1].Value.Trim('"') }
     $encoded = [regex]::Match($text, '(?i)-EncodedCommand\s+([A-Za-z0-9+/=]+)')
     if ($encoded.Success) {
         try {
@@ -659,7 +665,14 @@ function Get-TelephoneSupervisorTaskActionScript {
             $nested = Get-TelephoneSupervisorTaskActionScript -Arguments $command
             if (-not [string]::IsNullOrWhiteSpace($nested)) { return $nested }
             $invocation = [regex]::Match($command, "&\s+'((?:''|[^'])+)'")
-            if ($invocation.Success) { return [string]$invocation.Groups[1].Value.Replace("''", "'") }
+            if ($invocation.Success) {
+                $invokedPath = [string]$invocation.Groups[1].Value.Replace("''", "'")
+                if ([IO.Path]::GetFileName($invokedPath) -ceq 'Start-TelephoneSupervisorHostVisible.ps1') {
+                    $installRoot = [IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetDirectoryName($invokedPath)) '..\..')).TrimEnd('\')
+                    return (Join-Path $installRoot 'src\supervisor\Invoke-TelephoneSupervisor.ps1')
+                }
+                return $invokedPath
+            }
         } catch { }
     }
     $quoted = [regex]::Match($text, '(?i)-File\s+"([^"]+)"')
@@ -712,17 +725,18 @@ function New-TelephoneSupervisorTaskActionDefinition {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$ActionScript,
-        [AllowNull()][string]$ActionArguments
+        [AllowNull()][string]$ActionArguments,
+        [Parameter(Mandatory = $true)][string]$InstallRoot
     )
     $pwsh = Assert-TelephoneRegularFilePath -Path ([string]([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)) -Label 'PowerShell host'
-    $windowsPowerShell = Assert-TelephoneRegularFilePath -Path (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -Label 'Hidden scheduled-task host'
-    $innerArguments = New-TelephoneSupervisorEncodedTaskArguments -ActionScript $ActionScript -ActionArguments $ActionArguments
-    $outerCommand = "& '" + $pwsh.Replace("'", "''") + "' " + $innerArguments + "; if (`$null -ne `$LASTEXITCODE) { exit [int]`$LASTEXITCODE }; exit 0"
-    $outerEncoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($outerCommand))
+    $launcher = Assert-TelephoneRegularFilePath -Path (Join-Path $InstallRoot 'src\supervisor\Start-TelephoneSupervisorHostVisible.ps1') -Label 'Scheduled-task launcher'
+    $outerCommand = "& '" + $launcher.Replace("'", "''") + "'; if (-not `$?) { exit 1 }; exit 0"
+    $outerBase64 = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($outerCommand))
+    $outerArguments = '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand ' + $outerBase64
     return [ordered]@{
-        execute = $windowsPowerShell
-        arguments = '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand ' + $outerEncoded
-        inner_arguments = $innerArguments
+        execute = $pwsh
+        arguments = $outerArguments
+        launcher = $launcher
     }
 }
 
@@ -849,7 +863,7 @@ function Invoke-TelephoneSupervisorRealTaskOperation {
     }
     switch ([string]$Operation) {
         'register' {
-            $definition = New-TelephoneSupervisorTaskActionDefinition -ActionScript $ActionScript -ActionArguments $ActionArguments
+            $definition = New-TelephoneSupervisorTaskActionDefinition -ActionScript $ActionScript -ActionArguments $ActionArguments -InstallRoot $InstallRoot
             $action = New-ScheduledTaskAction -Execute ([string]$definition.execute) -Argument ([string]$definition.arguments) -WorkingDirectory ([string]$InstallRoot)
             $principal = New-ScheduledTaskPrincipal -UserId ([string]$env:USERNAME) -LogonType Interactive -RunLevel Limited
             $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -MultipleInstances IgnoreNew
