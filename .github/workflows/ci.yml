@@ -113,31 +113,31 @@ jobs:
         if: steps.mode.outputs.mode == 'smoke' && steps.mode.outputs.docs_only != 'true'
         shell: pwsh
         run: |
-          $testRoot = Join-Path $env:RUNNER_TEMP ('telephone-contracts-' + [guid]::NewGuid().ToString('N'))
+          $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('telephone-contracts-' + [guid]::NewGuid().ToString('N'))
           & pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/contracts/test_contracts.ps1 -TestRoot $testRoot
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run core Telephone smoke
         if: steps.mode.outputs.mode == 'smoke' && steps.mode.outputs.docs_only != 'true'
         shell: pwsh
         run: |
-          $testRoot = Join-Path $env:RUNNER_TEMP ('telephone-core-' + [guid]::NewGuid().ToString('N'))
+          $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('telephone-core-' + [guid]::NewGuid().ToString('N'))
           & pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/core/test_telephone_line.ps1 -TestRoot $testRoot
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run callback-owner smoke
         if: steps.mode.outputs.mode == 'smoke' && steps.mode.outputs.docs_only != 'true'
         shell: pwsh
         run: |
-          $testRoot = Join-Path $env:RUNNER_TEMP ('telephone-owner-' + [guid]::NewGuid().ToString('N'))
+          $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('telephone-owner-' + [guid]::NewGuid().ToString('N'))
           & pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/lead-side/codex-app-server/test_codex_app_server_lead.ps1 -TestRoot $testRoot -CallbackOwnerOnly
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run docs and manifest smoke
         if: steps.mode.outputs.mode == 'smoke'
         shell: pwsh
         run: |
-          $docsRoot = Join-Path $env:RUNNER_TEMP ('telephone-docs-' + [guid]::NewGuid().ToString('N'))
+          $docsRoot = Join-Path ([IO.Path]::GetTempPath()) ('telephone-docs-' + [guid]::NewGuid().ToString('N'))
           & pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/docs/test_public_docs.ps1 -TestRoot $docsRoot
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $packRoot = Join-Path $env:RUNNER_TEMP ('telephone-pack-' + [guid]::NewGuid().ToString('N'))
+          $packRoot = Join-Path ([IO.Path]::GetTempPath()) ('telephone-pack-' + [guid]::NewGuid().ToString('N'))
           & pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/packaging/test_packaging.ps1 -TestRoot $packRoot
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run full offline suite

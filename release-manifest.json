@@ -57,8 +57,8 @@
     },
     {
       "path": ".github/workflows/ci.yml",
-      "bytes": 6523,
-      "sha256": "c56b1a2f7a1299a8ac9774b07bf6359939dc421d1ee0b8afa845ce083acdbfcc"
+      "bytes": 6573,
+      "sha256": "6ded1c2edfcb404ee7899ad1e8750b9bb75767c5ce28c81948fd1651d525f33c"
     },
     {
       "path": "CONTRIBUTING.md",
@@ -1483,7 +1483,7 @@
   ],
   "counts": {
     "files": 290,
-    "bytes": 3837882
+    "bytes": 3837932
   },
   "excluded": [
     ".control/**",
