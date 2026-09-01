@@ -907,8 +907,8 @@
     },
     {
       "path": "src/packaging/Test-TelephoneOpenSourceReadiness.ps1",
-      "bytes": 18058,
-      "sha256": "17b82030133bb09bf8b57646ea3ed5b9c0da5d4fd3112f46d9790c5d74cbd895"
+      "bytes": 18628,
+      "sha256": "d349392f1370caf99e5154f95b5646245605b6971cabb8503e519c93f7f1b926"
     },
     {
       "path": "src/supervisor/Invoke-TelephoneSupervisor.ps1",
@@ -1478,7 +1478,7 @@
   ],
   "counts": {
     "files": 289,
-    "bytes": 3801775
+    "bytes": 3802345
   },
   "excluded": [
     ".control/**",

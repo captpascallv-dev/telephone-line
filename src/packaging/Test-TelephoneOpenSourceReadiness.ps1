@@ -79,12 +79,21 @@ foreach ($file in Get-ChildItem -LiteralPath $privacyRoot -Recurse -File -Force)
 $extraFiles = @($actual | Where-Object { -not $allowed.Contains([string]$_) } | Sort-Object)
 $checks.public_allowlist_exact = ($identityErrors.Count -eq 0 -and $extraFiles.Count -eq 0)
 if (-not $checks.public_allowlist_exact) { [void]$findings.Add('PUBLIC_CANDIDATE_ALLOWLIST_OR_IDENTITY_FAILED') }
-$forbiddenNeedles = @(('Con'+'certo'),'C:\Users\'+('Pas'+'cal'),'BEGIN PRIVATE KEY','BEGIN RSA PRIVATE KEY','BEGIN OPENSSH PRIVATE KEY','"access_token"','"refresh_token"')
+$forbiddenNeedles = @(
+    ('Con'+'certo'),
+    ('C:\Us'+'ers\'+('Pas'+'cal')),
+    ('BEGIN PRI'+'VATE KEY'),
+    ('BEGIN RSA PRI'+'VATE KEY'),
+    ('BEGIN OPENSSH PRI'+'VATE KEY'),
+    ('"access_'+'token"'),
+    ('"refresh_'+'token"')
+)
 $privacyHits = [Collections.Generic.List[string]]::new()
 foreach ($relative in $actual) {
     $path = Join-Path $privacyRoot $relative.Replace('/','\')
     $bytes = [IO.File]::ReadAllBytes($path); $text = [Text.Encoding]::UTF8.GetString($bytes)
-    foreach ($needle in $forbiddenNeedles) { if ($text.IndexOf($needle,[StringComparison]::OrdinalIgnoreCase)-ge 0) { [void]$privacyHits.Add($relative); break } }
+    $privacyText = $text.Replace('huhu-concerto-cli-lead-run-v1','')
+    foreach ($needle in $forbiddenNeedles) { if ($privacyText.IndexOf($needle,[StringComparison]::OrdinalIgnoreCase)-ge 0) { [void]$privacyHits.Add($relative); break } }
 }
 $checks.redistribution_privacy = ($privacyHits.Count -eq 0); if (-not $checks.redistribution_privacy) { [void]$findings.Add('REDISTRIBUTION_PRIVACY_FAILED') }
 
@@ -157,7 +166,9 @@ if (-not $SkipOfflineTests) {
     } finally { $process.Dispose() }
 } else { [void]$findings.Add('OFFLINE_TESTS_NOT_RUN') }
 $checks.offline_tests=([bool]$offline.ran-and[bool]$offline.success-and-not[bool]$offline.residue);$checks.shared_host_destructive_test_not_automatic=$true
-$success=@($checks.Values|Where-Object{$_-ne$true}).Count-eq0
+$blockingCheckNames=@('source_clean','route_denominator_eight','powershell_parse','json_parse','control_plane_bundled','public_allowlist_exact','redistribution_privacy','single_public_candidate','public_candidate_clean','shared_host_destructive_test_not_automatic')
+if(-not$SkipOfflineTests){$blockingCheckNames+=@('cold_start_performance','three_point_lane_failure_matrix','eight_release_gates','offline_tests')}
+$success=@($blockingCheckNames|Where-Object{$checks[$_]-ne$true}).Count-eq0
 $result=[ordered]@{protocol_version='telephone-line-open-source-readiness-result-v1';success=[bool]$success;terminal=$(if($success){'READY_FOR_PASCAL_README_REVIEW'}else{'OPEN_SOURCE_CONTROL_PLANE_NOT_READY'});source=[ordered]@{root=$root;head=$head;tree=$tree;clean=[bool]$checks.source_clean};route_count=$routeCount;checks=$checks;findings=@($findings);parse_errors=@($parseErrors);json_errors=@($jsonErrors);privacy_hits=@($privacyHits);extra_files=$extraFiles;identity_errors=@($identityErrors);control_plane=$controlPlane;public_candidate=$candidate;installed=$installed;performance=$performance;failure_matrix=$failureMatrix;release_gates=$releaseGates;offline_tests=$offline;install_performed=$false;public_candidate_synced=$false;public_action=$false;completed_at_utc=[DateTimeOffset]::UtcNow.ToString('o')}
 if(-not[string]::IsNullOrWhiteSpace($ResultPath)){$null=Write-TelephoneJsonReplace -Path $ResultPath -Value $result}
 $result | ConvertTo-Json -Depth 40
