@@ -14,14 +14,26 @@ foreach ($path in @($pwsh,$supervisor)) {
     if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Scheduled supervisor dependency is not a regular file.' }
 }
 if (-not [IO.Directory]::Exists($state)) { [IO.Directory]::CreateDirectory($state) | Out-Null }
-$command = "`$ErrorActionPreference='Stop'; `$output=& '" + $supervisor.Replace("'", "''") + "' -InstallRoot '" + $install.Replace("'", "''") + "' -StateRoot '" + $state.Replace("'", "''") + "'|Out-String; [IO.File]::WriteAllText('" + $status.Replace("'", "''") + "',`$output,[Text.UTF8Encoding]::new(`$false)); exit 0"
-$encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
-$info = [Diagnostics.ProcessStartInfo]::new()
-$info.FileName = $pwsh
-$info.Arguments = '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ' + $encoded
-$info.UseShellExecute = $false
-$info.CreateNoWindow = $true
-$process = [Diagnostics.Process]::Start($info)
-if ($null -eq $process) { exit 1 }
-$process.Dispose()
-exit 0
+$failure = Join-Path $state 'scheduled-task-launcher-error.json'
+try {
+    $output = (& $supervisor -InstallRoot $install -StateRoot $state | Out-String)
+    $scriptSucceeded = $?
+    $lastExitVariable = Get-Variable -Name LASTEXITCODE -ErrorAction SilentlyContinue
+    $scriptExitCode = if ($null -ne $lastExitVariable) { $lastExitVariable.Value } else { $null }
+    [IO.File]::WriteAllText($status, $output, [Text.UTF8Encoding]::new($false))
+    if ([IO.File]::Exists($failure)) { [IO.File]::Delete($failure) }
+    if (-not $scriptSucceeded) {
+        if ($null -ne $scriptExitCode) { exit [int]$scriptExitCode }
+        exit 1
+    }
+    exit 0
+} catch {
+    $record = [ordered]@{
+        failed_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+        message = [string]$_.Exception.Message
+        type = [string]$_.Exception.GetType().FullName
+        stack = [string]$_.ScriptStackTrace
+    }
+    [IO.File]::WriteAllText($failure, (($record | ConvertTo-Json -Depth 8) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+    exit 1
+}

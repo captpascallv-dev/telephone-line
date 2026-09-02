@@ -232,8 +232,8 @@
     },
     {
       "path": "docs/install.md",
-      "bytes": 7363,
-      "sha256": "b5ca3dd95ed214721548ff71ec46420fc5f0e5159b7e2e07de64151a358d5aeb"
+      "bytes": 7602,
+      "sha256": "bf524767cfab6e099f7e1b80f873cafd3f7a8737cb8d1d8c2ff0dda278d03851"
     },
     {
       "path": "docs/licensing.md",
@@ -926,6 +926,11 @@
       "sha256": "727404855d1c5435605be1f5bb9c5c87715edf0c612f3267c0e9d8d9cb3fb6ce"
     },
     {
+      "path": "src/supervisor/Invoke-TelephoneSupervisorHidden.vbs",
+      "bytes": 488,
+      "sha256": "2caceffa73c5a9ddbc22bcda897a92bc200fd5e5996b4209a8efe90a48c73d4a"
+    },
+    {
       "path": "src/supervisor/Invoke-TelephoneSupervisorRunHost.ps1",
       "bytes": 6497,
       "sha256": "33d8ea20023bb5e5ef96f4d08368852ea46737201531b5c11b0b2741b6750dec"
@@ -937,8 +942,8 @@
     },
     {
       "path": "src/supervisor/Start-TelephoneSupervisorHostVisible.ps1",
-      "bytes": 1589,
-      "sha256": "b445409c74ba1cc37f83befbd8acc3e8013c256e005bd6d79d49186eff5b10a5"
+      "bytes": 1890,
+      "sha256": "dbbbced20f199af09914148d870ff119cff9eac861744736ab5ce1f8b892c344"
     },
     {
       "path": "src/supervisor/Start-TelephoneWiredRun.ps1",
@@ -947,8 +952,8 @@
     },
     {
       "path": "src/supervisor/TelephoneSupervisor.Common.ps1",
-      "bytes": 111417,
-      "sha256": "e7a51e527b1f21c060a71f7748aa0cf221a06f43ca582199f1741435c249792c"
+      "bytes": 112038,
+      "sha256": "3cb2e57298a60ee6deb754b61c004c8bea3e06347dc4763d9cc135fb512cf870"
     },
     {
       "path": "tests/Invoke-OfflineTests.ps1",
@@ -1482,13 +1487,13 @@
     },
     {
       "path": "tests/supervisor/test_wired_supervisor.ps1",
-      "bytes": 97701,
-      "sha256": "0ec2e4114f5b660d225f77434b8fea92df3ae89c9813934bdf597809fc3a7ecf"
+      "bytes": 97994,
+      "sha256": "78b0de088e23cffaa62d3cae402be25cbe2e520e682fc7604372499bee7fc90a"
     }
   ],
   "counts": {
-    "files": 291,
-    "bytes": 3841487
+    "files": 292,
+    "bytes": 3843429
   },
   "excluded": [
     ".control/**",

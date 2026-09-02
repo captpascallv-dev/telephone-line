@@ -2,7 +2,7 @@
 
 Windows PowerShell commands install, update, uninstall, and inspect a per-user copy of the telephone line. They require no elevation and never write to Program Files, HKLM, a system service, or a startup entry. Install registers one per-user Task Scheduler task (`TelephoneLineWiredSupervisor`, hidden, limited-user, InteractiveToken) and two desktop shortcuts (`有线电话｜紧急停止` and `有线电话｜控制台`). Every location is caller input or documented per-user environment discovery, and the caller can always override it.
 
-The registered task carries one UTF-16LE PowerShell `-EncodedCommand` action. This avoids Task Scheduler command-line quote/token drift while Doctor can still recover and verify the exact action script identity. The task remains hidden, limited-user, on-demand, and bound to the same logical install/state arguments.
+The registered task uses the shipped `Invoke-TelephoneSupervisorHidden.vbs` through `wscript.exe //B`. The GUI/no-console host launches the shipped PowerShell supervisor wrapper with window style `0`, waits for its real exit code, and leaves a durable supervisor-output or launcher-error record. This avoids Task Scheduler quote/token drift and transient terminal windows while Doctor can still recover and verify the exact supervisor script identity. The task remains hidden, limited-user, on-demand, and bound to the installed root and supervisor state.
 
 v0.1 is Codex-first. Codex CLI is the currently built-in Lead. Other routes are execution or review sides, not substitute Lead entries.
 

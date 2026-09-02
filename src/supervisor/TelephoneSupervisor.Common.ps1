@@ -652,6 +652,14 @@ function Get-TelephoneSupervisorTaskActionScript {
     param([AllowNull()][string]$Arguments)
     $text = [string]$Arguments
     if ([string]::IsNullOrWhiteSpace($text)) { return '' }
+    $hiddenLauncher = [regex]::Match($text, '"([^"]*Invoke-TelephoneSupervisorHidden\.vbs)"')
+    if ($hiddenLauncher.Success) {
+        try {
+            $launcherPath = [IO.Path]::GetFullPath([string]$hiddenLauncher.Groups[1].Value)
+            $installRoot = [IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetDirectoryName($launcherPath)) '..\..')).TrimEnd('\')
+            return (Join-Path $installRoot 'src\supervisor\Invoke-TelephoneSupervisor.ps1')
+        } catch { }
+    }
     $supervisorSingle = [regex]::Match($text, "(?i)-SupervisorScript\s+'((?:''|[^'])+)'")
     if ($supervisorSingle.Success) { return [string]$supervisorSingle.Groups[1].Value.Replace("''", "'") }
     $supervisorQuoted = [regex]::Match($text, '(?i)-SupervisorScript\s+"([^"]+)"')
@@ -730,13 +738,14 @@ function New-TelephoneSupervisorTaskActionDefinition {
     )
     $pwsh = Assert-TelephoneRegularFilePath -Path ([string]([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)) -Label 'PowerShell host'
     $launcher = Assert-TelephoneRegularFilePath -Path (Join-Path $InstallRoot 'src\supervisor\Start-TelephoneSupervisorHostVisible.ps1') -Label 'Scheduled-task launcher'
-    $outerCommand = "& '" + $launcher.Replace("'", "''") + "'; if (-not `$?) { exit 1 }; exit 0"
-    $outerBase64 = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($outerCommand))
-    $outerArguments = '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand ' + $outerBase64
+    $hiddenLauncher = Assert-TelephoneRegularFilePath -Path (Join-Path $InstallRoot 'src\supervisor\Invoke-TelephoneSupervisorHidden.vbs') -Label 'Scheduled-task hidden launcher'
+    $wscript = Assert-TelephoneRegularFilePath -Path (Join-Path ([string]$env:SystemRoot) 'System32\wscript.exe') -Label 'Windows Script Host'
+    $outerArguments = '//B //NoLogo "' + $hiddenLauncher + '" "' + $pwsh + '" "' + $launcher + '"'
     return [ordered]@{
-        execute = $pwsh
+        execute = $wscript
         arguments = $outerArguments
         launcher = $launcher
+        hidden_launcher = $hiddenLauncher
     }
 }
 

@@ -312,9 +312,11 @@ try {
     Assert-Sup ($decodedTaskCommand.EndsWith('; exit 0', [StringComparison]::Ordinal)) 'Encoded task action does not normalize successful script completion to zero.'
     Assert-Sup ((Get-TelephoneSupervisorTaskActionScript -Arguments $encodedTaskArgs) -ceq $taskAction) 'Encoded task action cannot recover its exact script identity.'
     $taskDefinition = New-TelephoneSupervisorTaskActionDefinition -ActionScript $taskAction -ActionArguments $taskLogicalArgs -InstallRoot $repoRoot
-    Assert-Sup ([string]$taskDefinition.execute -like '*\pwsh.exe') 'Scheduled task does not use the configured PowerShell host.'
-    Assert-Sup ([string]$taskDefinition.arguments -match '(?i)-WindowStyle\s+Hidden\s+-EncodedCommand\s+') 'Outer scheduled-task host is not hidden.'
+    Assert-Sup ([string]$taskDefinition.execute -like '*\wscript.exe') 'Scheduled task does not use the windowless Windows Script Host.'
+    Assert-Sup ([string]$taskDefinition.arguments -match '(?i)^//B\s+//NoLogo\s+') 'Scheduled task does not use batch/no-logo Script Host mode.'
     Assert-Sup ([string]$taskDefinition.launcher -like '*Start-TelephoneSupervisorHostVisible.ps1') 'Scheduled task does not use the shipped short launcher.'
+    Assert-Sup ([string]$taskDefinition.hidden_launcher -like '*Invoke-TelephoneSupervisorHidden.vbs') 'Scheduled task does not use the shipped hidden VBS launcher.'
+    Assert-Sup ([IO.File]::Exists([string]$taskDefinition.hidden_launcher)) 'Scheduled task hidden launcher is not shipped.'
     Assert-Sup ((Get-TelephoneSupervisorTaskActionScript -Arguments ([string]$taskDefinition.arguments)) -ceq $taskAction) 'Nested task action cannot recover its exact supervisor script identity.'
     $encodedProbe = Invoke-SupRawArguments -Arguments $encodedTaskArgs
     Assert-Sup ($encodedProbe.exit_code -eq 0) ('Encoded task action failed: ' + $encodedProbe.stderr + $encodedProbe.stdout)
