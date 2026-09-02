@@ -1700,6 +1700,10 @@ function Sync-TelephoneCommandOwnerCompletion {
             $startedAt = [string]$owner.started_at_utc
         }
 
+        # The live command host owns publication. Child exit and its durable
+        # exit/receipt records are separate writes; recovery must not win that gap.
+        if ($ownerAlive) { return 'waiting_owner' }
+
         if ($childAlive) {
             try {
                 $proc = Get-Process -Id ([int]$child.pid) -ErrorAction Stop
@@ -1708,7 +1712,7 @@ function Sync-TelephoneCommandOwnerCompletion {
                     if ($ticks -eq [int64]$child.start_time_utc_ticks) {
                         $null = $proc.WaitForExit(400)
                         if ($proc.HasExited) {
-                            $code = [int]$proc.ExitCode
+                            $code = $proc.ExitCode
                             Write-TelephoneCommandChildExit -Paths $Paths -Dispatch $dispatch -ExitCode $code
                             $receipt = New-TelephoneCommandBoundReceipt -DispatchRead $dispatchRead -Paths $Paths -ExitCode $code -StartedAtUtc $startedAt -TransportComplete $true
                             $null = Publish-TelephoneCommandReceiptOnce -Paths $Paths -Receipt $receipt
@@ -1727,7 +1731,7 @@ function Sync-TelephoneCommandOwnerCompletion {
             try { $exit = (Read-TelephoneJson -Path ([string]$Paths.command_child_exit)).value } catch { $exit = $null }
             if ($null -eq $exit) { return 'malformed_child_exit' }
             $code = $null
-            try { $code = [int]$exit.command_exit_code } catch { $code = $null }
+            try { $code = $exit.command_exit_code } catch { $code = $null }
             $receipt = New-TelephoneCommandBoundReceipt -DispatchRead $dispatchRead -Paths $Paths -ExitCode $code -StartedAtUtc $startedAt -TransportComplete $true
             $null = Publish-TelephoneCommandReceiptOnce -Paths $Paths -Receipt $receipt
             return 'reconciled'

@@ -458,6 +458,55 @@ try {
     $env:TELEPHONE_TEST_LEAD_RUNS = $leadRuns
     $env:TELEPHONE_TEST_LEAD_TURNS = $leadTurns
 
+    # Exercise the caller-visible durable contract without depending on scheduler
+    # timing: a dead child does not transfer publication from its live host.
+    $receiptLiveOwner = Get-TelephoneTestProcessIdentity -ProcessId $PID
+    $receiptLiveOwner['started_at_utc'] = [DateTimeOffset]::UtcNow.ToString('o')
+    $receiptDeadOwner = [ordered]@{
+        pid = [int]$PID
+        start_time_utc_ticks = [int64]($receiptLiveOwner.start_time_utc_ticks - 1)
+        started_at_utc = $receiptLiveOwner.started_at_utc
+    }
+    Assert-TelephoneTest ((Test-TelephoneOwnerAlive -Owner $receiptLiveOwner) -and -not (Test-TelephoneOwnerAlive -Owner $receiptDeadOwner)) 'Receipt ordering fixture identities were not live/dead as intended.'
+    foreach ($receiptCase in @(
+        @{ name = 'exit-zero'; code = 0; exit_record = $true },
+        @{ name = 'exit-seven'; code = 7; exit_record = $true },
+        @{ name = 'exit-unknown'; code = $null; exit_record = $true },
+        @{ name = 'output-only'; code = $null; exit_record = $false }
+    )) {
+        $receiptJob = [Guid]::NewGuid().ToString()
+        # These are synthetic records, outside jobs/, and are never dispatched.
+        $receiptRoot = Join-Path $testRoot ('receipt-order-' + $receiptCase.name)
+        [IO.Directory]::CreateDirectory($receiptRoot) | Out-Null
+        $receiptPaths = Get-TelephoneJobPaths -JobRoot $receiptRoot
+        $receiptRequest = Read-TelephoneJson -Path (New-TelephoneTestRequest -JobId $receiptJob -Role execution -DelayMilliseconds 0)
+        $receiptDispatch = New-TelephoneTestDurableDispatch -RequestRead $receiptRequest -LeadBindingPath $receiptPaths.lead_binding
+        $null = Write-TelephoneJsonCreateNew -Path $receiptPaths.dispatch -Value $receiptDispatch
+        $null = Write-TelephoneJsonCreateNew -Path $receiptPaths.command_owner -Value $receiptLiveOwner
+        $null = Write-TelephoneJsonCreateNew -Path $receiptPaths.command_child -Value $receiptDeadOwner
+        $null = Write-TelephoneTextCreateNew -Path $receiptPaths.stdout -Text "synthetic completed child output`n"
+        Assert-TelephoneTest ((Sync-TelephoneCommandOwnerCompletion -Paths $receiptPaths) -ceq 'waiting_owner') 'Recovery preempted the live host before its exit record.'
+        Assert-TelephoneTest (-not [IO.File]::Exists($receiptPaths.receipt)) 'Recovery sealed an unknown receipt while the host was still publishing.'
+        if ($receiptCase.exit_record) {
+            Write-TelephoneCommandChildExit -Paths $receiptPaths -Dispatch $receiptDispatch -ExitCode $receiptCase.code
+        }
+        Assert-TelephoneTest ((Sync-TelephoneCommandOwnerCompletion -Paths $receiptPaths) -ceq 'waiting_owner') 'Recovery preempted the live host after its exit record.'
+        Assert-TelephoneTest (-not [IO.File]::Exists($receiptPaths.receipt)) 'A live host lost ownership of terminal publication.'
+        $null = Write-TelephoneJsonReplace -Path $receiptPaths.command_owner -Value $receiptDeadOwner
+        Assert-TelephoneTest ((Sync-TelephoneCommandOwnerCompletion -Paths $receiptPaths) -ceq 'reconciled') 'A dead host could not be reconciled from the same durable result.'
+        $reconciledRead = Read-TelephoneJson -Path $receiptPaths.receipt -SchemaName 'receipt'
+        Assert-TelephoneTest ($reconciledRead.value.transport_complete -eq $true) 'Reconciliation lost the completed transport.'
+        if ($null -eq $receiptCase.code) {
+            Assert-TelephoneTest ($null -eq $reconciledRead.value.command_exit_code) 'An unknown exit code was converted into success.'
+        } else {
+            Assert-TelephoneTest ($reconciledRead.value.command_exit_code -eq $receiptCase.code) 'Reconciliation changed the actual child exit code.'
+        }
+        Assert-TelephoneTest ((Sync-TelephoneCommandOwnerCompletion -Paths $receiptPaths) -ceq 'receipt') 'Repeated recovery did not preserve the existing receipt.'
+        Assert-TelephoneTest ((Get-TelephoneFileIdentity -Path $receiptPaths.receipt).sha256 -ceq $reconciledRead.identity.sha256) 'Repeated recovery rewrote the sealed receipt.'
+    }
+    $receiptOwnerOrdering = 1
+    $unknownExitPreserved = 1
+
     $ackRoot = Join-Path $testRoot 'origin-wake'
     [IO.Directory]::CreateDirectory($ackRoot) | Out-Null
     $ackPath = Join-Path $ackRoot 'lead-wake-ack.json'
@@ -690,7 +739,7 @@ Start-TelephoneHiddenPowerShell -ScriptPath $ChildPath -Arguments @('-Ignored', 
     $start1 = ($start1Text -join "`n") | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
     Add-TelephoneTestTracked -Owner $start1.command_owner -Kind 'command_owner'
     Add-TelephoneTestTracked -Owner $start1.relay_owner -Kind 'relay_owner'
-    Assert-TelephoneTest ($clock.ElapsedMilliseconds -lt 1200) 'Lead dispatch did not return before the external route completed.'
+    Assert-TelephoneTest ($clock.ElapsedMilliseconds -lt 1200) ("Lead dispatch did not return before the external route completed. elapsed_ms=" + $clock.ElapsedMilliseconds)
     Assert-TelephoneTest ($start1.lead_should_exit_now -eq $true) 'Starter did not tell Lead to exit immediately.'
     Assert-TelephoneTest ($start1.absolute_task_timeout -eq $false) 'Starter introduced an absolute task timeout.'
     Start-Sleep -Milliseconds 250
@@ -703,7 +752,20 @@ Start-TelephoneHiddenPowerShell -ScriptPath $ChildPath -Arguments @('-Ignored', 
     $receipt1Read = Read-TelephoneJson -Path (Join-Path $job1Root 'receipt.json') -SchemaName 'receipt'
     $receipt1 = $receipt1Read.value
     $delivery1 = (Read-TelephoneJson -Path (Join-Path $job1Root 'delivery.json')).value
-    Assert-TelephoneTest ($receipt1.transport_complete -eq $true -and $receipt1.command_exit_code -eq 0) 'Successful route did not produce a successful durable receipt.'
+    $receipt1Successful = ($receipt1.transport_complete -eq $true -and $receipt1.command_exit_code -eq 0)
+    $receipt1Message = 'Successful route did not produce a successful durable receipt.'
+    if (-not $receipt1Successful) {
+        $childExit1Path = Join-Path $job1Root 'command-child-exit.json'
+        $childExit1 = if ([IO.File]::Exists($childExit1Path)) { (Read-TelephoneJson -Path $childExit1Path).value.command_exit_code } else { $null }
+        $receipt1Message += ' ' + ([ordered]@{
+            transport_complete = $receipt1.transport_complete
+            command_exit_code = $receipt1.command_exit_code
+            command_error_code = $receipt1.command_error_code
+            child_exit_present = [IO.File]::Exists($childExit1Path)
+            child_exit_code = $childExit1
+        } | ConvertTo-Json -Compress)
+    }
+    Assert-TelephoneTest $receipt1Successful $receipt1Message
     Assert-TelephoneTest ($receipt1.absolute_task_timeout -eq $false -and $receipt1.automatic_rerun -eq $false -and $receipt1.project_judgment -eq $false) 'Receipt crossed the transport-only boundary.'
     Assert-TelephoneTest ([string]$delivery1.lead_session_id -ceq $sessionId) 'Relay did not resolve the exact original Lead session.'
     Assert-TelephoneTest ([string]$delivery1.wake_acknowledgment.event -ceq 'turn.started') 'Delivery was published before the exact Lead wake was acknowledged.'
@@ -1228,7 +1290,13 @@ if (`$StateRoot -cne '$($namedArgsState.Replace("'", "''"))' -or `$CodexCommand 
     Stop-Process -Id ([int]$startAfter.command_owner.pid) -Force -ErrorAction Stop
     Wait-TelephoneTestPath -Path $afterPaths.delivery -Seconds 25
     $receiptAfter = (Read-TelephoneJson -Path $afterPaths.receipt -SchemaName 'receipt').value
-    Assert-TelephoneTest ($receiptAfter.transport_complete -eq $true -and [int]$receiptAfter.command_exit_code -eq 0) 'Killing the command owner after child publication did not reconcile the same receipt.'
+    Assert-TelephoneTest ($receiptAfter.transport_complete -eq $true) 'Killing the command owner after child publication did not reconcile the same receipt.'
+    $childExitAfter = if ([IO.File]::Exists($afterPaths.command_child_exit)) { (Read-TelephoneJson -Path $afterPaths.command_child_exit).value.command_exit_code } else { $null }
+    if ($null -eq $childExitAfter) {
+        Assert-TelephoneTest ($null -eq $receiptAfter.command_exit_code) 'Owner-death recovery invented success without a known child exit code.'
+    } else {
+        Assert-TelephoneTest ($childExitAfter -eq 0 -and $receiptAfter.command_exit_code -eq $childExitAfter) 'Owner-death recovery did not preserve the actual child exit code.'
+    }
     Assert-TelephoneTest (@(Get-Content -LiteralPath $counter).Count -eq ($counterBeforeChild + 1)) 'Owner-death reconciliation reran the route.'
     $dead_owner_after_child_reconciled = 1
 
@@ -1273,6 +1341,8 @@ if (`$StateRoot -cne '$($namedArgsState.Replace("'", "''"))' -or `$CodexCommand 
         exact_lead_binding = 1
         duplicate_job_suppressed = 1
         command_start_race_closed = 1
+        receipt_owner_ordering = $receiptOwnerOrdering
+        unknown_exit_preserved = $unknownExitPreserved
         detached_worker_stdio = 1
         durable_wake_error = 1
         interrupted_no_rerun = 1

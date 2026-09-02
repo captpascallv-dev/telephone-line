@@ -757,8 +757,8 @@
     },
     {
       "path": "src/core/TelephoneLine.Common.ps1",
-      "bytes": 187505,
-      "sha256": "878fca4f51d646bf20a258e6b2bac6db6ad7064bbba70e555250e4b7bb0d5cc6"
+      "bytes": 187709,
+      "sha256": "9a3f3d7589f8694a38a773969538a549cb11523d86621ab693b5a4b66521541d"
     },
     {
       "path": "src/dashboard/Ensure-TelephoneDashboard.ps1",
@@ -1417,8 +1417,8 @@
     },
     {
       "path": "tests/core/test_telephone_line.ps1",
-      "bytes": 86879,
-      "sha256": "57f4b801ad9c3988bad9f282b5b7411a46524f92567068c6d6b55388facd5fcd"
+      "bytes": 92408,
+      "sha256": "8994459fdd78ccc1086f981467b4cce5aeeb4a229cc83abcdbb9d38d1b92e061"
     },
     {
       "path": "tests/dashboard/test_dashboard.ps1",
@@ -1493,7 +1493,7 @@
   ],
   "counts": {
     "files": 292,
-    "bytes": 3844262
+    "bytes": 3849995
   },
   "excluded": [
     ".control/**",
