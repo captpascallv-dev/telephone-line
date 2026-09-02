@@ -17,6 +17,8 @@ This project is for Codex CLI users who want Codex to keep the high-value Lead w
 
 v0.1 is Codex-first. Codex CLI is the only currently built-in Lead implemented and maintained by the original project team. Cursor, Grok/SuperGrok, PI, Claude Code, and DSH are execution or review sides, not substitute Lead entries. Direct Codex CLI is one of the eight frozen routes invoked by the Lead. It is not a second built-in Lead entry.
 
+Codex-first is an authority model, not a branding label. Codex remains the authoritative Lead for goal alignment, task decomposition, acceptance, recovery, and final decisions. External Harnesses provide bounded execution and independent review, but never inherit project authority. This concentrates Codex's highest-value reasoning on the decisions where quality matters most while letting users reuse the tools and subscriptions they already have.
+
 The v0.1 denominator is exactly eight routes. Each route's `dependency_boundary` is declared, not probed. The user installs that Harness; this package does not ship it.
 
 - `deepsea-codex-cli` — DSH with a ChatGPT Plus/Pro Codex subscription

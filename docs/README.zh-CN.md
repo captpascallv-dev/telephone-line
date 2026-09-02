@@ -34,6 +34,8 @@ Harness 不只是模型名称。每个 Harness 都有自己的工具、权限、
 
 因此，v0.1 仍然是 **Codex-first**：
 
+Codex-first 不是一句品牌口号，而是一套 authority 分工。Codex 始终是负责目标对齐、任务拆分、验收、恢复与最终决策的权威 Lead。外部 Harness 承担有限执行和独立审查，但不继承项目决策权。这样可以让 Codex 的高价值推理集中在真正影响质量的判断环节，同时复用用户已有的工具和订阅。
+
 - Codex CLI 是当前唯一内置并由项目维护的 Lead。
 - Cursor、Grok、PI、Claude Code 和 DSH 是执行或审查端，不是第二个内置 Lead。
 - `direct-codex-cli` 也是一条执行路线，不代表又增加了一个 Lead 入口。
