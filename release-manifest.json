@@ -72,8 +72,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 21928,
-      "sha256": "facdbf2d35617f9eec77a7cabd267ce8fb145948b9737d99a74f55eeae8db096"
+      "bytes": 22309,
+      "sha256": "f622ccfd00846474adeb623529e652bca7a840da1b0abd5417011aa3c7abc9cd"
     },
     {
       "path": "SECURITY.md",
@@ -87,8 +87,8 @@
     },
     {
       "path": "docs/README.zh-CN.md",
-      "bytes": 21060,
-      "sha256": "8452c30f21c22aabfce23798316f9e298c8a7e55a56dc4a7024782388a7805f4"
+      "bytes": 21379,
+      "sha256": "9f27cba885fc29d909e486f425923414bf66dfbd66d42d84ea7143c3159f72f2"
     },
     {
       "path": "docs/adapter-authoring.md",
@@ -97,8 +97,8 @@
     },
     {
       "path": "docs/adapter-interface.md",
-      "bytes": 2852,
-      "sha256": "38451b698c8f35e85f60a84e2344ec450646799dae79eae2c351d28c7c80fe07"
+      "bytes": 4043,
+      "sha256": "9bdc46f9a8286fa0c2cd1108a4cf20bd05a38d195601215d1da7009a08cace5b"
     },
     {
       "path": "docs/adapters/deepsea-codex-cli.md",
@@ -132,8 +132,8 @@
     },
     {
       "path": "docs/adapters/direct-grok-cli.md",
-      "bytes": 540,
-      "sha256": "3d4ff8dee558931c05d87d056967451dd8176c693369d009c4fb331645e1e61e"
+      "bytes": 931,
+      "sha256": "abfbb984a5969ff12f0a98dfebb43dafa7dd67ca0d322f33836db491a14cd60a"
     },
     {
       "path": "docs/adapters/direct-pi.md",
@@ -167,8 +167,13 @@
     },
     {
       "path": "docs/dashboard.md",
-      "bytes": 11300,
-      "sha256": "608b8620fc6013a6b2f062ec0b3ce100c7fe9df95c7d989bafee27d96b12a95a"
+      "bytes": 12128,
+      "sha256": "c606bbd13348d2d468cdffa0077a10764b9a9e308af033c83886055611f59582"
+    },
+    {
+      "path": "docs/examples/caller-supplied-lead/Invoke-GenericLeadLauncher.ps1",
+      "bytes": 4386,
+      "sha256": "383995019f95eedaf9c1efb3bd3f2c49cec3bfc6db90e34f794cc4c086f58ec4"
     },
     {
       "path": "docs/examples/codex-app-server-lead/README.md",
@@ -252,8 +257,8 @@
     },
     {
       "path": "docs/quick-start.md",
-      "bytes": 16073,
-      "sha256": "785f81c5b1c2e012a5e49f462371f3aaea784b3ef64d49631fcca3e016548a38"
+      "bytes": 16657,
+      "sha256": "300f06bc2823c01762f39906fced067de298e428c2c1e2935e634247733cdb8a"
     },
     {
       "path": "docs/redistribution-audit.md",
@@ -642,8 +647,8 @@
     },
     {
       "path": "src/adapters/direct-grok-cli/DirectGrok.Common.ps1",
-      "bytes": 18111,
-      "sha256": "fdd95f116ee88fefa0bd3fc8ec0a728d49ed2cf2a2d47b3f44839c0d5f9eea0b"
+      "bytes": 23258,
+      "sha256": "244b065d5a15abfccea7fc3eed97691a95056e6a812c83e351811d1cf5771c97"
     },
     {
       "path": "src/adapters/direct-grok-cli/Invoke-DirectGrokCliEntry.ps1",
@@ -652,8 +657,8 @@
     },
     {
       "path": "src/adapters/direct-grok-cli/Invoke-DirectGrokRoute.ps1",
-      "bytes": 18588,
-      "sha256": "7038596418d9494e34ee629bbefb3a8544d428a5d142ce107a683a8f8ef3c154"
+      "bytes": 32130,
+      "sha256": "d9d6c2797b4ee1f32a36f886b214b156746d2e0ed002369e255d256298613de1"
     },
     {
       "path": "src/adapters/direct-grok-cli/adapter.json",
@@ -662,8 +667,8 @@
     },
     {
       "path": "src/adapters/direct-grok-cli/invoke_grok_build.ps1",
-      "bytes": 10596,
-      "sha256": "f7f33f17b15931bb6db8e6dcdeb60e4ed88328c2dace008b0715fde1ba4d9b20"
+      "bytes": 13356,
+      "sha256": "a0723232c06e12d4fdb1abaefe0f31c2a54a884de681b5ec47b83161e07e070b"
     },
     {
       "path": "src/adapters/direct-grok-cli/process_file_host.ps1",
@@ -777,8 +782,8 @@
     },
     {
       "path": "src/dashboard/TelephoneDashboard.Projection.ps1",
-      "bytes": 133545,
-      "sha256": "b35b26495be6ffdfb5c9033baff45e6879f1405ed5411174e664c57dada690dc"
+      "bytes": 135097,
+      "sha256": "ed7e97d35a1aef895d38c25c08efdf3179a521dec8c0d6edb72a3a7c99eb7559"
     },
     {
       "path": "src/dashboard/TelephoneDashboard.Reducer.ps1",
@@ -1017,8 +1022,8 @@
     },
     {
       "path": "tests/adapters/direct-grok-cli/test_direct_grok_route.ps1",
-      "bytes": 34788,
-      "sha256": "e1fc03b0e24f142458128de554e07b2e7c2bbd9fd498f356271a53c84c1be65a"
+      "bytes": 72594,
+      "sha256": "eea63573fc64aa3caeaffe66e864eb4a45029565b7655730b14a2bbc3ed164cb"
     },
     {
       "path": "tests/adapters/direct-pi/test_direct_pi_route.ps1",
@@ -1416,14 +1421,19 @@
       "sha256": "049ce587983ba0a9f219a87eeb5c936163215f117e5f410d7fd2ca9af1379db3"
     },
     {
+      "path": "tests/core/test_caller_supplied_launcher_contract.ps1",
+      "bytes": 6981,
+      "sha256": "21478194c540a8f624391dbcd6b57d90096aae82c098ee5e877c869b62bb5c90"
+    },
+    {
       "path": "tests/core/test_telephone_line.ps1",
       "bytes": 92408,
       "sha256": "8994459fdd78ccc1086f981467b4cce5aeeb4a229cc83abcdbb9d38d1b92e061"
     },
     {
       "path": "tests/dashboard/test_dashboard.ps1",
-      "bytes": 157570,
-      "sha256": "c0b84ffb72c488cf6a3c18ed3a26d3b20a3921714982f83896b16d1e0f490a36"
+      "bytes": 172359,
+      "sha256": "bfc3bac334008e80edca541425d5e8dd2c581c9b29689c62d0b436da9f0250f6"
     },
     {
       "path": "tests/docs/test_public_docs.ps1",
@@ -1492,8 +1502,8 @@
     }
   ],
   "counts": {
-    "files": 292,
-    "bytes": 3849995
+    "files": 294,
+    "bytes": 3940652
   },
   "excluded": [
     ".control/**",

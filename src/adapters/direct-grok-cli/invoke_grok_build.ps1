@@ -18,6 +18,7 @@ $OutputEncoding = $utf8NoBom
 
 $request = $null
 $process = $null
+$wrapperExitCode = 4
 $startedAt = [Diagnostics.Stopwatch]::StartNew()
 try {
     $wrapperIdentity = Get-DirectGrokFileIdentity -Path $PSCommandPath
@@ -86,28 +87,63 @@ try {
     $startInfo.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
     $startInfo.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
     foreach ($argument in $arguments) { [void]$startInfo.ArgumentList.Add([string]$argument) }
+    Disable-DirectGrokStandardHandleInheritance
 
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
     if (-not $process.Start()) { throw 'Official Grok CLI did not start.' }
     $stdoutTask = $process.StandardOutput.ReadToEndAsync()
     $stderrTask = $process.StandardError.ReadToEndAsync()
+    $jobRoot = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($RequestPath))
+    $artifacts = Get-DirectGrokJobArtifactPaths -JobRoot $jobRoot
+    $timedOut = $false
+    $stopAttempted = $false
+    $stopConfirmed = $true
+    $ioCompleted = $false
+    $processExited = $false
+    $cleanupMs = Get-DirectGrokStopCleanupMilliseconds
     if ([int]$request.timeout_seconds -gt 0) {
-        $finished = $process.WaitForExit(([int]$request.timeout_seconds * 1000))
-        if (-not $finished) {
-            try { $process.Kill($true) } catch { }
-            $process.WaitForExit()
+        $processExited = $process.WaitForExit(([int]$request.timeout_seconds * 1000))
+        if (-not $processExited) {
+            $timedOut = $true
+            $stopAttempted = $true
+            $stopConfirmed = $false
+            $simulateStopFail = [string]$env:TELEPHONE_TEST_DIRECT_GROK_SIMULATE_STOP_FAILURE -ceq '1'
+            $simulateIoHang = [string]$env:TELEPHONE_TEST_DIRECT_GROK_SIMULATE_IO_HANG -ceq '1'
+            if (-not $simulateStopFail) {
+                try { $process.Kill($true) } catch { }
+            }
+            $cleanupWatch = [Diagnostics.Stopwatch]::StartNew()
+            try { $processExited = $process.WaitForExit($cleanupMs) } catch { $processExited = $false }
+            $ioMs = [Math]::Max(1, $cleanupMs - [int]$cleanupWatch.ElapsedMilliseconds)
+            if ($simulateIoHang) {
+                $ioCompleted = $false
+            } else {
+                $ioCompleted = Wait-DirectGrokTasksBounded -Tasks @($stdoutTask, $stderrTask) -TimeoutMilliseconds $ioMs
+            }
+            $stopConfirmed = $processExited -and $ioCompleted -and -not $simulateStopFail
+            try {
+                $null = Write-DirectGrokJsonCreateNew -Path ([string]$artifacts.grok_child_owner) -Value (New-DirectGrokChildOwnerEvidence -Process $process -StopAttempted $true -ProcessExited $processExited -IoCompleted $ioCompleted -StopConfirmed $stopConfirmed)
+            } catch [IO.IOException] { }
+            if (-not $ioCompleted) {
+                try { $process.StandardOutput.BaseStream.Dispose() } catch { }
+                try { $process.StandardError.BaseStream.Dispose() } catch { }
+                $null = Wait-DirectGrokTasksBounded -Tasks @($stdoutTask, $stderrTask) -TimeoutMilliseconds 200
+            }
+        } else {
+            $ioCompleted = Wait-DirectGrokTasksBounded -Tasks @($stdoutTask, $stderrTask) -TimeoutMilliseconds $cleanupMs
         }
     } else {
         $process.WaitForExit()
-        $finished = $true
+        $processExited = $true
+        [void][Threading.Tasks.Task]::WaitAll(@($stdoutTask, $stderrTask))
+        $ioCompleted = $true
     }
-    $stdout = $stdoutTask.GetAwaiter().GetResult()
-    $stderr = $stderrTask.GetAwaiter().GetResult()
-    $exitCode = if ($finished) { [int]$process.ExitCode } else { 124 }
-    $jobRoot = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($RequestPath))
-    $artifacts = Get-DirectGrokJobArtifactPaths -JobRoot $jobRoot
+    $stdout = Get-DirectGrokCompletedTaskText -Task $stdoutTask
+    $stderr = Get-DirectGrokCompletedTaskText -Task $stderrTask
+    $exitCode = if ($timedOut -or -not $processExited) { 124 } else { [int]$process.ExitCode }
     if ([string]$env:TELEPHONE_TEST_DIRECT_GROK_CRASH_BEFORE_CLI -ceq '1') { exit 99 }
+    $finished = (-not $timedOut) -and $processExited -and $ioCompleted -and $stopConfirmed
     if ($finished -and [int]$exitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($stdout) -and -not [IO.File]::Exists($artifacts.cli_stdout)) {
         try { $null = Write-DirectGrokBytesCreateNew -Path $artifacts.cli_stdout -Bytes $utf8NoBom.GetBytes($stdout) } catch [IO.IOException] { }
     }
@@ -133,7 +169,7 @@ try {
     }
 
     $success = $finished -and $exitCode -eq 0 -and $null -eq $parseError
-    $errorText = if ($success) { $null } else { Get-DirectGrokPublicError -Text $parseError }
+    $errorText = if ($success) { $null } elseif ($stopAttempted -and -not $stopConfirmed) { Get-DirectGrokPublicError -ErrorCode 'ADAPTER_GROK_STOP_FAILED' } elseif ($timedOut) { Get-DirectGrokPublicError -ErrorCode 'ADAPTER_GROK_TIMEOUT' } else { Get-DirectGrokPublicError -Text $parseError }
     $resultObject = [ordered]@{
         protocol_version = 'telephone-line-direct-grok-result-v1'
         job_id = [string]$request.job_id
@@ -157,13 +193,12 @@ try {
     if ([IO.File]::Exists($artifacts.cli_stdout)) {
         $resultObject['cli_stdout'] = Get-DirectGrokFileIdentity -Path $artifacts.cli_stdout
     }
-    if ([bool]$success -and -not [IO.File]::Exists($artifacts.checkpoint)) {
+    if (([bool]$success -or $stopAttempted) -and -not [IO.File]::Exists($artifacts.checkpoint)) {
         try { $null = Write-DirectGrokJsonCreateNew -Path $artifacts.checkpoint -Value $resultObject } catch [IO.IOException] { }
     }
     if ([string]$env:TELEPHONE_TEST_DIRECT_GROK_CRASH_AFTER_CHECKPOINT -ceq '1') { exit 99 }
     $resultObject | ConvertTo-Json -Depth 64
-    if ($success) { exit 0 }
-    exit 4
+    if ($success) { $wrapperExitCode = 0 } else { $wrapperExitCode = 4 }
 } catch {
     [ordered]@{
         protocol_version = 'telephone-line-direct-grok-result-v1'
@@ -185,7 +220,14 @@ try {
         automatic_rerun = $false
         replacement_started = $false
     } | ConvertTo-Json -Depth 64
-    exit 4
+    $wrapperExitCode = 4
 } finally {
-    if ($null -ne $process) { $process.Dispose() }
+    if ($null -ne $process) {
+        try { $process.StandardOutput.BaseStream.Dispose() } catch { }
+        try { $process.StandardError.BaseStream.Dispose() } catch { }
+        try { $process.Dispose() } catch { }
+    }
 }
+try { [Console]::Out.Flush() } catch { }
+try { [Console]::Error.Flush() } catch { }
+[Environment]::Exit($wrapperExitCode)

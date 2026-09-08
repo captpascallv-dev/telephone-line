@@ -2079,6 +2079,184 @@ try {
     $supervisor_incomplete_identity = 1
     $legacy_wired_wireless_unchanged = $wired_wireless_one_ordinal_space
 
+    $wsRoot = Join-Path $testRoot 'sync-workstreams'
+    $wsSame = Join-Path $wsRoot 'same-lead'
+    $wsSplit = Join-Path $wsRoot 'split-lead'
+    $wsJobA = Join-Path $wsSame ('jobs\aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeef01')
+    $wsJobB = Join-Path $wsSame ('jobs\aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeef02')
+    $wsJobC = Join-Path $wsSplit ('jobs\aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeef03')
+    $wsJobD = Join-Path $wsSplit ('jobs\aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeef04')
+    foreach ($wsDir in @($wsJobA, $wsJobB, $wsJobC, $wsJobD)) { [IO.Directory]::CreateDirectory($wsDir) | Out-Null }
+    $wsDispA = $dispatch | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $wsDispB = $dispatch | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $wsDispC = $dispatch | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $wsDispD = $dispatch | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $wsBindA = $binding | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $wsBindB = $binding | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $wsBindC = $binding | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $wsBindD = $binding | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $wsDispA.project = 'sync-same'; $wsDispA.line_job_id = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeef01'; $wsBindA.session_id = 'sess-shared'; $wsDispA.lead = $wsBindA
+    $wsDispB.project = 'sync-same'; $wsDispB.line_job_id = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeef02'; $wsBindB.session_id = 'sess-shared'; $wsDispB.lead = $wsBindB
+    $wsDispC.project = 'sync-split'; $wsDispC.line_job_id = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeef03'; $wsBindC.session_id = 'sess-c'; $wsDispC.lead = $wsBindC
+    $wsDispD.project = 'sync-split'; $wsDispD.line_job_id = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeef04'; $wsBindD.session_id = 'sess-d'; $wsDispD.lead = $wsBindD
+    Write-DashUtf8 -Path (Join-Path $wsJobA 'dispatch.json') -Value $wsDispA
+    Write-DashUtf8 -Path (Join-Path $wsJobA 'lead-binding.json') -Value $wsBindA
+    Write-DashUtf8 -Path (Join-Path $wsJobB 'dispatch.json') -Value $wsDispB
+    Write-DashUtf8 -Path (Join-Path $wsJobB 'lead-binding.json') -Value $wsBindB
+    Write-DashUtf8 -Path (Join-Path $wsJobC 'dispatch.json') -Value $wsDispC
+    Write-DashUtf8 -Path (Join-Path $wsJobC 'lead-binding.json') -Value $wsBindC
+    Write-DashUtf8 -Path (Join-Path $wsJobD 'dispatch.json') -Value $wsDispD
+    Write-DashUtf8 -Path (Join-Path $wsJobD 'lead-binding.json') -Value $wsBindD
+    $wsDescSame = Join-Path $testRoot 'sync-same-desc.json'
+    $wsDescSplit = Join-Path $testRoot 'sync-split-desc.json'
+    $wsCfg = Join-Path $testRoot 'sync-ws-config.json'
+    Write-DashUtf8 -Path $wsDescSame -Value ([ordered]@{ protocol_version = 'telephone-line-dashboard-project-descriptor-v1'; project = 'sync-same'; state_root = $wsSame; terminal_state = 'active' })
+    Write-DashUtf8 -Path $wsDescSplit -Value ([ordered]@{ protocol_version = 'telephone-line-dashboard-project-descriptor-v1'; project = 'sync-split'; state_root = $wsSplit; terminal_state = 'active' })
+    Write-DashUtf8 -Path $wsCfg -Value ([ordered]@{ protocol_version = 'telephone-line-dashboard-config-v1'; projects = @(@{ descriptor_file = $wsDescSame }, @{ descriptor_file = $wsDescSplit }) })
+    $wsProj = Get-TelephoneDashboardProjection -ConfigPath $wsCfg
+    $wsSameGroups = @($wsProj.groups | Where-Object { [string]$_.project -ceq 'sync-same' -and [bool]$_.visible })
+    $wsSplitGroups = @($wsProj.groups | Where-Object { [string]$_.project -ceq 'sync-split' -and [bool]$_.visible })
+    $wsSameCodes = @($wsSameGroups | ForEach-Object { @($_.findings | ForEach-Object { [string]$_.code }) })
+    $wsSplitCodes = @($wsSplitGroups | ForEach-Object { @($_.findings | ForEach-Object { [string]$_.code }) })
+    Assert-Dash ($wsSameGroups.Count -eq 1 -and [string]$wsSameGroups[0].color -ceq 'yellow' -and $wsSameCodes -contains 'RECEIPT_MISSING') 'Same-Lead current jobs awaiting receipts were not kept visible.'
+    Assert-Dash ($wsSplitGroups.Count -eq 2 -and $wsSplitCodes -contains 'RECEIPT_MISSING') 'Same-project different-Lead current jobs were collapsed.'
+    $independent_workstreams_visible = 1
+
+    $succRoot = Join-Path $testRoot 'sync-success'
+    $succOldId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeef99'
+    $succNewId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeef10'
+    $succOld = Join-Path $succRoot ('jobs\' + $succOldId)
+    $succNew = Join-Path $succRoot ('jobs\' + $succNewId)
+    [IO.Directory]::CreateDirectory($succOld) | Out-Null
+    [IO.Directory]::CreateDirectory($succNew) | Out-Null
+    $succDispOld = $dispatch | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $succDispNew = $dispatch | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $succBind = $binding | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $succBind.session_id = 'sess-success'
+    $succDispOld.project = 'sync-success'; $succDispOld.line_job_id = $succOldId; $succDispOld.lead = $succBind
+    $succDispNew.project = 'sync-success'; $succDispNew.line_job_id = $succNewId; $succDispNew.lead = $succBind
+    Write-DashUtf8 -Path (Join-Path $succOld 'dispatch.json') -Value $succDispOld
+    Write-DashUtf8 -Path (Join-Path $succOld 'lead-binding.json') -Value $succBind
+    Write-DashUtf8 -Path (Join-Path $succNew 'dispatch.json') -Value $succDispNew
+    Write-DashUtf8 -Path (Join-Path $succNew 'lead-binding.json') -Value $succBind
+    $succReceipt = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'tests\contracts\fixtures\valid\receipt.json') | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $succReceipt.project = 'sync-success'
+    $succReceipt.line_job_id = $succOldId
+    Write-DashUtf8 -Path (Join-Path $succOld 'receipt.json') -Value $succReceipt
+    Write-DashUtf8 -Path (Join-Path $succOld 'delivery.json') -Value ([ordered]@{ protocol_version = 'telephone-line-delivery-v1'; delivered = $true })
+    $succDesc = Join-Path $testRoot 'sync-success-desc.json'
+    $succCfg = Join-Path $testRoot 'sync-success-config.json'
+    Write-DashUtf8 -Path $succDesc -Value ([ordered]@{
+        protocol_version = 'telephone-line-dashboard-project-descriptor-v1'
+        project = 'sync-success'
+        state_root = $succRoot
+        successor_lead_session_id = 'sess-success'
+        successor_line_job_id = $succNewId
+        terminal_state = 'active'
+    })
+    Write-DashUtf8 -Path $succCfg -Value ([ordered]@{ protocol_version = 'telephone-line-dashboard-config-v1'; projects = @(@{ descriptor_file = $succDesc }) })
+    $succProj = Get-TelephoneDashboardProjection -ConfigPath $succCfg
+    $succGroups = @($succProj.groups | Where-Object { [string]$_.project -ceq 'sync-success' -and [bool]$_.visible })
+    $succCodes = @($succGroups | ForEach-Object { @($_.findings | ForEach-Object { [string]$_.code }) })
+    Assert-Dash ($succGroups.Count -eq 1 -and [string]$succGroups[0].color -ceq 'yellow' -and $succCodes -contains 'RECEIPT_MISSING') 'Older success plus newer wait left the current view.'
+    Assert-Dash ([string]$succGroups[0].line_job_id -ceq $succOldId) 'A later job hid a prior success without failure-lineage proof.'
+    Assert-Dash ([IO.File]::Exists((Join-Path $succOld 'receipt.json')) -and [IO.File]::Exists((Join-Path $succOld 'delivery.json'))) 'Success-preservation check deleted evidence.'
+    $prior_success_not_superseded = 1
+
+    $hy3Root = Join-Path $testRoot 'sync-hy3'
+    $hy3LiveId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeef20'
+    $hy3BadId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeef77'
+    $hy3Live = Join-Path $hy3Root ('jobs\' + $hy3LiveId)
+    $hy3Bad = Join-Path $hy3Root ('jobs\' + $hy3BadId)
+    [IO.Directory]::CreateDirectory($hy3Live) | Out-Null
+    [IO.Directory]::CreateDirectory($hy3Bad) | Out-Null
+    $hy3Disp = $dispatch | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $hy3Bind = $binding | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $hy3Disp.project = 'sync-hy3'
+    $hy3Disp.line_job_id = $hy3LiveId
+    $hy3Bind.session_id = 'sess-hy3-live'
+    $hy3Disp.lead = $hy3Bind
+    Write-DashUtf8 -Path (Join-Path $hy3Live 'dispatch.json') -Value $hy3Disp
+    Write-DashUtf8 -Path (Join-Path $hy3Live 'lead-binding.json') -Value $hy3Bind
+    Write-DashUtf8 -Path (Join-Path $hy3Bad 'dispatch.json') -Value ([ordered]@{
+        protocol_version = 'hy3'
+        project = 'sync-hy3'
+        line_job_id = $hy3BadId
+        lead = [ordered]@{ session_id = 'hy3-session' }
+    })
+    $fxDir = Join-Path $hy3Root 'contracts\fixtures\valid'
+    [IO.Directory]::CreateDirectory($fxDir) | Out-Null
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'tests\contracts\fixtures\valid\dispatch.json') -Destination (Join-Path $fxDir 'dispatch.json')
+    $hy3Desc = Join-Path $testRoot 'sync-hy3-desc.json'
+    $hy3Cfg = Join-Path $testRoot 'sync-hy3-config.json'
+    Write-DashUtf8 -Path $hy3Desc -Value ([ordered]@{ protocol_version = 'telephone-line-dashboard-project-descriptor-v1'; project = 'sync-hy3'; state_root = $hy3Root; terminal_state = 'active' })
+    Write-DashUtf8 -Path $hy3Cfg -Value ([ordered]@{ protocol_version = 'telephone-line-dashboard-config-v1'; projects = @(@{ descriptor_file = $hy3Desc }) })
+    $hy3Proj = Get-TelephoneDashboardProjection -ConfigPath $hy3Cfg
+    $hy3Foreign = @($hy3Proj.groups | Where-Object { [string]$_.lead_session_id -ceq 'hy3-session' -or [string]$_.line_job_id -ceq $hy3BadId })
+    $hy3Fixture = @($hy3Proj.groups | Where-Object { [string]$_.line_job_id -ceq 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1' -or [string]$_.project -ceq 'example-project' })
+    $hy3LiveGroups = @($hy3Proj.groups | Where-Object { [string]$_.project -ceq 'sync-hy3' -and [bool]$_.visible })
+    $hy3Codes = @($hy3LiveGroups | ForEach-Object { @($_.findings | ForEach-Object { [string]$_.code }) })
+    Assert-Dash ($hy3Foreign.Count -eq 0) 'Mismatched hy3 dispatch created a live correlated row.'
+    Assert-Dash ($hy3Fixture.Count -eq 0) 'Contract fixture outside jobs was discovered as a live input.'
+    Assert-Dash ($hy3LiveGroups.Count -ge 1 -and [string]$hy3LiveGroups[0].line_job_id -ceq $hy3LiveId) 'Valid Telephone job was dropped with the invalid dispatch.'
+    Assert-Dash ($hy3Codes -contains 'MALFORMED_EVIDENCE' -and $hy3Codes -contains 'RECEIPT_MISSING') 'Invalid dispatch did not stay fail-closed on the configured project.'
+    $mismatched_dispatch_not_live = 1
+    $contract_fixture_not_live = 1
+
+    $termColRoot = Join-Path $testRoot 'sync-term-collect'
+    $termColId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeef30'
+    $termColJob = Join-Path $termColRoot ('jobs\' + $termColId)
+    [IO.Directory]::CreateDirectory($termColJob) | Out-Null
+    $termDisp = $dispatch | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $termBind = $binding | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $termDisp.project = 'sync-term'
+    $termDisp.line_job_id = $termColId
+    $termBind.session_id = 'sess-term'
+    $termDisp.lead = $termBind
+    Write-DashUtf8 -Path (Join-Path $termColJob 'dispatch.json') -Value $termDisp
+    Write-DashUtf8 -Path (Join-Path $termColJob 'lead-binding.json') -Value $termBind
+    $termReceipt = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'tests\contracts\fixtures\valid\receipt.json') | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $termReceipt.project = 'sync-term'
+    $termReceipt.line_job_id = $termColId
+    $termReceiptPath = Join-Path $termColJob 'receipt.json'
+    Write-DashUtf8 -Path $termReceiptPath -Value $termReceipt
+    Write-DashUtf8 -Path (Join-Path $termColJob 'delivery.json') -Value ([ordered]@{ protocol_version = 'telephone-line-delivery-v1'; delivered = $true })
+    $termIdentity = Get-TelephoneFileIdentity -Path $termReceiptPath
+    Write-DashUtf8 -Path (Join-Path $termColRoot 'closure.json') -Value ([ordered]@{
+        protocol_version = 'telephone-line-dashboard-closure-v1'
+        project = 'sync-term'
+        lead_session_id = 'sess-term'
+        lead_run_id = ''
+        receipt = [ordered]@{ path = [string]$termIdentity.path; bytes = [int64]$termIdentity.bytes; sha256 = [string]$termIdentity.sha256 }
+        closed_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+    })
+    $termLead = Join-Path $termColRoot 'leads\aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    [IO.Directory]::CreateDirectory((Join-Path $termLead 'mailbox')) | Out-Null
+    Write-DashUtf8 -Path (Join-Path $termLead 'mailbox\item.json') -Value ([ordered]@{
+        protocol_version = 'telephone-line-mailbox-item-v1'
+        lead_session_id = 'sess-term'
+        lead_identity_sha256 = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+        batch_id = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeef31'
+        package_id = 'pkg-stale'
+    })
+    Write-DashUtf8 -Path (Join-Path $termLead 'truth.json') -Value ([ordered]@{
+        protocol_version = 'telephone-line-mailbox-truth-v1'
+        batches = @([ordered]@{
+            batch_id = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeef31'
+            counted = 1
+            n = 2
+            closed = $false
+            state = 'collecting'
+        })
+    })
+    $termColDesc = Join-Path $testRoot 'sync-term-desc.json'
+    $termColCfg = Join-Path $testRoot 'sync-term-config.json'
+    Write-DashUtf8 -Path $termColDesc -Value ([ordered]@{ protocol_version = 'telephone-line-dashboard-project-descriptor-v1'; project = 'sync-term'; state_root = $termColRoot; lead_session_id = 'sess-term'; terminal_state = 'terminal' })
+    Write-DashUtf8 -Path $termColCfg -Value ([ordered]@{ protocol_version = 'telephone-line-dashboard-config-v1'; projects = @(@{ descriptor_file = $termColDesc }) })
+    $termColProj = Get-TelephoneDashboardProjection -ConfigPath $termColCfg
+    Assert-Dash (@($termColProj.groups | Where-Object { [string]$_.project -ceq 'sync-term' -or [string]$_.lead_session_id -ceq 'sess-term' }).Count -eq 0) 'Stale mailbox collecting kept a terminal group in the current view.'
+    $terminal_not_overridden_by_collecting = 1
+
     [ordered]@{
         success = $true
         assertions = $assertions
@@ -2185,6 +2363,11 @@ try {
         supervisor_dashboard_read_only = $supervisor_dashboard_read_only
         supervisor_incomplete_identity = $supervisor_incomplete_identity
         legacy_wired_wireless_unchanged = $legacy_wired_wireless_unchanged
+        independent_workstreams_visible = $independent_workstreams_visible
+        prior_success_not_superseded = $prior_success_not_superseded
+        mismatched_dispatch_not_live = $mismatched_dispatch_not_live
+        contract_fixture_not_live = $contract_fixture_not_live
+        terminal_not_overridden_by_collecting = $terminal_not_overridden_by_collecting
     } | ConvertTo-Json -Compress
 } catch {
     [ordered]@{

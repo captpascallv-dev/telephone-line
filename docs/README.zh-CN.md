@@ -71,6 +71,8 @@ v0.1 的路线分母固定为八条。每条路线只声明依赖边界，不会
 - `direct-grok-cli`：官方 Grok CLI。
 - `direct-pi`：PI coding agent 与 Node。
 
+Direct Grok CLI 会以官方 CLI 的 `--permission-mode bypassPermissions` 启动。`--cwd` 工作区不是沙箱，进程使用当前用户权限；隔离是操作者和 Harness 的责任。Telephone Line 不会发明沙箱、不会悄悄改权限模式，也不会往 CLI 的机器 JSON stdout 写入警告横幅。
+
 外部 Harness 及其订阅由用户自行准备；Telephone Line 不捆绑第三方程序，也不替第三方能力背书。
 
 ## 安装和常规启动

@@ -30,6 +30,8 @@ The v0.1 denominator is exactly eight routes. Each route's `dependency_boundary`
 - `direct-grok-cli` — official Grok CLI
 - `direct-pi` — PI coding agent and Node
 
+Direct Grok CLI uses the official CLI `--permission-mode bypassPermissions`. The `--cwd` workspace is not a sandbox; the process has the current user's rights. Isolation is an operator/Harness responsibility, not a Telephone Line sandbox or a silent permission-mode change. That guidance stays in human-facing docs; the CLI machine JSON stdout is not wrapped in a warning banner.
+
 ## Install and start ordinary work
 
 Run these commands from the extracted product directory. Installation is per-user, requires no elevation, and defaults to `%LOCALAPPDATA%\TelephoneLine`:

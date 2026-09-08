@@ -42,6 +42,7 @@ function Get-DirectGrokSessionPaths {
     return [ordered]@{
         root = $sessionRoot
         binding = Join-Path $sessionRoot 'binding.json'
+        occupancy = Join-Path $sessionRoot 'write-occupancy.json'
     }
 }
 
@@ -51,6 +52,7 @@ function Start-DirectGrokHost {
         [Parameter(Mandatory = $true)][string]$HostScript,
         [Parameter(Mandatory = $true)][string]$ConfigPath
     )
+    Disable-DirectGrokStandardHandleInheritance
     $info = [Diagnostics.ProcessStartInfo]::new()
     $info.FileName = $PowerShellPath
     $info.UseShellExecute = $false
@@ -86,6 +88,248 @@ function Find-DirectGrokHostOwner {
             started_at_utc = $process.StartTime.ToUniversalTime().ToString('o')
         }
     } finally { $process.Dispose() }
+}
+
+function Get-DirectGrokStateRootFromJobPaths {
+    param([Parameter(Mandatory = $true)][Collections.IDictionary]$Paths)
+    $jobRoot = [IO.Path]::GetFullPath([string]$Paths.root).TrimEnd('\')
+    $jobsDir = [IO.Path]::GetDirectoryName($jobRoot)
+    return [IO.Path]::GetDirectoryName($jobsDir)
+}
+
+function Test-DirectGrokExactOwnerFileAlive {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not [IO.File]::Exists($Path)) { return $false }
+    try {
+        $owner = (Read-DirectGrokJson -Path $Path).value
+        return Test-DirectGrokOwnerAlive -Owner $owner
+    } catch {
+        return $false
+    }
+}
+
+function Test-DirectGrokJobWriteLive {
+    param([Parameter(Mandatory = $true)][Collections.IDictionary]$Paths)
+    $artifacts = Get-DirectGrokJobArtifactPaths -JobRoot ([string]$Paths.root)
+    if (Test-DirectGrokExactOwnerFileAlive -Path ([string]$artifacts.grok_child_owner)) { return $true }
+    if (Test-DirectGrokExactOwnerFileAlive -Path ([string]$Paths.owner)) { return $true }
+    if ([IO.File]::Exists([string]$Paths.receipt)) { return $false }
+    if ([IO.File]::Exists([string]$Paths.config)) {
+        try {
+            $found = Find-DirectGrokHostOwner -ConfigPath ([string]$Paths.config)
+            if ($null -ne $found) { return $true }
+        } catch { }
+    }
+    return $false
+}
+
+function Get-DirectGrokSessionLiveWriteJobId {
+    param(
+        [Parameter(Mandatory = $true)][string]$State,
+        [Parameter(Mandatory = $true)][Collections.IDictionary]$SessionPaths
+    )
+    $occupancyPath = [string]$SessionPaths.occupancy
+    $occJob = ''
+    $occYoung = $false
+    if ([IO.File]::Exists($occupancyPath)) {
+        try {
+            $occ = (Read-DirectGrokJson -Path $occupancyPath).value
+            $occJob = [string]$occ.job_id
+            if ($occ.Contains('created_at_utc') -and (Test-DirectGrokRoundTripTimestamp -Value ([string]$occ.created_at_utc))) {
+                $created = [DateTimeOffset]::ParseExact(
+                    [string]$occ.created_at_utc,
+                    'o',
+                    [Globalization.CultureInfo]::InvariantCulture,
+                    [Globalization.DateTimeStyles]::RoundtripKind
+                )
+                $occYoung = ([DateTimeOffset]::UtcNow - $created).TotalSeconds -lt 5
+            }
+        } catch { }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($occJob)) {
+        $paths = Get-DirectGrokJobPaths -Root $State -Id $occJob
+        if (-not [IO.Directory]::Exists([string]$paths.root)) {
+            if ($occYoung) { return $occJob }
+            try { [IO.File]::Delete($occupancyPath) } catch { }
+        } elseif ((Test-DirectGrokJobWriteLive -Paths $paths) -or $occYoung) {
+            return $occJob
+        } else {
+            try { [IO.File]::Delete($occupancyPath) } catch { }
+        }
+    }
+    if ([IO.File]::Exists([string]$SessionPaths.binding)) {
+        try {
+            $binding = (Read-DirectGrokJson -Path ([string]$SessionPaths.binding)).value
+            $latest = [string]$binding.latest_job_id
+            if (-not [string]::IsNullOrWhiteSpace($latest)) {
+                $latestPaths = Get-DirectGrokJobPaths -Root $State -Id $latest
+                if ([IO.Directory]::Exists([string]$latestPaths.root) -and (Test-DirectGrokJobWriteLive -Paths $latestPaths)) {
+                    return $latest
+                }
+            }
+        } catch { }
+    }
+    return ''
+}
+
+function New-DirectGrokSessionWriteOccupancy {
+    param(
+        [Parameter(Mandatory = $true)][Collections.IDictionary]$SessionPaths,
+        [Parameter(Mandatory = $true)][string]$SessionId,
+        [Parameter(Mandatory = $true)][string]$JobId
+    )
+    [IO.Directory]::CreateDirectory([string]$SessionPaths.root) | Out-Null
+    try {
+        $null = Write-DirectGrokJsonCreateNew -Path ([string]$SessionPaths.occupancy) -Value ([ordered]@{
+            protocol_version = 'telephone-line-direct-grok-write-occupancy-v1'
+            native_session_id = [string]$SessionId
+            job_id = [string]$JobId
+            created_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+            automatic_rerun = $false
+            replacement_started = $false
+        })
+        return $true
+    } catch [IO.IOException] {
+        return $false
+    }
+}
+
+function Release-DirectGrokSessionWriteOccupancy {
+    param(
+        [Parameter(Mandatory = $true)][Collections.IDictionary]$SessionPaths,
+        [Parameter(Mandatory = $true)][string]$JobId
+    )
+    $path = [string]$SessionPaths.occupancy
+    if ([string]::IsNullOrWhiteSpace($path) -or -not [IO.File]::Exists($path)) { return }
+    try {
+        $occ = (Read-DirectGrokJson -Path $path).value
+        if ([string]$occ.job_id -cne [string]$JobId) { return }
+        [IO.File]::Delete($path)
+    } catch { }
+}
+
+function Complete-DirectGrokJobWriteTurn {
+    param(
+        [Parameter(Mandatory = $true)][Collections.IDictionary]$Paths,
+        [Parameter(Mandatory = $true)][Collections.IDictionary]$Request
+    )
+    if (Test-DirectGrokJobWriteLive -Paths $Paths) { return }
+    $state = Get-DirectGrokStateRootFromJobPaths -Paths $Paths
+    $sessionId = [string]$Request.session_id
+    if ([string]::IsNullOrWhiteSpace($sessionId)) { return }
+    $sessionPaths = Get-DirectGrokSessionPaths -Root $state -SessionId $sessionId
+    Release-DirectGrokSessionWriteOccupancy -SessionPaths $sessionPaths -JobId ([string]$Request.job_id)
+}
+
+function Assert-DirectGrokBindingComplete {
+    param(
+        [Parameter(Mandatory = $true)][AllowNull()][object]$Binding,
+        [Parameter(Mandatory = $true)][string]$SessionId
+    )
+    if ($Binding -isnot [Collections.IDictionary]) { throw 'Adapter native session id is missing or unknown.' }
+    Assert-DirectGrokKeys -Value $Binding -Keys @('protocol_version', 'native_session_id', 'latest_job_id', 'created_at_utc') -Label 'Direct Grok binding'
+    if ([string]$Binding.protocol_version -cne 'telephone-line-direct-grok-binding-v1') { throw 'Adapter native session id is missing or unknown.' }
+    if ([string]$Binding.native_session_id -cne [string]$SessionId) { throw 'Adapter native session id does not match the frozen session.' }
+    if ([string]$Binding.latest_job_id -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { throw 'Adapter durable state was not found.' }
+}
+
+function Set-DirectGrokBindingLatestJob {
+    param(
+        [Parameter(Mandatory = $true)][Collections.IDictionary]$SessionPaths,
+        [Parameter(Mandatory = $true)][string]$SessionId,
+        [Parameter(Mandatory = $true)][string]$JobId
+    )
+    if (-not [IO.File]::Exists([string]$SessionPaths.occupancy)) { return $null }
+    try {
+        $occ = (Read-DirectGrokJson -Path ([string]$SessionPaths.occupancy)).value
+        if ([string]$occ.job_id -cne [string]$JobId) { return $null }
+        if ([string]$occ.native_session_id -cne [string]$SessionId) { return $null }
+    } catch {
+        return $null
+    }
+    if (-not [IO.File]::Exists([string]$SessionPaths.binding)) { throw 'Adapter native session id is missing or unknown.' }
+    $read = Read-DirectGrokJson -Path ([string]$SessionPaths.binding)
+    Assert-DirectGrokBindingComplete -Binding $read.value -SessionId $SessionId
+    if ([string]$read.value.latest_job_id -ceq [string]$JobId) { return $read.identity }
+    $next = [ordered]@{
+        protocol_version = 'telephone-line-direct-grok-binding-v1'
+        native_session_id = [string]$SessionId
+        latest_job_id = [string]$JobId
+        created_at_utc = [string]$read.value.created_at_utc
+    }
+    return Write-DirectGrokJsonReplace -Path ([string]$SessionPaths.binding) -Value $next
+}
+
+function New-DirectGrokRunningStatus {
+    param(
+        [Parameter(Mandatory = $true)][string]$JobId,
+        [Collections.IDictionary]$Owner
+    )
+    return [ordered]@{
+        value = [ordered]@{
+            protocol_version = 'telephone-line-direct-grok-status-v1'
+            job_id = [string]$JobId
+            state = 'running'
+            owner = $Owner
+            automatic_rerun = $false
+            replacement_started = $false
+        }
+        identity = $null
+    }
+}
+
+function Enter-DirectGrokSessionWriteTurn {
+    param(
+        [Parameter(Mandatory = $true)][string]$State,
+        [Parameter(Mandatory = $true)][Collections.IDictionary]$SessionPaths,
+        [Parameter(Mandatory = $true)][string]$SessionId,
+        [Parameter(Mandatory = $true)][string]$JobId,
+        [Parameter(Mandatory = $true)][int]$WaitTimeoutSeconds
+    )
+    $deadline = if ($WaitTimeoutSeconds -gt 0) { [DateTimeOffset]::UtcNow.AddSeconds($WaitTimeoutSeconds) } else { $null }
+    while ($true) {
+        $liveJobId = Get-DirectGrokSessionLiveWriteJobId -State $State -SessionPaths $SessionPaths
+        if ([string]::IsNullOrWhiteSpace($liveJobId) -or $liveJobId -ceq $JobId) {
+            if (New-DirectGrokSessionWriteOccupancy -SessionPaths $SessionPaths -SessionId $SessionId -JobId $JobId) {
+                return [ordered]@{ acquired = $true; terminal = $null }
+            }
+            Start-Sleep -Milliseconds 200
+            continue
+        }
+        $livePaths = Get-DirectGrokJobPaths -Root $State -Id $liveJobId
+        if (-not [IO.Directory]::Exists([string]$livePaths.root)) {
+            if ($null -ne $deadline -and [DateTimeOffset]::UtcNow -ge $deadline) {
+                return [ordered]@{ acquired = $false; terminal = (New-DirectGrokRunningStatus -JobId $liveJobId -Owner $null) }
+            }
+            Start-Sleep -Milliseconds 200
+            continue
+        }
+        $remaining = 0
+        if ($null -ne $deadline) {
+            $remaining = [int][Math]::Max(0, [Math]::Ceiling(($deadline - [DateTimeOffset]::UtcNow).TotalSeconds))
+            if ($remaining -le 0) {
+                $owner = $null
+                if ([IO.File]::Exists([string]$livePaths.owner)) {
+                    try { $owner = (Read-DirectGrokJson -Path ([string]$livePaths.owner)).value } catch { }
+                }
+                return [ordered]@{ acquired = $false; terminal = (New-DirectGrokRunningStatus -JobId $liveJobId -Owner $owner) }
+            }
+        }
+        $waited = Wait-DirectGrokJob -Paths $livePaths -TimeoutSeconds $remaining -AllowStart $false
+        if ([string]$waited.value.protocol_version -ceq 'telephone-line-direct-grok-status-v1') {
+            return [ordered]@{ acquired = $false; terminal = $waited }
+        }
+        while (Test-DirectGrokJobWriteLive -Paths $livePaths) {
+            if ($null -ne $deadline -and [DateTimeOffset]::UtcNow -ge $deadline) {
+                $stillOwner = $null
+                if ([IO.File]::Exists([string]$livePaths.owner)) {
+                    try { $stillOwner = (Read-DirectGrokJson -Path ([string]$livePaths.owner)).value } catch { }
+                }
+                return [ordered]@{ acquired = $false; terminal = (New-DirectGrokRunningStatus -JobId $liveJobId -Owner $stillOwner) }
+            }
+            Start-Sleep -Milliseconds 500
+        }
+    }
 }
 
 function New-DirectGrokReceipt {
@@ -125,8 +369,8 @@ function New-DirectGrokReceipt {
         grok_success = if ($null -ne $grokResult) { [bool]$grokResult.success } else { $null }
         native_session_id = if ($null -ne $grokResult) { [string]$grokResult.session_id } else { [string]$request.session_id }
         grok_result = $grokResult
-        stdout = if ([IO.File]::Exists($Paths.stdout)) { Get-DirectGrokFileIdentity -Path $Paths.stdout } else { $null }
-        stderr = if ([IO.File]::Exists($Paths.stderr)) { Get-DirectGrokFileIdentity -Path $Paths.stderr } else { $null }
+        stdout = if ([IO.File]::Exists($Paths.stdout)) { try { Get-DirectGrokFileIdentity -Path $Paths.stdout } catch { $null } } else { $null }
+        stderr = if ([IO.File]::Exists($Paths.stderr)) { try { Get-DirectGrokFileIdentity -Path $Paths.stderr } catch { $null } } else { $null }
         owner = $Owner
         automatic_rerun = $false
         replacement_started = $false
@@ -149,7 +393,17 @@ function Wait-DirectGrokJob {
             $receiptRead = Read-DirectGrokJson -Path $Paths.receipt
             if ([string]$receiptRead.value.job_id -cne [string]$requestRead.value.job_id) { throw 'Direct Grok receipt belongs to another job.' }
             Assert-DirectGrokIdentity -Expected $requestRead.identity -Actual $receiptRead.value.request -Label 'Direct Grok receipt request'
+            Complete-DirectGrokJobWriteTurn -Paths $Paths -Request $requestRead.value
             return $receiptRead
+        }
+        if (Test-DirectGrokBoundedStopFailureReady -Paths $Paths -Request $requestRead.value) {
+            $ownerReady = $null
+            if ([IO.File]::Exists($Paths.owner)) {
+                try { $ownerReady = (Read-DirectGrokJson -Path $Paths.owner).value } catch { }
+            }
+            $null = New-DirectGrokReceipt -Paths $Paths -RequestRead $requestRead -Owner $ownerReady
+            Complete-DirectGrokJobWriteTurn -Paths $Paths -Request $requestRead.value
+            return Read-DirectGrokJson -Path $Paths.receipt
         }
         $owner = $null
         if ([IO.File]::Exists($Paths.owner)) { $owner = (Read-DirectGrokJson -Path $Paths.owner).value }
@@ -166,17 +420,41 @@ function Wait-DirectGrokJob {
         }
         Start-Sleep -Milliseconds 200
         $null = New-DirectGrokReceipt -Paths $Paths -RequestRead $requestRead -Owner $owner
+        Complete-DirectGrokJobWriteTurn -Paths $Paths -Request $requestRead.value
         return Read-DirectGrokJson -Path $Paths.receipt
     }
+}
+
+function Get-DirectGrokTerminalSessionId {
+    param(
+        [Parameter(Mandatory = $true)][AllowNull()][object]$TerminalValue,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Fallback
+    )
+    if (
+        $TerminalValue -is [Collections.IDictionary] -and
+        $TerminalValue.Contains('native_session_id') -and
+        $null -ne $TerminalValue.native_session_id -and
+        -not [string]::IsNullOrWhiteSpace([string]$TerminalValue.native_session_id)
+    ) {
+        return [string]$TerminalValue.native_session_id
+    }
+    return $Fallback
+}
+
+function Test-DirectGrokTerminalTransportComplete {
+    param([Parameter(Mandatory = $true)][AllowNull()][object]$TerminalValue)
+    return (
+        $TerminalValue -is [Collections.IDictionary] -and
+        $TerminalValue.Contains('transport_complete') -and
+        $null -ne $TerminalValue.transport_complete -and
+        [bool]$TerminalValue.transport_complete
+    )
 }
 
 function Write-DirectGrokAdapterResult {
     param([Parameter(Mandatory = $true)][string]$Op, [Parameter(Mandatory = $true)][AllowEmptyString()][string]$SessionId, [Parameter(Mandatory = $true)][object]$Terminal)
     $terminalValue = $Terminal.value
-    $transportComplete = $false
-    if ($terminalValue -is [Collections.IDictionary] -and $terminalValue.Contains('transport_complete') -and $null -ne $terminalValue.transport_complete) {
-        $transportComplete = [bool]$terminalValue.transport_complete
-    }
+    $transportComplete = Test-DirectGrokTerminalTransportComplete -TerminalValue $terminalValue
     [ordered]@{
         protocol_version = 'telephone-line-adapter-result-v1'
         route_id = 'direct-grok-cli'
@@ -215,14 +493,14 @@ if ($Operation -eq 'recover') {
         $sessionPaths = Get-DirectGrokSessionPaths -Root $state -SessionId $NativeSessionId
         if (-not [IO.File]::Exists($sessionPaths.binding)) { throw 'Adapter native session id is missing or unknown.' }
         $binding = (Read-DirectGrokJson -Path $sessionPaths.binding).value
-        if ([string]$binding.native_session_id -cne $NativeSessionId) { throw 'Adapter native session id does not match the frozen session.' }
+        Assert-DirectGrokBindingComplete -Binding $binding -SessionId $NativeSessionId
         $paths = Get-DirectGrokJobPaths -Root $state -Id ([string]$binding.latest_job_id)
     }
     if (-not [IO.Directory]::Exists($paths.root)) { throw 'Adapter durable state was not found.' }
     $waited = Wait-DirectGrokJob -Paths $paths -TimeoutSeconds $WaitTimeoutSeconds -AllowStart $false
     Write-DirectGrokAdapterResult -Op 'recover' -SessionId $recoverSession -Terminal $waited
     if ([string]$waited.value.protocol_version -ceq 'telephone-line-direct-grok-status-v1') { exit 3 }
-    if ($waited.value.transport_complete -eq $true) { exit 0 }
+    if (Test-DirectGrokTerminalTransportComplete -TerminalValue $waited.value) { exit 0 }
     exit 4
 }
 
@@ -236,10 +514,10 @@ if ([IO.Directory]::Exists($paths.root)) {
     $existing = Read-DirectGrokJson -Path $paths.request
     if ($Operation -eq 'follow_up' -and [string]$existing.value.session_id -cne $NativeSessionId) { throw 'Adapter native session id does not match the frozen session.' }
     $waited = Wait-DirectGrokJob -Paths $paths -TimeoutSeconds $WaitTimeoutSeconds -AllowStart $false
-    $session = if ($null -ne $waited.value.native_session_id) { [string]$waited.value.native_session_id } else { [string]$existing.value.session_id }
+    $session = Get-DirectGrokTerminalSessionId -TerminalValue $waited.value -Fallback ([string]$existing.value.session_id)
     Write-DirectGrokAdapterResult -Op $Operation -SessionId $session -Terminal $waited
     if ([string]$waited.value.protocol_version -ceq 'telephone-line-direct-grok-status-v1') { exit 3 }
-    if ($waited.value.transport_complete -eq $true) { exit 0 }
+    if (Test-DirectGrokTerminalTransportComplete -TerminalValue $waited.value) { exit 0 }
     exit 4
 }
 
@@ -251,9 +529,21 @@ if ($Operation -eq 'follow_up') {
     $sessionPaths = Get-DirectGrokSessionPaths -Root $state -SessionId $NativeSessionId
     if (-not [IO.File]::Exists($sessionPaths.binding)) { throw 'Adapter native session id is missing or unknown.' }
     $binding = (Read-DirectGrokJson -Path $sessionPaths.binding).value
-    if ([string]$binding.native_session_id -cne $NativeSessionId) { throw 'Adapter native session id does not match the frozen session.' }
+    Assert-DirectGrokBindingComplete -Binding $binding -SessionId $NativeSessionId
+    $entered = Enter-DirectGrokSessionWriteTurn -State $state -SessionPaths $sessionPaths -SessionId $NativeSessionId -JobId $job -WaitTimeoutSeconds $WaitTimeoutSeconds
+    if (-not [bool]$entered.acquired) {
+        $waited = $entered.terminal
+        $busySession = $NativeSessionId
+        Write-DirectGrokAdapterResult -Op $Operation -SessionId $busySession -Terminal $waited
+        if ([string]$waited.value.protocol_version -ceq 'telephone-line-direct-grok-status-v1') { exit 3 }
+        if (Test-DirectGrokTerminalTransportComplete -TerminalValue $waited.value) { exit 0 }
+        exit 4
+    }
 }
 
+$sessionWriteHeld = ($Operation -eq 'follow_up')
+$hostStarted = $false
+try {
 [IO.Directory]::CreateDirectory($paths.root) | Out-Null
 $wrapperIdentity = Get-DirectGrokFileIdentity -Path (Join-Path $adapterRoot 'invoke_grok_build.ps1')
 $grokPath = Resolve-DirectGrokOfficialCommand -GrokCommand $GrokCommand
@@ -274,6 +564,9 @@ $request = [ordered]@{
     created_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
 }
 $requestIdentity = Write-DirectGrokJsonCreateNew -Path $paths.request -Value $request
+if ($Operation -eq 'follow_up') {
+    $null = Set-DirectGrokBindingLatestJob -SessionPaths $sessionPaths -SessionId $NativeSessionId -JobId $job
+}
 $powerShellPath = [string]([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
 $hostScript = Get-DirectGrokFileIdentity -Path (Join-Path $adapterRoot 'process_file_host.ps1')
 $hostConfig = [ordered]@{
@@ -301,6 +594,7 @@ $null = Write-DirectGrokJsonCreateNew -Path $paths.intent -Value ([ordered]@{
     automatic_rerun = $false
 })
 $process = Start-DirectGrokHost -PowerShellPath $powerShellPath -HostScript ([string]$hostScript.path) -ConfigPath ([string]$configIdentity.path)
+$hostStarted = $true
 try {
     $owner = [ordered]@{
         protocol_version = 'telephone-line-direct-grok-owner-v1'
@@ -310,11 +604,21 @@ try {
     }
     try { $null = Write-DirectGrokJsonCreateNew -Path $paths.owner -Value $owner } catch [IO.IOException] { }
 } finally { $process.Dispose() }
+} finally {
+    if ($sessionWriteHeld -and -not $hostStarted) {
+        Release-DirectGrokSessionWriteOccupancy -SessionPaths $sessionPaths -JobId $job
+    }
+}
 
 $waited = Wait-DirectGrokJob -Paths $paths -TimeoutSeconds $WaitTimeoutSeconds -AllowStart $true
-$returnedSession = if ($null -ne $waited.value.native_session_id) { [string]$waited.value.native_session_id } else { $sessionId }
+$returnedSession = Get-DirectGrokTerminalSessionId -TerminalValue $waited.value -Fallback $sessionId
 if ($Operation -eq 'follow_up' -and $returnedSession -cne $NativeSessionId) { throw 'Adapter native session id does not match the frozen session.' }
-if ($waited.value.transport_complete -eq $true -and -not [string]::IsNullOrWhiteSpace($returnedSession)) {
+$delayBindingMs = 0
+if (-not [string]::IsNullOrWhiteSpace([string]$env:TELEPHONE_TEST_DIRECT_GROK_DELAY_BINDING_MS)) {
+    try { $delayBindingMs = [int]$env:TELEPHONE_TEST_DIRECT_GROK_DELAY_BINDING_MS } catch { $delayBindingMs = 0 }
+}
+if ($delayBindingMs -gt 0) { Start-Sleep -Milliseconds $delayBindingMs }
+if ((Test-DirectGrokTerminalTransportComplete -TerminalValue $waited.value) -and -not [string]::IsNullOrWhiteSpace($returnedSession)) {
     $sessionPaths = Get-DirectGrokSessionPaths -Root $state -SessionId $returnedSession
     if (-not [IO.File]::Exists($sessionPaths.binding)) {
         $null = Write-DirectGrokJsonCreateNew -Path $sessionPaths.binding -Value ([ordered]@{
@@ -324,13 +628,10 @@ if ($waited.value.transport_complete -eq $true -and -not [string]::IsNullOrWhite
             created_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
         })
     } else {
-        $existingBinding = (Read-DirectGrokJson -Path $sessionPaths.binding).value
-        if ([string]$existingBinding.native_session_id -cne $returnedSession) { throw 'Adapter native session id does not match the frozen session.' }
-        $existingBinding.latest_job_id = $job
-        [IO.File]::WriteAllBytes($sessionPaths.binding, [Text.UTF8Encoding]::new($false).GetBytes((($existingBinding | ConvertTo-Json -Depth 16).Replace("`r`n", "`n") + "`n")))
+        $null = Set-DirectGrokBindingLatestJob -SessionPaths $sessionPaths -SessionId $returnedSession -JobId $job
     }
 }
 Write-DirectGrokAdapterResult -Op $Operation -SessionId $returnedSession -Terminal $waited
 if ([string]$waited.value.protocol_version -ceq 'telephone-line-direct-grok-status-v1') { exit 3 }
-if ($waited.value.transport_complete -eq $true) { exit 0 }
+if (Test-DirectGrokTerminalTransportComplete -TerminalValue $waited.value) { exit 0 }
 exit 4

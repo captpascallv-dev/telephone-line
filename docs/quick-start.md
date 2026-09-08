@@ -21,6 +21,8 @@ You also supply:
 - a Lead launcher script that can resume that exact session (see [adapter-interface.md](adapter-interface.md); the launcher is caller-supplied, not an adapter)
 - a prompt file whose bytes stay in that file; the line stores path, byte length, and SHA-256, not the body
 
+Caller-supplied launcher success is process exit `0` and stdout that is exactly one JSON object containing a real `run_root`. Put diagnostics on stderr and in files under that run root, not as extra stdout objects. Failure is a truthful nonzero exit with no success JSON. Core does not accept empty stdout or treat a transport ack as product PASS. `examples/caller-supplied-lead/Invoke-GenericLeadLauncher.ps1` is a stdout-contract wiring template, not a Lead start/attach. Same `RunId` with a different frozen identity must refuse. See [adapter-interface.md](adapter-interface.md).
+
 ## Install
 
 From the product tree:

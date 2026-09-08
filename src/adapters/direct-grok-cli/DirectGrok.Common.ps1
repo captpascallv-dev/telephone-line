@@ -152,6 +152,113 @@ function Get-DirectGrokPublicErrorCatalog {
         ADAPTER_NATIVE_SESSION_MISMATCH = 'Adapter native session id does not match the frozen session.'
         ADAPTER_NATIVE_SESSION_MISSING = 'Adapter native session id is missing or unknown.'
         ADAPTER_DURABLE_STATE_MISSING = 'Adapter durable state was not found.'
+        ADAPTER_GROK_TIMEOUT = 'Official Grok CLI exceeded the caller-selected timeout.'
+        ADAPTER_GROK_STOP_FAILED = 'Official Grok CLI did not finish stop or redirected I/O within the bounded cleanup wait.'
+    }
+}
+
+function Disable-DirectGrokStandardHandleInheritance {
+    [CmdletBinding()]
+    param()
+    if (-not ('TelephoneLine.DirectGrokNative' -as [type])) {
+        Add-Type -Namespace TelephoneLine -Name DirectGrokNative -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+public static extern bool SetHandleInformation(System.IntPtr hObject, uint dwMask, uint dwFlags);
+[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+public static extern System.IntPtr GetStdHandle(int nStdHandle);
+'@
+    }
+    $inheritFlag = [uint32]1
+    foreach ($std in @(-10, -11, -12)) {
+        $handle = [TelephoneLine.DirectGrokNative]::GetStdHandle([int]$std)
+        if ($handle -ne [IntPtr]::Zero -and $handle -ne [IntPtr]::new(-1)) {
+            [void][TelephoneLine.DirectGrokNative]::SetHandleInformation($handle, $inheritFlag, [uint32]0)
+        }
+    }
+}
+
+function Get-DirectGrokStopCleanupMilliseconds {
+    [CmdletBinding()]
+    param()
+    return 8000
+}
+
+function Test-DirectGrokBoundedStopFailureReady {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][Collections.IDictionary]$Paths,
+        [Parameter(Mandatory = $true)][Collections.IDictionary]$Request
+    )
+    $artifacts = Get-DirectGrokJobArtifactPaths -JobRoot ([string]$Paths.root)
+    if (-not [IO.File]::Exists([string]$artifacts.grok_child_owner)) { return $false }
+    $child = Read-DirectGrokTerminalCandidate -Path ([string]$artifacts.grok_child_owner)
+    if ($null -eq $child) { return $false }
+    if ($child.stop_attempted -ne $true) { return $false }
+    if ($child.stop_confirmed -eq $true -and $child.process_exited -eq $true -and $child.io_completed -eq $true) { return $false }
+    $term = $null
+    if ([IO.File]::Exists([string]$artifacts.checkpoint)) {
+        $term = Read-DirectGrokTerminalCandidate -Path ([string]$artifacts.checkpoint)
+    }
+    if ($null -eq $term) { return $false }
+    if ($term.success -ne $false) { return $false }
+    return Test-DirectGrokTerminalMatchesRequest -Request $Request -Terminal $term -CliStdoutPath ([string]$Paths.cli_stdout)
+}
+
+function Wait-DirectGrokTasksBounded {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][Threading.Tasks.Task[]]$Tasks,
+        [Parameter(Mandatory = $true)][int]$TimeoutMilliseconds
+    )
+    if ($null -eq $Tasks -or $Tasks.Length -eq 0) { return $true }
+    if ($TimeoutMilliseconds -le 0) {
+        [void][Threading.Tasks.Task]::WaitAll($Tasks)
+        return $true
+    }
+    return [bool][Threading.Tasks.Task]::WaitAll($Tasks, $TimeoutMilliseconds)
+}
+
+function Get-DirectGrokCompletedTaskText {
+    [CmdletBinding()]
+    param($Task)
+    if ($null -eq $Task) { return '' }
+    try {
+        if ($Task.Status -eq [Threading.Tasks.TaskStatus]::RanToCompletion) {
+            return [string]$Task.GetAwaiter().GetResult()
+        }
+    } catch { }
+    return ''
+}
+
+function New-DirectGrokChildOwnerEvidence {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][Diagnostics.Process]$Process,
+        [bool]$StopAttempted,
+        [bool]$ProcessExited,
+        [bool]$IoCompleted,
+        [bool]$StopConfirmed
+    )
+    $pidValue = 0
+    $ticks = [int64]0
+    $started = ''
+    try { $pidValue = [int]$Process.Id } catch { }
+    try {
+        $startedUtc = $Process.StartTime.ToUniversalTime()
+        $ticks = [int64]$startedUtc.Ticks
+        $started = $startedUtc.ToString('o')
+    } catch { }
+    return [ordered]@{
+        protocol_version = 'telephone-line-direct-grok-child-owner-v1'
+        pid = $pidValue
+        start_time_utc_ticks = $ticks
+        started_at_utc = $started
+        stop_attempted = [bool]$StopAttempted
+        process_exited = [bool]$ProcessExited
+        io_completed = [bool]$IoCompleted
+        stop_confirmed = [bool]$StopConfirmed
+        automatic_rerun = $false
+        replacement_started = $false
     }
 }
 
@@ -183,6 +290,7 @@ function Get-DirectGrokJobArtifactPaths {
         receipt = Join-Path $root 'receipt.json'
         request = Join-Path $root 'request.json'
         owner = Join-Path $root 'owner.json'
+        grok_child_owner = Join-Path $root 'grok-child-owner.json'
     }
 }
 
@@ -329,13 +437,44 @@ function ConvertTo-DirectGrokTerminalFromCliStdout {
     }
 }
 
-function Read-DirectGrokTerminalCandidate {
+function Read-DirectGrokSharedFileBytes {
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][string]$Path)
     if (-not [IO.File]::Exists($Path)) { return $null }
     try {
-        $bytes = [IO.File]::ReadAllBytes($Path)
-        if ($null -eq $bytes -or $bytes.Length -lt 2) { return $null }
+        $stream = [IO.FileStream]::new(
+            $Path,
+            [IO.FileMode]::Open,
+            [IO.FileAccess]::Read,
+            [IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete
+        )
+        try {
+            $length = [int]$stream.Length
+            if ($length -lt 2) { return $null }
+            $bytes = [byte[]]::new($length)
+            $read = 0
+            while ($read -lt $length) {
+                $n = $stream.Read($bytes, $read, $length - $read)
+                if ($n -le 0) { break }
+                $read += $n
+            }
+            if ($read -lt 2) { return $null }
+            if ($read -lt $length) { return $bytes[0..($read - 1)] }
+            return $bytes
+        } finally {
+            $stream.Dispose()
+        }
+    } catch {
+        return $null
+    }
+}
+
+function Read-DirectGrokTerminalCandidate {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $bytes = Read-DirectGrokSharedFileBytes -Path $Path
+    if ($null -eq $bytes -or $bytes.Length -lt 2) { return $null }
+    try {
         $text = [Text.UTF8Encoding]::new($false, $true).GetString($bytes).TrimStart([char]0xFEFF)
         if ([string]::IsNullOrWhiteSpace($text)) { return $null }
         $doc = $text | ConvertFrom-Json -AsHashtable -Depth 64 -DateKind String
@@ -352,7 +491,7 @@ function Resolve-DirectGrokDurableTerminal {
         [Parameter(Mandatory = $true)][Collections.IDictionary]$Paths,
         [Parameter(Mandatory = $true)][Collections.IDictionary]$Request
     )
-    foreach ($name in @('stdout', 'checkpoint')) {
+    foreach ($name in @('checkpoint', 'stdout')) {
         $path = [string]$Paths[$name]
         $candidate = Read-DirectGrokTerminalCandidate -Path $path
         if ($null -ne $candidate -and (Test-DirectGrokTerminalMatchesRequest -Request $Request -Terminal $candidate -CliStdoutPath ([string]$Paths.cli_stdout))) {

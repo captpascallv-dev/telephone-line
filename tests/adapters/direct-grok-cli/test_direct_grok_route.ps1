@@ -6,7 +6,10 @@
 # 4. Frozen non-goals: no App Server/dashboard/core mutation, no runtime activation, black-box smoke, docs/catalog/package.
 # 5. Exit: focused proof union + dashboard no-delta, clean one commit over 6c9d25e, self_accepted=false; not project PASS.
 [CmdletBinding()]
-param([Parameter(Mandatory = $true)][string]$TestRoot)
+param(
+    [Parameter(Mandatory = $true)][string]$TestRoot,
+    [switch]$ProofsOnly
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -33,6 +36,191 @@ try {
     Assert-AdapterTest (-not $common.Contains('.grok\bin\grok.exe')) 'Official CLI discovery still pins a profile path.'
     $routeSource = [IO.File]::ReadAllText((Join-Path $repoRoot 'src\adapters\direct-grok-cli\Invoke-DirectGrokRoute.ps1'))
     Assert-AdapterTest ($routeSource.Contains('[int]$GrokTimeoutSeconds = 0') -and $routeSource.Contains('[int]$WaitTimeoutSeconds = 0')) 'Direct Grok still ships a whole-task timeout default.'
+    Assert-AdapterTest ($routeSource.Contains('write-occupancy.json')) 'Same-session write occupancy is missing.'
+    Assert-AdapterTest ($routeSource.Contains('Test-DirectGrokExactOwnerFileAlive')) 'Exact child/host occupancy identity is missing.'
+    Assert-AdapterTest ($routeSource.Contains('if (Test-DirectGrokJobWriteLive -Paths $Paths) { return }')) 'Receipt still releases a live same-session writer.'
+    Assert-AdapterTest ($routeSource.Contains('if (-not [IO.File]::Exists([string]$SessionPaths.occupancy)) { return $null }')) 'Binding latest_job_id publish is not occupancy-gated.'
+    Assert-AdapterTest (-not $routeSource.Contains('[IO.File]::WriteAllBytes($sessionPaths.binding')) 'Binding still uses non-atomic WriteAllBytes.'
+
+    if ($ProofsOnly) {
+        $pwshPath = [string]([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
+        $proofInvoke = Join-Path $adapterCopy 'Invoke-DirectGrokRoute.ps1'
+        $mockGrokPs1 = Join-Path $testRoot 'proof-mock-grok.ps1'
+        $mockGrokCmd = Join-Path $testRoot 'proof-mock-grok.cmd'
+        $stampDir = Join-Path $testRoot 'stamps'
+        [IO.Directory]::CreateDirectory($stampDir) | Out-Null
+        [IO.File]::WriteAllText($mockGrokPs1, @'
+$session = ''
+for ($i = 0; $i -lt $args.Count; $i++) {
+    if ([string]$args[$i] -ceq '--session-id' -or [string]$args[$i] -ceq '--resume') { $session = [string]$args[$i + 1] }
+}
+$invDir = [string]$env:DIRECT_GROK_MOCK_INVOCATION_DIR
+if (-not [string]::IsNullOrWhiteSpace($invDir)) {
+    if (-not [IO.Directory]::Exists($invDir)) { [IO.Directory]::CreateDirectory($invDir) | Out-Null }
+    [IO.File]::WriteAllText((Join-Path $invDir ([Guid]::NewGuid().ToString('N') + '.txt')), [string]$session, [Text.UTF8Encoding]::new($false))
+}
+$sec = 0
+if (-not [string]::IsNullOrWhiteSpace($env:TELEPHONE_TEST_DIRECT_GROK_SLEEP_SECONDS)) { $sec = [int]$env:TELEPHONE_TEST_DIRECT_GROK_SLEEP_SECONDS }
+if ($sec -gt 0) { Start-Sleep -Seconds $sec }
+[ordered]@{ sessionId = $session; ok = $true } | ConvertTo-Json -Compress
+'@, [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($mockGrokCmd, "@echo off`r`n`"$pwshPath`" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$mockGrokPs1`" %*`r`nexit /b %ERRORLEVEL%`r`n", [Text.UTF8Encoding]::new($false))
+        function Get-ProofStampCount {
+            if (-not [IO.Directory]::Exists($stampDir)) { return 0 }
+            return @(Get-ChildItem -LiteralPath $stampDir -File -ErrorAction SilentlyContinue).Count
+        }
+        function Stop-ProofJob {
+            param([string]$JobRoot)
+            foreach ($name in @('grok-child-owner.json', 'owner.json')) {
+                $ownerFile = Join-Path $JobRoot $name
+                if (-not [IO.File]::Exists($ownerFile)) { continue }
+                try {
+                    $doc = Get-Content -LiteralPath $ownerFile -Raw | ConvertFrom-Json -AsHashtable
+                    if ($doc.Contains('pid') -and [int]$doc.pid -gt 0) {
+                        $proc = Get-Process -Id ([int]$doc.pid) -ErrorAction SilentlyContinue
+                        if ($null -ne $proc) {
+                            try { $proc.Kill($true) } catch { }
+                            $null = $proc.WaitForExit(3000)
+                            $proc.Dispose()
+                        }
+                    }
+                } catch { }
+            }
+        }
+        function Start-ProofRoute {
+            param([Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$Arguments)
+            $info = [Diagnostics.ProcessStartInfo]::new()
+            $info.FileName = $pwshPath
+            $info.UseShellExecute = $false
+            $info.RedirectStandardOutput = $true
+            $info.RedirectStandardError = $true
+            $info.CreateNoWindow = $true
+            foreach ($argument in @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $proofInvoke) + $Arguments) {
+                [void]$info.ArgumentList.Add([string]$argument)
+            }
+            return [Diagnostics.Process]::Start($info)
+        }
+        function Wait-ProofRoute {
+            param($Process, [int]$TimeoutMs)
+            $stdoutTask = $Process.StandardOutput.ReadToEndAsync()
+            $stderrTask = $Process.StandardError.ReadToEndAsync()
+            $exited = $Process.WaitForExit($TimeoutMs)
+            if (-not $exited) { try { $Process.Kill($true) } catch { }; throw 'Proof route exceeded the watchdog.' }
+            $text = [string]$stdoutTask.GetAwaiter().GetResult()
+            $err = [string]$stderrTask.GetAwaiter().GetResult()
+            $value = $null
+            if (-not [string]::IsNullOrWhiteSpace($text)) {
+                try { $value = $text | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String } catch { }
+            }
+            return [ordered]@{ exit_code = [int]$Process.ExitCode; stdout = $text; stderr = $err; value = $value }
+        }
+
+        [Environment]::SetEnvironmentVariable('DIRECT_GROK_MOCK_INVOCATION_DIR', $stampDir, 'Process')
+        $r1State = Join-Path $testRoot 'r1-state'
+        $r1Start = Invoke-AdapterEntrypoint -Entrypoint $proofInvoke -Arguments @(
+            '-Operation', 'start', '-StateRoot', $r1State, '-WorkspacePath', $workspace, '-PromptFile', $promptPath,
+            '-GrokCommand', $mockGrokCmd, '-WaitTimeoutSeconds', '20'
+        )
+        Assert-AdapterTest ($r1Start.exit_code -eq 0) "R1 start failed: $($r1Start.stderr)"
+        $r1Session = [string]$r1Start.value.native_session_id
+        $stampsAfterStart = Get-ProofStampCount
+        [Environment]::SetEnvironmentVariable('TELEPHONE_TEST_DIRECT_GROK_SLEEP_SECONDS', '24', 'Process')
+        [Environment]::SetEnvironmentVariable('TELEPHONE_TEST_DIRECT_GROK_SIMULATE_STOP_FAILURE', '1', 'Process')
+        $failedJob = [Guid]::NewGuid().ToString('D')
+        $failedSw = [Diagnostics.Stopwatch]::StartNew()
+        $failed = Invoke-AdapterEntrypoint -Entrypoint $proofInvoke -Arguments @(
+            '-Operation', 'follow_up', '-NativeSessionId', $r1Session, '-StateRoot', $r1State, '-WorkspacePath', $workspace,
+            '-PromptFile', $promptPath, '-JobId', $failedJob, '-GrokCommand', $mockGrokCmd, '-GrokTimeoutSeconds', '1', '-WaitTimeoutSeconds', '18'
+        )
+        $failedSw.Stop()
+        Assert-AdapterTest ($failed.exit_code -eq 4) "R1 stop-fail did not return honest exit 4: $($failed.exit_code) $($failed.stderr)"
+        Assert-AdapterTest ($failed.value.transport_complete -ne $true) 'R1 stop-fail advertised transport complete.'
+        Assert-AdapterTest ($failedSw.ElapsedMilliseconds -lt 20000) 'R1 stop-fail was not bounded.'
+        $failedRoot = Join-Path $r1State ("jobs\$failedJob")
+        $childPath = Join-Path $failedRoot 'grok-child-owner.json'
+        Assert-AdapterTest ([IO.File]::Exists($childPath)) 'R1 omitted child-owner evidence.'
+        $child = Get-Content -LiteralPath $childPath -Raw | ConvertFrom-Json -AsHashtable
+        Assert-AdapterTest ($child.stop_confirmed -ne $true) 'R1 claimed a confirmed stop.'
+        $oldChild = Get-Process -Id ([int]$child.pid) -ErrorAction SilentlyContinue
+        $beforeAlive = $null -ne $oldChild -and $oldChild.StartTime.ToUniversalTime().Ticks -eq [int64]$child.start_time_utc_ticks
+        Assert-AdapterTest ($beforeAlive) 'R1 expected the exact old child to remain alive.'
+        $occupancyPath = Join-Path $r1State ("sessions\$r1Session\write-occupancy.json")
+        Assert-AdapterTest ([IO.File]::Exists($occupancyPath)) 'R1 released occupancy while the exact old child was still live.'
+        $occDoc = Get-Content -LiteralPath $occupancyPath -Raw | ConvertFrom-Json -AsHashtable
+        Assert-AdapterTest ([string]$occDoc.job_id -ceq $failedJob) 'R1 occupancy did not retain the failed writer job.'
+        [Environment]::SetEnvironmentVariable('TELEPHONE_TEST_DIRECT_GROK_SLEEP_SECONDS', $null, 'Process')
+        [Environment]::SetEnvironmentVariable('TELEPHONE_TEST_DIRECT_GROK_SIMULATE_STOP_FAILURE', $null, 'Process')
+        $stampsBeforeNext = Get-ProofStampCount
+        $nextJob = [Guid]::NewGuid().ToString('D')
+        $nextSw = [Diagnostics.Stopwatch]::StartNew()
+        $next = Invoke-AdapterEntrypoint -Entrypoint $proofInvoke -Arguments @(
+            '-Operation', 'follow_up', '-NativeSessionId', $r1Session, '-StateRoot', $r1State, '-WorkspacePath', $workspace,
+            '-PromptFile', $promptPath, '-JobId', $nextJob, '-GrokCommand', $mockGrokCmd, '-WaitTimeoutSeconds', '8'
+        )
+        $nextSw.Stop()
+        $oldChild = Get-Process -Id ([int]$child.pid) -ErrorAction SilentlyContinue
+        $afterAlive = $null -ne $oldChild -and $oldChild.StartTime.ToUniversalTime().Ticks -eq [int64]$child.start_time_utc_ticks
+        Assert-AdapterTest ($afterAlive) 'R1 next follow_up ran after the exact old child disappeared.'
+        Assert-AdapterTest ($next.exit_code -eq 3) "R1 successor was not blocked: $($next.exit_code) $($next.stderr) $($next.stdout)"
+        Assert-AdapterTest ((Get-ProofStampCount) -eq $stampsBeforeNext) 'R1 successor launched a overlapping Grok write.'
+        Assert-AdapterTest ([IO.File]::Exists($occupancyPath)) 'R1 occupancy vanished before exact owner exit.'
+        Assert-AdapterTest ($next.value.automatic_rerun -eq $false -and $next.value.replacement_started -eq $false) 'R1 successor advertised a replacement.'
+        $overlapping = ($beforeAlive -and $afterAlive -and $next.exit_code -eq 0)
+        Assert-AdapterTest (-not $overlapping) 'R1 overlapping same-session write still reproduced.'
+        Stop-ProofJob -JobRoot $failedRoot
+        if ($null -ne $oldChild) { try { $oldChild.Dispose() } catch { } }
+
+        $r2State = Join-Path $testRoot 'r2-state'
+        $r2Start = Invoke-AdapterEntrypoint -Entrypoint $proofInvoke -Arguments @(
+            '-Operation', 'start', '-StateRoot', $r2State, '-WorkspacePath', $workspace, '-PromptFile', $promptPath,
+            '-GrokCommand', $mockGrokCmd, '-WaitTimeoutSeconds', '20'
+        )
+        Assert-AdapterTest ($r2Start.exit_code -eq 0) "R2 start failed: $($r2Start.stderr)"
+        $r2Session = [string]$r2Start.value.native_session_id
+        $r2Binding = Join-Path $r2State ("sessions\$r2Session\binding.json")
+        [Environment]::SetEnvironmentVariable('TELEPHONE_TEST_DIRECT_GROK_SLEEP_SECONDS', '1', 'Process')
+        [Environment]::SetEnvironmentVariable('TELEPHONE_TEST_DIRECT_GROK_DELAY_BINDING_MS', '2500', 'Process')
+        $followA = [Guid]::NewGuid().ToString('D')
+        $followB = [Guid]::NewGuid().ToString('D')
+        $pA = Start-ProofRoute -Arguments @(
+            '-Operation', 'follow_up', '-NativeSessionId', $r2Session, '-StateRoot', $r2State, '-WorkspacePath', $workspace,
+            '-PromptFile', $promptPath, '-JobId', $followA, '-GrokCommand', $mockGrokCmd, '-WaitTimeoutSeconds', '20'
+        )
+        $ownerA = Join-Path $r2State ("jobs\$followA\owner.json")
+        $ownerWait = [DateTimeOffset]::UtcNow.AddSeconds(8)
+        while ([DateTimeOffset]::UtcNow -lt $ownerWait -and -not [IO.File]::Exists($ownerA)) { Start-Sleep -Milliseconds 50 }
+        $pB = Start-ProofRoute -Arguments @(
+            '-Operation', 'follow_up', '-NativeSessionId', $r2Session, '-StateRoot', $r2State, '-WorkspacePath', $workspace,
+            '-PromptFile', $promptPath, '-JobId', $followB, '-GrokCommand', $mockGrokCmd, '-WaitTimeoutSeconds', '20'
+        )
+        $aDone = Wait-ProofRoute -Process $pA -TimeoutMs 30000
+        $bDone = Wait-ProofRoute -Process $pB -TimeoutMs 30000
+        $pA.Dispose(); $pB.Dispose()
+        Assert-AdapterTest ($aDone.exit_code -eq 0 -and $bDone.exit_code -eq 0) "R2 serialized follow_ups failed: $($aDone.exit_code) $($bDone.exit_code)"
+        $binding = Get-Content -LiteralPath $r2Binding -Raw | ConvertFrom-Json -AsHashtable -Depth 16 -DateKind String
+        Assert-AdapterTest ([string]$binding.latest_job_id -ceq $followB) "R2 stale tail regressed latest_job_id to $($binding.latest_job_id)"
+        $reqA = Get-Content -LiteralPath (Join-Path $r2State ("jobs\$followA\request.json")) -Raw | ConvertFrom-Json -AsHashtable -Depth 16 -DateKind String
+        $reqB = Get-Content -LiteralPath (Join-Path $r2State ("jobs\$followB\request.json")) -Raw | ConvertFrom-Json -AsHashtable -Depth 16 -DateKind String
+        Assert-AdapterTest ([string]$reqB.created_at_utc -cgt [string]$reqA.created_at_utc) 'R2 successor was not the later writer.'
+        $recover = Invoke-AdapterEntrypoint -Entrypoint $proofInvoke -Arguments @(
+            '-Operation', 'recover', '-NativeSessionId', $r2Session, '-StateRoot', $r2State, '-WaitTimeoutSeconds', '15'
+        )
+        Assert-AdapterTest ([string]$recover.value.job_id -ceq $followB) "R2 recover did not follow the current writer: $($recover.value.job_id)"
+        [Environment]::SetEnvironmentVariable('TELEPHONE_TEST_DIRECT_GROK_DELAY_BINDING_MS', $null, 'Process')
+        [Environment]::SetEnvironmentVariable('TELEPHONE_TEST_DIRECT_GROK_SLEEP_SECONDS', $null, 'Process')
+
+        [ordered]@{
+            success = $true
+            proofs_only = $true
+            r1_occupancy_after_failure = $true
+            r1_exact_old_child_alive_before_next = [bool]$beforeAlive
+            r1_successor_blocked = $true
+            overlapping_write_reproduced = $false
+            r2_latest_is_successor = $true
+            assertions = $assertions
+        } | ConvertTo-Json -Compress
+        return
+    }
     . (Join-Path $repoRoot 'src\adapters\direct-grok-cli\DirectGrok.Common.ps1')
     $probeTs = [DateTimeOffset]::Parse('2026-08-27T00:00:00Z', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal).ToUniversalTime().ToString('o')
     Assert-AdapterTest (Test-DirectGrokRoundTripTimestamp -Value $probeTs) 'Canonical round-trip timestamp was rejected.'
@@ -173,6 +361,16 @@ $cliIdentity = [ordered]@{
 
     $wrapperSource = [IO.File]::ReadAllText((Join-Path $repoRoot 'src\adapters\direct-grok-cli\invoke_grok_build.ps1'))
     Assert-AdapterTest ($wrapperSource.Contains('Get-DirectGrokPublicError')) 'Direct Grok still writes raw diagnostic text.'
+    Assert-AdapterTest ($wrapperSource.Contains('Get-DirectGrokStopCleanupMilliseconds')) 'Bounded timeout cleanup is missing.'
+    Assert-AdapterTest ($wrapperSource.Contains('ADAPTER_GROK_STOP_FAILED')) 'Stop-failure catalog is missing.'
+    Assert-AdapterTest ($wrapperSource.Contains("'bypassPermissions'")) 'Direct Grok permission mode was changed.'
+    $grokDoc = [IO.File]::ReadAllText((Join-Path $repoRoot 'docs\adapters\direct-grok-cli.md'))
+    $readmeEn = [IO.File]::ReadAllText((Join-Path $repoRoot 'README.md'))
+    $readmeZh = [IO.File]::ReadAllText((Join-Path $repoRoot 'docs\README.zh-CN.md'))
+    Assert-AdapterTest ($grokDoc.Contains('bypassPermissions') -and $grokDoc.Contains('not a sandbox')) 'Direct Grok adapter docs omit bypassPermissions posture.'
+    Assert-AdapterTest ($readmeEn.Contains('bypassPermissions') -and $readmeEn.Contains('not a sandbox')) 'English README omits bypassPermissions posture.'
+    Assert-AdapterTest ($readmeZh.Contains('bypassPermissions') -and $readmeZh.Contains('不是沙箱')) 'Chinese README omits bypassPermissions posture.'
+    Assert-AdapterTest (-not $wrapperSource.Contains('WARNING: cwd is not a sandbox')) 'Wrapper stdout grew a permission warning banner.'
 
     $sentinels = New-AdapterRuntimeSentinels
     $failCopy = Join-Path $testRoot 'fail-adapter'
@@ -211,7 +409,16 @@ if (-not [string]::IsNullOrWhiteSpace($counter)) {
     $n = if ([IO.File]::Exists($counter)) { [int][IO.File]::ReadAllText($counter) } else { 0 }
     [IO.File]::WriteAllText($counter, [string]($n + 1), [Text.UTF8Encoding]::new($false))
 }
-if ($mode -ceq 'sleep') { Start-Sleep -Seconds 25 }
+$invDir = [string]$env:DIRECT_GROK_MOCK_INVOCATION_DIR
+if (-not [string]::IsNullOrWhiteSpace($invDir)) {
+    if (-not [IO.Directory]::Exists($invDir)) { [IO.Directory]::CreateDirectory($invDir) | Out-Null }
+    [IO.File]::WriteAllText((Join-Path $invDir ([Guid]::NewGuid().ToString('N') + '.txt')), '1', [Text.UTF8Encoding]::new($false))
+}
+if ($mode -ceq 'sleep') {
+    $sec = 25
+    if (-not [string]::IsNullOrWhiteSpace($env:TELEPHONE_TEST_DIRECT_GROK_SLEEP_SECONDS)) { $sec = [int]$env:TELEPHONE_TEST_DIRECT_GROK_SLEEP_SECONDS }
+    Start-Sleep -Seconds $sec
+}
 if ($mode -ceq 'empty') { exit 0 }
 if ($mode -ceq 'partial') { [Console]::Out.Write('{'); exit 0 }
 if ($mode -ceq 'fail') { [Console]::Error.WriteLine('mock grok failed'); exit 1 }
@@ -496,6 +703,311 @@ exit 0
         $liveProc.Dispose()
     }
 
+    $stampDir = Join-Path $testRoot 'stamps'
+    [IO.Directory]::CreateDirectory($stampDir) | Out-Null
+    [Environment]::SetEnvironmentVariable('DIRECT_GROK_MOCK_INVOCATION_DIR', $stampDir, 'Process')
+    function Get-StampCount {
+        if (-not [IO.Directory]::Exists($stampDir)) { return 0 }
+        return @(Get-ChildItem -LiteralPath $stampDir -File -ErrorAction SilentlyContinue).Count
+    }
+    function Stop-DirectGrokTestJob {
+        param([string]$JobRoot)
+        foreach ($name in @('grok-child-owner.json', 'owner.json')) {
+            $ownerFile = Join-Path $JobRoot $name
+            if (-not [IO.File]::Exists($ownerFile)) { continue }
+            try {
+                $doc = Get-Content -LiteralPath $ownerFile -Raw | ConvertFrom-Json -AsHashtable
+                if ($doc.Contains('pid') -and [int]$doc.pid -gt 0) {
+                    $proc = Get-Process -Id ([int]$doc.pid) -ErrorAction SilentlyContinue
+                    if ($null -ne $proc) {
+                        try { $proc.Kill($true) } catch { try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch { } }
+                        $proc.Dispose()
+                    }
+                }
+            } catch { }
+        }
+    }
+    function Invoke-RouteWatchdog {
+        param([Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$Arguments, [int]$TimeoutMs)
+        $info = [Diagnostics.ProcessStartInfo]::new()
+        $info.FileName = $pwshPath
+        $info.UseShellExecute = $false
+        $info.RedirectStandardOutput = $true
+        $info.RedirectStandardError = $true
+        $info.CreateNoWindow = $true
+        foreach ($argument in @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $durableInvoke) + $Arguments) {
+            [void]$info.ArgumentList.Add([string]$argument)
+        }
+        $proc = [Diagnostics.Process]::Start($info)
+        try {
+            $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+            $stderrTask = $proc.StandardError.ReadToEndAsync()
+            $exited = $proc.WaitForExit($TimeoutMs)
+            if (-not $exited) {
+                try { $proc.Kill($true) } catch { }
+                $null = $proc.WaitForExit(3000)
+                throw 'Direct Grok route exceeded the test watchdog.'
+            }
+            $text = [string]$stdoutTask.GetAwaiter().GetResult()
+            $err = [string]$stderrTask.GetAwaiter().GetResult()
+            $value = $null
+            if (-not [string]::IsNullOrWhiteSpace($text)) {
+                try { $value = $text | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String } catch { }
+            }
+            return [ordered]@{ exit_code = [int]$proc.ExitCode; stdout = $text; stderr = $err; value = $value }
+        } finally { $proc.Dispose() }
+    }
+    function Start-RouteProcess {
+        param([Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$Arguments)
+        $info = [Diagnostics.ProcessStartInfo]::new()
+        $info.FileName = $pwshPath
+        $info.UseShellExecute = $false
+        $info.RedirectStandardOutput = $true
+        $info.RedirectStandardError = $true
+        $info.CreateNoWindow = $true
+        foreach ($argument in @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $durableInvoke) + $Arguments) {
+            [void]$info.ArgumentList.Add([string]$argument)
+        }
+        return [Diagnostics.Process]::Start($info)
+    }
+
+    [Environment]::SetEnvironmentVariable('TELEPHONE_TEST_DIRECT_GROK_MOCK_MODE', 'sleep', 'Process')
+    [Environment]::SetEnvironmentVariable('TELEPHONE_TEST_DIRECT_GROK_SLEEP_SECONDS', '3', 'Process')
+    $unlimitedState = Join-Path $testRoot 'unlimited-state'
+    $unlimitedJob = [Guid]::NewGuid().ToString('D')
+    $unlimited = Invoke-AdapterEntrypoint -Entrypoint $durableEntry -Arguments @(
+        '-WorkspacePath', $workspace, '-PromptFile', $promptPath, '-JobId', $unlimitedJob,
+        '-StateRoot', $unlimitedState, '-GrokCommand', $mockGrokCmd, '-GrokTimeoutSeconds', '0', '-WaitTimeoutSeconds', '20'
+    )
+    Assert-AdapterTest ($unlimited.exit_code -eq 0) "Unlimited GrokTimeoutSeconds=0 failed: $($unlimited.stderr) $($unlimited.stdout)"
+    Assert-AdapterTest ($unlimited.value.transport_complete -eq $true) 'Unlimited work was not transport complete.'
+    Assert-AdapterTest ($unlimited.value.automatic_rerun -eq $false -and $unlimited.value.replacement_started -eq $false) 'Unlimited work advertised a replacement.'
+
+    [Environment]::SetEnvironmentVariable('TELEPHONE_TEST_DIRECT_GROK_SLEEP_SECONDS', '20', 'Process')
+    $timeoutState = Join-Path $testRoot 'timeout-state'
+    $timeoutJob = [Guid]::NewGuid().ToString('D')
+    $timeoutSw = [Diagnostics.Stopwatch]::StartNew()
+    $timedOut = Invoke-RouteWatchdog -TimeoutMs 25000 -Arguments @(
+        '-Operation', 'start', '-StateRoot', $timeoutState, '-WorkspacePath', $workspace, '-PromptFile', $promptPath,
+        '-JobId', $timeoutJob, '-GrokCommand', $mockGrokCmd, '-GrokTimeoutSeconds', '1', '-WaitTimeoutSeconds', '30'
+    )
+    $timeoutSw.Stop()
+    Assert-AdapterTest ($timedOut.exit_code -ne 0) 'Caller-selected Grok timeout was treated as success.'
+    Assert-AdapterTest ($timedOut.value.transport_complete -ne $true) 'Timed-out Grok advertised transport complete.'
+    Assert-AdapterTest ($timedOut.value.automatic_rerun -eq $false -and $timedOut.value.replacement_started -eq $false) 'Timed-out Grok advertised a replacement.'
+    Assert-AdapterTest ($timeoutSw.ElapsedMilliseconds -lt 20000) 'Caller-selected Grok timeout cleanup was not bounded.'
+    $timeoutJobRoot = Join-Path $timeoutState ("jobs\$timeoutJob")
+    $timeoutChildPath = Join-Path $timeoutJobRoot 'grok-child-owner.json'
+    Assert-AdapterTest ([IO.File]::Exists($timeoutChildPath)) 'Confirmed timeout omitted child-owner evidence.'
+    $timeoutChild = Get-Content -LiteralPath $timeoutChildPath -Raw | ConvertFrom-Json -AsHashtable
+    Assert-AdapterTest ($timeoutChild.stop_attempted -eq $true) 'Confirmed timeout did not record a stop attempt.'
+    Assert-AdapterTest ($timeoutChild.stop_confirmed -eq $true) 'Successful timeout stop was not confirmed.'
+    Assert-AdapterTest ($timeoutChild.process_exited -eq $true) 'Successful timeout stop left the child running without saying so.'
+    Assert-AdapterTest ($timeoutChild.automatic_rerun -eq $false -and $timeoutChild.replacement_started -eq $false) 'Timeout child owner advertised a replacement.'
+    $timeoutResultPath = Join-Path $timeoutJobRoot 'grok-result.json'
+    Assert-AdapterTest ([IO.File]::Exists($timeoutResultPath)) 'Timed-out route omitted grok-result.json.'
+    $timeoutResult = Get-Content -LiteralPath $timeoutResultPath -Raw | ConvertFrom-Json -AsHashtable
+    Assert-AdapterTest ($timeoutResult.success -ne $true) 'Timed-out wrapper claimed success.'
+    Assert-AdapterTest ([string]$timeoutResult.error -ceq 'Official Grok CLI exceeded the caller-selected timeout.') 'Timed-out wrapper used the wrong public error.'
+    Stop-DirectGrokTestJob -JobRoot $timeoutJobRoot
+
+    [Environment]::SetEnvironmentVariable('TELEPHONE_TEST_DIRECT_GROK_SIMULATE_STOP_FAILURE', '1', 'Process')
+    $stopFailState = Join-Path $testRoot 'stop-fail-state'
+    $stopFailJob = [Guid]::NewGuid().ToString('D')
+    $stopFailSw = [Diagnostics.Stopwatch]::StartNew()
+    $stopFailed = Invoke-RouteWatchdog -TimeoutMs 25000 -Arguments @(
+        '-Operation', 'start', '-StateRoot', $stopFailState, '-WorkspacePath', $workspace, '-PromptFile', $promptPath,
+        '-JobId', $stopFailJob, '-GrokCommand', $mockGrokCmd, '-GrokTimeoutSeconds', '1', '-WaitTimeoutSeconds', '30'
+    )
+    $stopFailSw.Stop()
+    Assert-AdapterTest ($stopFailed.exit_code -ne 0) 'Stop-failure path was treated as success.'
+    Assert-AdapterTest ($stopFailed.value.transport_complete -ne $true) 'Stop-failure advertised transport complete.'
+    Assert-AdapterTest ($stopFailed.value.automatic_rerun -eq $false -and $stopFailed.value.replacement_started -eq $false) 'Stop-failure advertised a replacement.'
+    Assert-AdapterTest ($stopFailSw.ElapsedMilliseconds -lt 20000) 'Stop-failure cleanup wait was unbounded.'
+    $stopFailRoot = Join-Path $stopFailState ("jobs\$stopFailJob")
+    $stopFailChildPath = Join-Path $stopFailRoot 'grok-child-owner.json'
+    Assert-AdapterTest ([IO.File]::Exists($stopFailChildPath)) 'Stop-failure omitted exact-owner recovery evidence.'
+    $stopFailChild = Get-Content -LiteralPath $stopFailChildPath -Raw | ConvertFrom-Json -AsHashtable
+    Assert-AdapterTest ($stopFailChild.stop_confirmed -ne $true) 'Stop-failure claimed a confirmed stop.'
+    Assert-AdapterTest ($stopFailChild.process_exited -ne $true) 'Stop-failure claimed the child exited.'
+    Assert-AdapterTest (-not $stopFailChild.Contains('orphans_zero')) 'Stop-failure claimed zero orphans.'
+    $stopFailCkptPath = Join-Path $stopFailRoot 'completion-checkpoint.json'
+    Assert-AdapterTest ([IO.File]::Exists($stopFailCkptPath)) 'Stop-failure omitted the bounded completion checkpoint.'
+    $stopFailResult = Get-Content -LiteralPath $stopFailCkptPath -Raw | ConvertFrom-Json -AsHashtable
+    Assert-AdapterTest ($stopFailResult.success -ne $true) 'Stop-failure wrapper claimed success.'
+    Assert-AdapterTest ([string]$stopFailResult.error -ceq 'Official Grok CLI did not finish stop or redirected I/O within the bounded cleanup wait.') 'Stop-failure wrapper used the wrong public error.'
+    Stop-DirectGrokTestJob -JobRoot $stopFailRoot
+    [Environment]::SetEnvironmentVariable('TELEPHONE_TEST_DIRECT_GROK_SIMULATE_STOP_FAILURE', $null, 'Process')
+
+    [Environment]::SetEnvironmentVariable('TELEPHONE_TEST_DIRECT_GROK_SIMULATE_IO_HANG', '1', 'Process')
+    $ioHangState = Join-Path $testRoot 'io-hang-state'
+    $ioHangJob = [Guid]::NewGuid().ToString('D')
+    $ioHangSw = [Diagnostics.Stopwatch]::StartNew()
+    $ioHang = Invoke-RouteWatchdog -TimeoutMs 25000 -Arguments @(
+        '-Operation', 'start', '-StateRoot', $ioHangState, '-WorkspacePath', $workspace, '-PromptFile', $promptPath,
+        '-JobId', $ioHangJob, '-GrokCommand', $mockGrokCmd, '-GrokTimeoutSeconds', '1', '-WaitTimeoutSeconds', '30'
+    )
+    $ioHangSw.Stop()
+    Assert-AdapterTest ($ioHang.exit_code -ne 0) 'I/O cleanup hang was treated as success.'
+    Assert-AdapterTest ($ioHangSw.ElapsedMilliseconds -lt 20000) 'I/O cleanup hang wait was unbounded.'
+    Assert-AdapterTest ($ioHang.value.automatic_rerun -eq $false -and $ioHang.value.replacement_started -eq $false) 'I/O cleanup hang advertised a replacement.'
+    $ioHangRoot = Join-Path $ioHangState ("jobs\$ioHangJob")
+    $ioHangChild = Get-Content -LiteralPath (Join-Path $ioHangRoot 'grok-child-owner.json') -Raw | ConvertFrom-Json -AsHashtable
+    Assert-AdapterTest ($ioHangChild.io_completed -ne $true) 'I/O cleanup hang claimed completed redirected I/O.'
+    Assert-AdapterTest ($ioHangChild.stop_confirmed -ne $true) 'I/O cleanup hang claimed a confirmed stop.'
+    Stop-DirectGrokTestJob -JobRoot $ioHangRoot
+    [Environment]::SetEnvironmentVariable('TELEPHONE_TEST_DIRECT_GROK_SIMULATE_IO_HANG', $null, 'Process')
+
+    [Environment]::SetEnvironmentVariable('TELEPHONE_TEST_DIRECT_GROK_MOCK_MODE', 'success', 'Process')
+    [Environment]::SetEnvironmentVariable('TELEPHONE_TEST_DIRECT_GROK_SLEEP_SECONDS', $null, 'Process')
+    $occState = Join-Path $testRoot 'occ-state'
+    $occStartJob = [Guid]::NewGuid().ToString('D')
+    $occStart = Invoke-AdapterEntrypoint -Entrypoint $durableInvoke -Arguments @(
+        '-Operation', 'start', '-StateRoot', $occState, '-WorkspacePath', $workspace, '-PromptFile', $promptPath,
+        '-JobId', $occStartJob, '-GrokCommand', $mockGrokCmd, '-WaitTimeoutSeconds', '30'
+    )
+    Assert-AdapterTest ($occStart.exit_code -eq 0) "Occupancy start failed: $($occStart.stderr) $($occStart.stdout)"
+    $occSession = [string]$occStart.value.native_session_id
+    $occBindingPath = Join-Path $occState ("sessions\$occSession\binding.json")
+    $stampsAfterStart = Get-StampCount
+
+    $readerStop = Join-Path $testRoot 'reader-stop.txt'
+    $readerFail = Join-Path $testRoot 'reader-fail.txt'
+    $readerOk = Join-Path $testRoot 'reader-ok.txt'
+    $readerScript = Join-Path $testRoot 'read-binding.ps1'
+    [IO.File]::WriteAllText($readerScript, @'
+param([string]$BindingPath, [string]$StopPath, [string]$FailPath, [string]$OkPath)
+Set-StrictMode -Version Latest
+$keys = @('protocol_version', 'native_session_id', 'latest_job_id', 'created_at_utc')
+while (-not [IO.File]::Exists($StopPath)) {
+    if ([IO.File]::Exists($BindingPath)) {
+        try {
+            $bytes = [IO.File]::ReadAllBytes($BindingPath)
+            if ($bytes.Length -lt 2) { Start-Sleep -Milliseconds 20; continue }
+            $doc = [Text.UTF8Encoding]::new($false, $true).GetString($bytes) | ConvertFrom-Json -AsHashtable -Depth 16 -DateKind String
+            foreach ($k in $keys) {
+                if (-not $doc.Contains($k) -or [string]::IsNullOrWhiteSpace([string]$doc[$k])) { throw "missing $k" }
+            }
+            [IO.File]::AppendAllText($OkPath, '1')
+        } catch {
+            [IO.File]::AppendAllText($FailPath, ($_.Exception.Message + "`n"))
+        }
+    }
+    Start-Sleep -Milliseconds 20
+}
+'@, [Text.UTF8Encoding]::new($false))
+    $readerInfo = [Diagnostics.ProcessStartInfo]::new()
+    $readerInfo.FileName = $pwshPath
+    $readerInfo.UseShellExecute = $false
+    $readerInfo.CreateNoWindow = $true
+    foreach ($argument in @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $readerScript, '-BindingPath', $occBindingPath, '-StopPath', $readerStop, '-FailPath', $readerFail, '-OkPath', $readerOk)) {
+        [void]$readerInfo.ArgumentList.Add($argument)
+    }
+    $readerProc = [Diagnostics.Process]::Start($readerInfo)
+
+    [Environment]::SetEnvironmentVariable('TELEPHONE_TEST_DIRECT_GROK_MOCK_MODE', 'sleep', 'Process')
+    [Environment]::SetEnvironmentVariable('TELEPHONE_TEST_DIRECT_GROK_SLEEP_SECONDS', '6', 'Process')
+    $followA = [Guid]::NewGuid().ToString('D')
+    $followB = [Guid]::NewGuid().ToString('D')
+    $followArgsA = @(
+        '-Operation', 'follow_up', '-NativeSessionId', $occSession, '-StateRoot', $occState, '-WorkspacePath', $workspace,
+        '-PromptFile', $promptPath, '-JobId', $followA, '-GrokCommand', $mockGrokCmd, '-WaitTimeoutSeconds', '20'
+    )
+    $followArgsB = @(
+        '-Operation', 'follow_up', '-NativeSessionId', $occSession, '-StateRoot', $occState, '-WorkspacePath', $workspace,
+        '-PromptFile', $promptPath, '-JobId', $followB, '-GrokCommand', $mockGrokCmd, '-WaitTimeoutSeconds', '20'
+    )
+    $pFollowA = Start-RouteProcess -Arguments $followArgsA
+    $pFollowB = Start-RouteProcess -Arguments $followArgsB
+    $overlapWait = [Diagnostics.Stopwatch]::StartNew()
+    while ($overlapWait.Elapsed.TotalSeconds -lt 5 -and (Get-StampCount) -lt ($stampsAfterStart + 1)) { Start-Sleep -Milliseconds 100 }
+    Assert-AdapterTest ((Get-StampCount) -eq ($stampsAfterStart + 1)) "Competing follow_ups did not take a single write turn: $(Get-StampCount)"
+    Start-Sleep -Seconds 1
+    $stampsDuringOverlap = Get-StampCount
+    Assert-AdapterTest ($stampsDuringOverlap -eq ($stampsAfterStart + 1)) "Competing follow_ups launched duplicate Grok writes: $stampsDuringOverlap"
+    $null = $pFollowA.WaitForExit(30000)
+    $null = $pFollowB.WaitForExit(30000)
+    Assert-AdapterTest ($pFollowA.HasExited -and $pFollowB.HasExited) 'Competing follow_ups did not finish.'
+    Assert-AdapterTest ($pFollowA.ExitCode -eq 0 -and $pFollowB.ExitCode -eq 0) "Serialized follow_ups failed: $($pFollowA.ExitCode) $($pFollowB.ExitCode)"
+    Assert-AdapterTest ((Get-StampCount) -eq ($stampsAfterStart + 2)) 'Serialized follow_ups did not each run once.'
+    $bindingAfter = Get-Content -LiteralPath $occBindingPath -Raw | ConvertFrom-Json -AsHashtable
+    Assert-AdapterTest ($bindingAfter.Contains('protocol_version') -and $bindingAfter.Contains('latest_job_id')) 'Binding after competing follow_ups was incomplete.'
+    $reqA = Get-Content -LiteralPath (Join-Path $occState ("jobs\$followA\request.json")) -Raw | ConvertFrom-Json -AsHashtable -Depth 16 -DateKind String
+    $reqB = Get-Content -LiteralPath (Join-Path $occState ("jobs\$followB\request.json")) -Raw | ConvertFrom-Json -AsHashtable -Depth 16 -DateKind String
+    $successor = if ([string]$reqB.created_at_utc -cge [string]$reqA.created_at_utc) { $followB } else { $followA }
+    Assert-AdapterTest ([string]$bindingAfter.latest_job_id -ceq $successor) "Binding latest_job_id was not the successor writer: $($bindingAfter.latest_job_id)"
+    Assert-AdapterTest ([string]$bindingAfter.native_session_id -ceq $occSession) 'Competing follow_ups changed the native session id.'
+    $occAfter = Join-Path $occState ("sessions\$occSession\write-occupancy.json")
+    Assert-AdapterTest (-not [IO.File]::Exists($occAfter)) 'Write occupancy remained after both follow_ups completed.'
+    $pFollowA.Dispose()
+    $pFollowB.Dispose()
+    [IO.File]::WriteAllText($readerStop, '1', [Text.UTF8Encoding]::new($false))
+    $null = $readerProc.WaitForExit(5000)
+    $readerProc.Dispose()
+    Assert-AdapterTest (-not [IO.File]::Exists($readerFail)) 'Concurrent binding readers saw a torn or incomplete binding.'
+    Assert-AdapterTest ([IO.File]::Exists($readerOk) -and ((Get-Item -LiteralPath $readerOk).Length -gt 0)) 'Concurrent binding readers never observed a complete binding.'
+
+    $stampsBeforeBusy = Get-StampCount
+    $busyA = [Guid]::NewGuid().ToString('D')
+    $busyB = [Guid]::NewGuid().ToString('D')
+    $pBusyA = Start-RouteProcess -Arguments @(
+        '-Operation', 'follow_up', '-NativeSessionId', $occSession, '-StateRoot', $occState, '-WorkspacePath', $workspace,
+        '-PromptFile', $promptPath, '-JobId', $busyA, '-GrokCommand', $mockGrokCmd, '-WaitTimeoutSeconds', '2'
+    )
+    $busyOwnerPath = Join-Path $occState ("jobs\$busyA\owner.json")
+    $busyDeadline = [DateTimeOffset]::UtcNow.AddSeconds(10)
+    while ([DateTimeOffset]::UtcNow -lt $busyDeadline -and -not [IO.File]::Exists($busyOwnerPath)) { Start-Sleep -Milliseconds 100 }
+    $pBusyB = Start-RouteProcess -Arguments @(
+        '-Operation', 'follow_up', '-NativeSessionId', $occSession, '-StateRoot', $occState, '-WorkspacePath', $workspace,
+        '-PromptFile', $promptPath, '-JobId', $busyB, '-GrokCommand', $mockGrokCmd, '-WaitTimeoutSeconds', '2'
+    )
+    $null = $pBusyA.WaitForExit(15000)
+    $null = $pBusyB.WaitForExit(15000)
+    Assert-AdapterTest ($pBusyA.HasExited -and $pBusyB.HasExited) 'Busy follow_ups did not return.'
+    Assert-AdapterTest ($pBusyA.ExitCode -eq 3 -and $pBusyB.ExitCode -eq 3) "Caller wait timeout did not keep the live write turn: $($pBusyA.ExitCode) $($pBusyB.ExitCode)"
+    Assert-AdapterTest ((Get-StampCount) -eq ($stampsBeforeBusy + 1)) 'Busy follow_up launched a duplicate Grok write.'
+    Assert-AdapterTest ([IO.File]::Exists((Join-Path $occState ("sessions\$occSession\write-occupancy.json")))) 'Caller wait timeout released still-live write occupancy.'
+    Assert-AdapterTest (-not [IO.File]::Exists((Join-Path $occState ("jobs\$busyA\receipt.json")))) 'Caller wait timeout promoted a receipt for a live write.'
+    $busyRecover = Invoke-AdapterEntrypoint -Entrypoint $durableInvoke -Arguments @(
+        '-Operation', 'recover', '-NativeSessionId', $occSession, '-StateRoot', $occState, '-WaitTimeoutSeconds', '2'
+    )
+    Assert-AdapterTest ($busyRecover.exit_code -eq 3) 'Recover after caller wait timeout did not keep the live owner.'
+    Assert-AdapterTest ($busyRecover.value.automatic_rerun -eq $false -and $busyRecover.value.replacement_started -eq $false) 'Live recover advertised a replacement.'
+    Assert-AdapterTest ((Get-StampCount) -eq ($stampsBeforeBusy + 1)) 'Recover after caller wait timeout reran Grok.'
+    $busyFinish = Invoke-AdapterEntrypoint -Entrypoint $durableInvoke -Arguments @(
+        '-Operation', 'recover', '-NativeSessionId', $occSession, '-StateRoot', $occState, '-WaitTimeoutSeconds', '20'
+    )
+    Assert-AdapterTest ($busyFinish.exit_code -eq 0) "Exact recovery of the live follow_up failed: $($busyFinish.stderr) $($busyFinish.stdout)"
+    Assert-AdapterTest ((Get-StampCount) -eq ($stampsBeforeBusy + 1)) 'Exact recovery reran Grok.'
+    $pBusyA.Dispose()
+    $pBusyB.Dispose()
+
+    $distinctState = Join-Path $testRoot 'distinct-state'
+    $distinctA = [Guid]::NewGuid().ToString('D')
+    $distinctB = [Guid]::NewGuid().ToString('D')
+    $stampsBeforeDistinct = Get-StampCount
+    $pDistA = Start-RouteProcess -Arguments @(
+        '-Operation', 'start', '-StateRoot', $distinctState, '-WorkspacePath', $workspace, '-PromptFile', $promptPath,
+        '-JobId', $distinctA, '-GrokCommand', $mockGrokCmd, '-WaitTimeoutSeconds', '20'
+    )
+    $pDistB = Start-RouteProcess -Arguments @(
+        '-Operation', 'start', '-StateRoot', $distinctState, '-WorkspacePath', $workspace, '-PromptFile', $promptPath,
+        '-JobId', $distinctB, '-GrokCommand', $mockGrokCmd, '-WaitTimeoutSeconds', '20'
+    )
+    $distinctWait = [Diagnostics.Stopwatch]::StartNew()
+    while ($distinctWait.Elapsed.TotalSeconds -lt 5 -and (Get-StampCount) -lt ($stampsBeforeDistinct + 2)) { Start-Sleep -Milliseconds 100 }
+    Assert-AdapterTest ((Get-StampCount) -eq ($stampsBeforeDistinct + 2)) 'Distinct sessions were serialized onto one Grok write.'
+    Assert-AdapterTest ($distinctWait.Elapsed.TotalSeconds -lt 5) 'Distinct sessions did not overlap.'
+    $null = $pDistA.WaitForExit(30000)
+    $null = $pDistB.WaitForExit(30000)
+    Assert-AdapterTest ($pDistA.ExitCode -eq 0 -and $pDistB.ExitCode -eq 0) "Distinct sessions failed: $($pDistA.ExitCode) $($pDistB.ExitCode)"
+    $pDistA.Dispose()
+    $pDistB.Dispose()
+    Stop-DirectGrokTestJob -JobRoot (Join-Path $occState ("jobs\$busyA"))
+    Stop-DirectGrokTestJob -JobRoot $timeoutJobRoot
+    Stop-DirectGrokTestJob -JobRoot $stopFailRoot
+    Stop-DirectGrokTestJob -JobRoot $ioHangRoot
+
     [ordered]@{
         success = $true
         official_cli = 1
@@ -524,6 +1036,15 @@ exit 0
         live_owner_serialized = 1
         concurrent_recoverers = 1
         cli_entry_recover_job_id = 1
+        unlimited_timeout_retained = 1
+        explicit_timeout_bounded = 1
+        stop_failure_bounded = 1
+        io_cleanup_bounded = 1
+        competing_follow_up_serialized = 1
+        concurrent_binding_readers = 1
+        caller_wait_keeps_live_owner = 1
+        exact_recover_no_duplicate = 1
+        distinct_sessions_concurrent = 1
         grok_invocations = (Get-DurableCount)
         assertions = $assertions
     } | ConvertTo-Json -Compress
@@ -531,7 +1052,16 @@ exit 0
     [Environment]::SetEnvironmentVariable('DIRECT_GROK_MOCK_COUNTER', $null, 'Process')
     [Environment]::SetEnvironmentVariable('DIRECT_GROK_FAIL_TEXT', $null, 'Process')
     [Environment]::SetEnvironmentVariable('TELEPHONE_TEST_DIRECT_GROK_MOCK_MODE', $null, 'Process')
-    foreach ($name in @('TELEPHONE_TEST_DIRECT_GROK_CRASH_BEFORE_CLI', 'TELEPHONE_TEST_DIRECT_GROK_CRASH_AFTER_CLI_STDOUT', 'TELEPHONE_TEST_DIRECT_GROK_CRASH_AFTER_CHECKPOINT')) {
+    foreach ($name in @(
+            'TELEPHONE_TEST_DIRECT_GROK_CRASH_BEFORE_CLI',
+            'TELEPHONE_TEST_DIRECT_GROK_CRASH_AFTER_CLI_STDOUT',
+            'TELEPHONE_TEST_DIRECT_GROK_CRASH_AFTER_CHECKPOINT',
+            'TELEPHONE_TEST_DIRECT_GROK_SIMULATE_STOP_FAILURE',
+            'TELEPHONE_TEST_DIRECT_GROK_SIMULATE_IO_HANG',
+            'TELEPHONE_TEST_DIRECT_GROK_SLEEP_SECONDS',
+            'TELEPHONE_TEST_DIRECT_GROK_DELAY_BINDING_MS',
+            'DIRECT_GROK_MOCK_INVOCATION_DIR'
+        )) {
         [Environment]::SetEnvironmentVariable($name, $null, 'Process')
     }
     if ([IO.Directory]::Exists($testRoot)) { Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue }

@@ -1125,19 +1125,21 @@ function Get-TelephoneDashboardCurrentStateGroup {
         }
     })
     $actions = @($state.actions | ForEach-Object { [ordered]@{ action_id=[string]$_.action_id; kind=[string]$_.kind; sequence=[int]$_.sequence; state=[string]$_.state; reason=[string]$_.reason; retry_count=[int]$_.retry_count } })
+    $lanes = @($lanes)
+    $actions = @($actions)
     $roles = @($lanes.role | Sort-Object -Unique)
     $routes = @($lanes.route | Sort-Object -Unique)
     $failures = @($lanes.failure_class | Where-Object { $_ -cne 'none' } | Sort-Object -Unique)
-    $failureClass = $(if ($failures.Count -eq 0) { 'none' } elseif ($failures.Count -eq 1) { [string]$failures[0] } else { 'mixed' })
+    $failureClass = $(if (@($failures).Count -eq 0) { 'none' } elseif (@($failures).Count -eq 1) { [string]@($failures)[0] } else { 'mixed' })
     $phase = [string]$state.dashboard_phase
     $terminal = [bool]$state.terminal
     $group = New-TelephoneDashboardObservedGroup `
         -Project $project -SessionId ([string]$state.lead.session_id) -RunId ([string]$state.lead.run_id) `
         -Phase $phase -Visible (-not $terminal) -Disappeared $terminal -Color $(if ($findings.Count -eq 0) { 'green' } else { 'yellow' }) `
         -Lead ($phase -ceq 'lead') -Execution (@($lanes | Where-Object { [string]$_.state -cin @('starting', 'executing', 'receipt_ready', 'callback_running') }).Count -gt 0) `
-        -FinalAudit ($roles -contains 'review') -Correction ($failures.Count -gt 0) -Closure ($phase -ceq 'closure') -Terminal $terminal `
-        -Findings @($findings) -LineJobId $(if ($lanes.Count -eq 1) { [string]$lanes[0].line_job_id } else { '' }) `
-        -Stage ([string]$state.goal_summary) -Role $(if ($roles.Count -eq 1) { [string]$roles[0] } else { '' }) -Route $(if ($routes.Count -eq 1) { [string]$routes[0] } else { 'mixed' }) `
+        -FinalAudit (@($roles) -contains 'review') -Correction (@($failures).Count -gt 0) -Closure ($phase -ceq 'closure') -Terminal $terminal `
+        -Findings @($findings) -LineJobId $(if (@($lanes).Count -eq 1) { [string]@($lanes)[0].line_job_id } else { '' }) `
+        -Stage ([string]$state.goal_summary) -Role $(if (@($roles).Count -eq 1) { [string]@($roles)[0] } else { '' }) -Route $(if (@($routes).Count -eq 1) { [string]@($routes)[0] } else { 'mixed' }) `
         -Provenance ([string]$state.projection_fingerprint)
     $group.current_state_version = [int]$state.projection_version
     $group.current_state_fingerprint = [string]$state.projection_fingerprint
@@ -2078,7 +2080,28 @@ function Get-TelephoneDashboardProjection {
                 $dispatchPath = Join-Path $dir.FullName 'dispatch.json'
                 $requestPath = Join-Path $dir.FullName 'request.json'
                 if ([IO.File]::Exists($dispatchPath)) {
-                    [void]$jobScans.Add((Get-TelephoneDashboardJobScan -JobRoot $dir.FullName -Descriptor $descriptor))
+                    $jobScan = Get-TelephoneDashboardJobScan -JobRoot $dir.FullName -Descriptor $descriptor
+                    if ([bool]$jobScan.dispatch.valid) {
+                        [void]$jobScans.Add($jobScan)
+                    } else {
+                        $copiedInvalid = 0
+                        foreach ($scanFinding in @($jobScan.findings)) {
+                            if ($null -eq $scanFinding) { continue }
+                            $scanCode = [string]$scanFinding.code
+                            if ([string]::IsNullOrWhiteSpace($scanCode)) { continue }
+                            $scanSeverity = 'fail_closed'
+                            if ($scanFinding -is [Collections.IDictionary] -and $scanFinding.Contains('severity') -and -not [string]::IsNullOrWhiteSpace([string]$scanFinding.severity)) {
+                                $scanSeverity = [string]$scanFinding.severity
+                            } elseif ($null -ne $scanFinding.PSObject.Properties['severity'] -and -not [string]::IsNullOrWhiteSpace([string]$scanFinding.severity)) {
+                                $scanSeverity = [string]$scanFinding.severity
+                            }
+                            Add-TelephoneDashboardFinding -Findings $entryFindings -Code $scanCode -Severity $scanSeverity
+                            $copiedInvalid += 1
+                        }
+                        if ($copiedInvalid -eq 0) {
+                            Add-TelephoneDashboardFinding -Findings $entryFindings -Code 'MALFORMED_EVIDENCE'
+                        }
+                    }
                 } elseif ([IO.File]::Exists($requestPath)) {
                     [void]$jobScans.Add((Get-TelephoneDashboardDirectRouteScan -JobRoot $dir.FullName -Descriptor $descriptor))
                 }
