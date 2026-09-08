@@ -4,6 +4,10 @@
 
 Codex stays the Lead. Other harnesses do the heavy work. Codex sleeps while they run and resumes on the exact callback.
 
+Telephone Line is a CLI/script-based transport layer that connects Agents and Harnesses you already use. Installation means wiring those existing tools together on your machine; it does not require building a new Agent, chat product, or desktop application.
+
+**Recommended: ask your own Agent to read the usage and protocol documentation, then adapt and debug the setup for your local environment.** A successful installation alone does not prove that your local dispatch and callback paths work. Follow the [Agent setup prompt](#let-an-agent-install-and-debug-it) and verify one small task before relying on the connection.
+
 The primary purpose is operational, not publication: in the original deployment, substantive implementation and independent review default to Telephone so every available Harness and subscription quota pool can be used. Direct in-task execution is the explicit opt-out. Open-source distribution is a secondary benefit for reuse, external feedback, and compatibility contributions.
 
 ## Who needs multi-Harness collaboration
@@ -169,11 +173,11 @@ A Heartbeat never replaces callback and must not call a job failed merely becaus
 The easiest setup path is to give the source tree or Release ZIP to a trusted local Codex or other Agent with a bounded instruction such as:
 
 ```text
-Install and configure Harness Telephone Line for the current project. Before changing anything, read README, docs/quick-start.md, docs/install.md, docs/routes.md, docs/adapter-interface.md, and the documentation for my selected route. Inspect the OS, PowerShell, any existing install, current.json, Doctor, the exact Codex session/worktree, and external Harness dependencies before choosing an action.
+Connect the existing Harness Telephone Line scripts to my existing Codex and selected execution Harness for the current project. This is local environment setup and debugging, not a request to build another Agent or desktop application. Before changing anything, read README, docs/quick-start.md, docs/install.md, docs/routes.md, docs/adapter-interface.md, and the documentation for my selected route. Inspect the OS, PowerShell, any existing install, current.json, Doctor, the exact Codex session/worktree, and external Harness dependencies before choosing an action.
 
 Use a per-user install and wired Lead by default. Do not request elevation or change system PATH, Codex/GitHub credentials, or external Harness configuration without my explicit approval. Keep bindings, task cards, state, and logs outside the product package. Resolve real local paths and identities; never copy sample session ids, hashes, or absolute paths.
 
-After installation, run Doctor, then use one real, finite, reversible task to prove dispatch -> receipt -> delivery -> exact-session callback. If debugging fails, preserve evidence and distinguish executor failure from transport failure. Recover from the smallest same-session checkpoint; do not blindly rerun, delete successful envelopes, or rebuild the wave. Report the install path, version identity, Doctor result, start method, state root, task terminal, and any decision still needed from me.
+After installation, check the actual local executable versions and paths, authentication availability without exposing secrets, permissions, launcher, state directories, and callback binding. Debug any local compatibility mismatch within this setup scope; distinguish it from a product defect. Run Doctor, then use one real, finite, reversible task to prove dispatch -> receipt -> delivery -> exact-session callback. If debugging fails, preserve evidence and distinguish executor failure from transport failure. Recover from the smallest same-session checkpoint; do not blindly rerun, delete successful envelopes, or rebuild the wave. Report the install path, version identity, Doctor result, start method, state root, task terminal, and any decision still needed from me.
 ```
 
 Do not let the Agent paste credentials, full prompts, sessions, or private project logs into an Issue. It must not install or sign in to third-party Harnesses automatically, treat test success as project PASS, or rewrite historical terminals to make the dashboard look green. For a general Telephone defect, reproduce and minimally fix it in isolation, then follow [Contributing](CONTRIBUTING.md) with sanitized material.
@@ -194,20 +198,11 @@ Execution consumption moves to the other Harness's independent subscription quot
 
 ## What macOS users can do
 
-v0.1 supports Windows as its only production target. macOS users should not force-run the Windows installer or treat an accidental Wine/VM success as native support. The safest current options are to run Telephone Line on a Windows host while using macOS as the project workstation, or to build a native port in an isolated fork.
+v0.1 supports Windows as its only production target. macOS users should not force-run the Windows installer or treat a successful package extraction as a working native setup.
 
-A port should preserve the public protocols, eight adapter contracts, durable dispatch/receipt/delivery, exact-session callback, no blind rerun, and no whole-task timeout. Replace only the operating-system layer:
+Ask your own Agent to read the existing usage and protocol documentation first, then assess which command-line tools and scripts can run locally and which Windows-specific pieces need compatibility work. This concerns executable paths, permissions, process control, background supervision, and exact-session callback wiring. A desktop application, graphical interface, or application bundle is not a setup requirement; do not create one unless the user explicitly requests it.
 
-| Windows implementation | Suggested macOS counterpart |
-| --- | --- |
-| Per-user Task Scheduler task | Per-user `launchd` LaunchAgent, never a root daemon |
-| Windows Job and exact process-tree control | Dedicated process group/session, durable owner identity, and LaunchAgent supervision; cancellation must prove zero orphan processes |
-| `%LOCALAPPDATA%\TelephoneLine` | `~/Library/Application Support/TelephoneLine` |
-| Windows paths, shortcuts, and recycle-bin API | Native paths/permissions, optional `.app` or shell controls, and the system Trash |
-| Windows-specific PowerShell/process APIs | Keep portable `pwsh` logic and isolate/rewrite Windows-only code |
-
-Support Apple Silicon first. Claim Intel Mac support only after separate evidence. A porting Agent should produce a platform-gap inventory and design note before implementation, work in an isolated worktree, and never weaken identity checks, atomic persistence, exactly-once callback, stop/uninstall behavior, or privacy just to make a demo run. Minimum acceptance covers install, Doctor, single- and multi-lane work, continuation after Codex exits, one callback to the exact session, machine-restart recovery, precise cancel, update, uninstall, zero duplicate execution, and zero orphan processes. Opening an Issue to align the design before a reviewable Pull Request is welcome.
-
+Using a Windows host for Telephone Line remains an available option. If native macOS compatibility work is chosen, keep it in an isolated checkout, preserve the existing transport and session contracts, and distinguish verified local behavior from unsupported or untested behavior. Community compatibility fixes are welcome through a reviewable Pull Request; this README does not claim native macOS support.
 ## Docs
 
 - [Quick start](docs/quick-start.md)

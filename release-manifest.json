@@ -72,8 +72,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 22309,
-      "sha256": "f622ccfd00846474adeb623529e652bca7a840da1b0abd5417011aa3c7abc9cd"
+      "bytes": 22543,
+      "sha256": "15d62706675299d08fb10b7235704d67676ce1a27a314f711f7f1e553680483b"
     },
     {
       "path": "SECURITY.md",
@@ -87,8 +87,8 @@
     },
     {
       "path": "docs/README.zh-CN.md",
-      "bytes": 21379,
-      "sha256": "9f27cba885fc29d909e486f425923414bf66dfbd66d42d84ea7143c3159f72f2"
+      "bytes": 21178,
+      "sha256": "c404a89b9ca8d9a713e88ed155cadc4503e912c3d766c8559d9cff8cc53e7c72"
     },
     {
       "path": "docs/adapter-authoring.md",
@@ -1503,7 +1503,7 @@
   ],
   "counts": {
     "files": 294,
-    "bytes": 3940652
+    "bytes": 3940685
   },
   "excluded": [
     ".control/**",

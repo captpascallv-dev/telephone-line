@@ -8,6 +8,10 @@
 
 Telephone Line 是一套面向 Codex CLI 的跨 Harness 协作基础设施。
 
+它通过命令行工具和脚本接入你已经在用的 Agent 与 Harness。安装的目标是把现有工具在本机接通，不需要另建一个 Agent、聊天产品或桌面应用。
+
+**建议让你自己的 Agent 先读使用说明和协议，再完成本机环境适配与调试。** 安装成功不等于本机的派发和回叫已经走通；请按下方[安装调试指令](#让-agent-代为安装和调试)，先跑通一个小任务再正式使用。
+
 它解决的不是“换一个模型”，而是让不同智能体运行环境真正接力：Codex 负责目标判断、拆包、派发、验收和继续推进；Cursor、Claude Code、Grok、PI、DSH 或另一套 Codex 环境负责长时间执行与独立审查。派发完成后，Codex 可以退出，不必一直在线等待；外部任务完成后，结果会通过持久化回执回到原来的 Codex Lead 会话。
 
 一条完整链路是：
@@ -196,11 +200,11 @@ Heartbeat 不能替代 callback，也不能因为“时间到了”就判定失�
 最省事的方式，是把源码目录或 Release ZIP 交给本机 Codex/其他可信 Agent，并给它一条边界清楚的指令：
 
 ```text
-请为当前项目安装并配置 Harness Telephone Line。先完整读取 README、docs/quick-start.md、docs/install.md、docs/routes.md、docs/adapter-interface.md，以及我选择路线的文档；先检查操作系统、PowerShell、现有安装、current.json、Doctor、Codex session/worktree 和外部 Harness 依赖，再决定动作。
+请把现有 Harness Telephone Line 脚本接入我本机已有的 Codex 和所选执行 Harness，完成当前项目的环境适配与调试。这不是新建 Agent 或桌面应用的需求。先完整读取 README、docs/quick-start.md、docs/install.md、docs/routes.md、docs/adapter-interface.md，以及我选择路线的文档；先检查操作系统、PowerShell、现有安装、current.json、Doctor、Codex session/worktree 和外部 Harness 依赖，再决定动作。
 
 默认使用当前用户安装和有线 Lead，不申请管理员权限，不修改系统级 PATH、Codex/GitHub 凭据或外部 Harness 配置，除非我明确同意。所有 binding、任务卡、状态和日志放在产品包之外；使用本机真实路径和身份，不照抄示例中的 session id、哈希或绝对路径。
 
-安装后先运行 Doctor，再用一个真实、有限、可回滚的小任务完成 dispatch → receipt → delivery → 原会话 callback。调试失败时保留现场，先区分执行故障和运输故障；从同一 session 的最小断点恢复，不盲目重跑，不删除成功信封，不重建整轮。最后告诉我安装位置、版本身份、Doctor 结果、启动方式、状态目录、任务终态和仍需我决定的事项。
+安装后检查本机实际的程序版本与路径、登录可用性（不暴露凭据）、权限、启动器、状态目录和回叫绑定。对本机兼容差异在安装配置范围内调试，并与产品缺陷区分；随后运行 Doctor，再用一个真实、有限、可回滚的小任务完成 dispatch → receipt → delivery → 原会话 callback。调试失败时保留现场，先区分执行故障和运输故障；从同一 session 的最小断点恢复，不盲目重跑，不删除成功信封，不重建整轮。最后告诉我安装位置、版本身份、Doctor 结果、启动方式、状态目录、任务终态和仍需我决定的事项。
 ```
 
 让 Agent 调试时还应注意：不要把隐私文件、凭据、完整 prompt、session 或真实项目日志贴进 Issue；不要自动安装或登录第三方 Harness；不要把测试绿灯当成项目 PASS；不要为了“修好看起来的状态”修改历史终态。若发现的是 Telephone Line 通用问题，先在隔离环境复现和最小修复，再按 [贡献指南](../CONTRIBUTING.md) 提交脱敏材料。
@@ -230,27 +234,11 @@ Telephone Line 不判断：
 
 ## macOS 用户怎么办
 
-v0.1 只把 Windows 作为生产目标。macOS 用户不应直接强行运行 Windows 安装器，也不建议把 Wine/虚拟机中的偶然成功当成原生支持。现阶段最稳妥的选择，是在一台 Windows 主机运行 Telephone Line，macOS 继续作为项目工作端；或者在独立 fork 中完成原生移植。
+v0.1 目前仅验证 Windows 生产环境。macOS 用户不要强行运行 Windows 安装器，也不要把文件解压成功当成本机已经可用。
 
-移植时应保持公开协议、八条 adapter 契约、持久化 dispatch/receipt/delivery、exact-session callback、无盲目重跑和无整任务总超时这些不变量，只替换操作系统层：
+建议先让自己的 Agent 阅读现有使用说明与协议，检查本机可用的命令行工具、脚本和仍需处理的 Windows 专用部分。适配关注程序路径、权限、进程控制、后台监督和原会话回叫。这里不要求制作桌面应用、图形界面或应用包；除非用户明确提出，不要把环境适配理解成开发一款应用。
 
-| Windows 实现 | macOS 建议 |
-| --- | --- |
-| 每用户 Task Scheduler 任务 | 每用户 `launchd` LaunchAgent，不使用 root daemon |
-| Windows Job 与精确进程树控制 | 独立 process group/session、持久化 owner 身份与 LaunchAgent 监督；必须证明取消后无孤儿进程 |
-| `%LOCALAPPDATA%\TelephoneLine` | `~/Library/Application Support/TelephoneLine` |
-| Windows 路径、快捷方式和回收站 API | 原生路径/权限、可选 `.app` 或 shell 控制入口、系统废纸篓 |
-| Windows 专用 PowerShell/进程 API | 保留可跨平台的 `pwsh` 逻辑，隔离并重写 Windows 专用部分 |
-
-建议先支持 Apple Silicon；若宣称同时支持 Intel Mac，必须分别验证。移植 Agent 应先做平台差异清单和设计说明，再在独立 worktree 实现；不得为了“能跑”削弱身份校验、原子写入、exactly-once callback、停止/卸载或隐私边界。最低验收包括：安装、Doctor、单路与多路任务、Codex 退出后续跑、原会话单次回叫、机器重启恢复、精确取消、更新、卸载、零重复执行和零孤儿进程。欢迎先开 Issue 对齐方案，再提交可审查的 Pull Request。
-
-想开始使用，请先看：
-
-- [快速开始](quick-start.md)
-- [安装与升级](install.md)
-- [路线说明](routes.md)
-- [控制面](control-plane.md)
-
+也可以继续在 Windows 主机运行 Telephone Line。如果选择做原生 macOS 兼容改动，应在隔离目录中处理，保留现有运输与会话契约，并明确区分已验证、尚未支持和未测试的行为。欢迎通过可审查的 Pull Request 贡献兼容性修复；当前 README 不宣称已支持原生 macOS。
 ## 欢迎怎样的贡献
 
 社区可以贡献新的 Harness adapter、其他平台移植、兼容性更新、文档与安装器改进。
