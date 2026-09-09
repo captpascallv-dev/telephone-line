@@ -23,6 +23,8 @@ You also supply:
 
 Caller-supplied launcher success is process exit `0` and stdout that is exactly one JSON object containing a real `run_root`. Put diagnostics on stderr and in files under that run root, not as extra stdout objects. Failure is a truthful nonzero exit with no success JSON. Core does not accept empty stdout or treat a transport ack as product PASS. `examples/caller-supplied-lead/Invoke-GenericLeadLauncher.ps1` is a stdout-contract wiring template, not a Lead start/attach. Same `RunId` with a different frozen identity must refuse. See [adapter-interface.md](adapter-interface.md).
 
+Point the Lead CLI at an explicit independent executable, not an App version directory. `TELEPHONE_LINE_STABLE_CLI` and optional `TELEPHONE_LINE_STABLE_CLI_POLICY` (or `stable-cli-policy.json` under the install root) are the product-configured selection. Core probes CreateProcess and `--version`; path existence alone is not enough. A vanished frozen path may be reconciled to that configured stable executable for the current start without rewriting frozen dispatch bytes. Core does not scan App bin folders, download a runtime, or switch account/model. Native turn completion, process exit, and stdout/stderr EOF are recorded separately. A missing wake launch-result attaches an existing same-Run root or isolates that wake; it does not silently start another model turn.
+
 ## Install
 
 From the product tree:

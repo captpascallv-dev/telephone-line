@@ -805,11 +805,26 @@ function Get-TelephoneDashboardJobScan {
     if ([bool]$commandOwner.valid -and -not $commandAlive -and -not [bool]$receipt.present) {
         Add-TelephoneDashboardFinding -Findings $findings -Code 'STALE_ACTIVE'
     }
+    if ([bool]$receipt.valid -and $deliveryPresent) {
+        Add-TelephoneDashboardFinding -Findings $findings -Code 'DELIVERED_TO_ORIGINAL_OWNER' -Severity 'info'
+    }
     if ([bool]$receipt.valid -and -not $deliveryPresent) {
         Add-TelephoneDashboardFinding -Findings $findings -Code 'CALLBACK_MISSING'
+        Add-TelephoneDashboardFinding -Findings $findings -Code 'RECEIPT_AWAITING_DELIVERY' -Severity 'info'
         if (Test-TelephoneJobMailboxPendingWait -JobRoot $JobRoot) {
             Add-TelephoneDashboardFinding -Findings $findings -Code 'BATCH_COLLECTING' -Severity 'info'
         }
+        if ([IO.File]::Exists($paths.wake_reconcile)) {
+            try {
+                $reconcile = (Read-TelephoneJson -Path $paths.wake_reconcile).value
+                if ($reconcile -is [Collections.IDictionary] -and [bool]$reconcile.native_turn_complete -and -not [bool]$reconcile.host_terminal_present) {
+                    Add-TelephoneDashboardFinding -Findings $findings -Code 'TURN_DONE_HOST_INCOMPLETE' -Severity 'info'
+                }
+            } catch { }
+        }
+    }
+    if (-not [bool]$receipt.present -and [bool]$commandOwner.valid -and -not $commandAlive) {
+        Add-TelephoneDashboardFinding -Findings $findings -Code 'UNKNOWN_EXECUTION' -Severity 'info'
     }
     if ($relayErrorPresent -and [bool]$receipt.valid -and -not $deliveryPresent) {
         Add-TelephoneDashboardFinding -Findings $findings -Code 'LOST_RELAY'

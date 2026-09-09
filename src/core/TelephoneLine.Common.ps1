@@ -16,6 +16,8 @@ $script:TelephonePublicErrorCatalog = [ordered]@{
     COMMAND_HOST_INTERRUPTED = 'The command host ended without a durable receipt. The external task was not automatically rerun.'
     LEAD_WAKE_FAILED = 'Lead wake did not complete from durable known state.'
     LEAD_WAKE_AMBIGUOUS = 'Lead wake was ambiguous after launch. A second Lead turn was not started.'
+    LEAD_CLI_UNLAUNCHABLE = 'The configured Lead CLI executable could not be created as a process. The receipt was kept pending.'
+    LEAD_WAKE_INCOMPLETE_HOST = 'Lead native turn evidence exists but the host did not publish a terminal. The receipt was kept pending.'
     BATCH_CONTRACT_INVALID = 'The telephone-line batch contract was invalid. The executor was not rerun.'
 }
 
@@ -2129,6 +2131,8 @@ function Get-TelephoneJobPaths {
         lifecycle_events = Join-Path $root 'lifecycle-events.jsonl'
         lifecycle_events_lock = Join-Path $root 'lifecycle-events.lock'
         mailbox_ref = Join-Path $root 'mailbox-ref.json'
+        wake_reconcile = Join-Path $root 'wake-reconcile.json'
+        cli_diagnostic = Join-Path $root 'cli-diagnostic.json'
     }
 }
 
@@ -2549,6 +2553,8 @@ function ConvertTo-TelephoneFrozenLauncherNamedArguments {
     return $named
 }
 
+. (Join-Path $PSScriptRoot 'TelephoneLeadRuntime.Common.ps1')
+
 function Invoke-TelephoneFrozenLeadLauncher {
     [CmdletBinding()]
     param(
@@ -2560,40 +2566,40 @@ function Invoke-TelephoneFrozenLeadLauncher {
         [Parameter(Mandatory = $true)][string]$RunId
     )
     $null = ConvertTo-TelephoneFrozenLauncherNamedArguments -Arguments $ExtraArguments
-    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $extraForLaunch = @($ExtraArguments)
+    $frozenCmd = Get-TelephoneLeadNamedArgumentValue -Arguments $ExtraArguments -Name 'CodexCommand'
+    $stablePolicy = Get-TelephoneLeadStableCliPolicy
+    if (-not [string]::IsNullOrWhiteSpace($frozenCmd) -and -not [string]::IsNullOrWhiteSpace([string]$stablePolicy.executable)) {
+        $resolvedCli = Resolve-TelephoneLeadCliExecutable -FrozenExecutable $frozenCmd -Probe
+        if (-not [bool]$resolvedCli.launchable) { throw 'LEAD_CLI_UNLAUNCHABLE' }
+        $extraForLaunch = @(Copy-TelephoneLeadExtraArgumentsWithCli -Arguments $ExtraArguments -Executable ([string]$resolvedCli.executable))
+    }
+    $fileName = $LauncherPath
+    $drainArgs = [Collections.Generic.List[string]]::new()
     if ([IO.Path]::GetExtension($LauncherPath) -ieq '.ps1') {
-        $startInfo.FileName = [string]([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
+        $fileName = [string]([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
         foreach ($item in @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $LauncherPath)) {
-            [void]$startInfo.ArgumentList.Add([string]$item)
+            [void]$drainArgs.Add([string]$item)
         }
-    } else {
-        $startInfo.FileName = $LauncherPath
     }
     foreach ($item in @(
         '-WorktreePath', [string]$Worktree,
         '-PromptFile', [string]$PromptFile,
         '-ResumeSessionId', [string]$SessionId,
         '-RunId', [string]$RunId
-    ) + @($ExtraArguments)) {
-        [void]$startInfo.ArgumentList.Add([string]$item)
+    ) + @($extraForLaunch)) {
+        [void]$drainArgs.Add([string]$item)
     }
-    $startInfo.UseShellExecute = $false
-    $startInfo.CreateNoWindow = $true
-    $startInfo.RedirectStandardOutput = $true
-    $startInfo.RedirectStandardError = $true
-    $process = [Diagnostics.Process]::Start($startInfo)
-    if ($null -eq $process) { throw 'Lead launcher did not start.' }
+    $captured = $null
     try {
-        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
-        $stderrTask = $process.StandardError.ReadToEndAsync()
-        $process.WaitForExit()
-        $launchOutput = $stdoutTask.GetAwaiter().GetResult()
-        $null = $stderrTask.GetAwaiter().GetResult()
-        if ($process.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($launchOutput)) { throw 'Lead launcher failed.' }
-    } finally {
-        $process.Dispose()
+        $captured = Invoke-TelephoneLeadDrainedProcess -FileName $fileName -Arguments @($drainArgs)
+    } catch {
+        throw 'Lead launcher did not start.'
     }
-    $launch = $launchOutput | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    if (-not [bool]$captured.process_exited -or [int]$captured.exit_code -ne 0 -or [string]::IsNullOrWhiteSpace([string]$captured.stdout)) {
+        throw 'Lead launcher failed.'
+    }
+    $launch = [string]$captured.stdout | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
     if ([string]::IsNullOrWhiteSpace([string]$launch.run_root)) { throw 'Lead launcher returned no run root.' }
     return $launch
 }
@@ -2635,7 +2641,40 @@ function Invoke-TelephoneNamedWakeAttach {
         [Parameter(Mandatory = $true)][string]$LineJobId
     )
     if ([IO.File]::Exists($LaunchResultPath)) { return (Read-TelephoneJson -Path $LaunchResultPath).value }
-    $launch = Invoke-TelephoneFrozenLeadLauncher -LauncherPath $LauncherPath -ExtraArguments $ExtraArguments -Worktree $Worktree -PromptFile $PromptFile -SessionId $SessionId -RunId $RunId
+    $diagnosticPath = Join-Path ([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($LaunchResultPath))) 'wake-reconcile.json'
+    $cliDiagnosticPath = Join-Path ([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($LaunchResultPath))) 'cli-diagnostic.json'
+    $extraForLaunch = @($ExtraArguments)
+    $frozenCmd = Get-TelephoneLeadNamedArgumentValue -Arguments $ExtraArguments -Name 'CodexCommand'
+    $stablePolicy = Get-TelephoneLeadStableCliPolicy
+    $hasConfiguredCli = -not [string]::IsNullOrWhiteSpace([string]$stablePolicy.executable)
+    if (-not [string]::IsNullOrWhiteSpace($frozenCmd) -and $hasConfiguredCli) {
+        $resolvedCli = Resolve-TelephoneLeadCliExecutable -FrozenExecutable $frozenCmd -Probe
+        if ($null -ne $resolvedCli.diagnostic) {
+            try { $null = Write-TelephoneJsonCreateNew -Path $cliDiagnosticPath -Value $resolvedCli.diagnostic } catch [IO.IOException] { }
+        }
+        if (-not [bool]$resolvedCli.launchable) { throw 'LEAD_CLI_UNLAUNCHABLE' }
+        $extraForLaunch = @(Copy-TelephoneLeadExtraArgumentsWithCli -Arguments $ExtraArguments -Executable ([string]$resolvedCli.executable))
+    }
+    $stateHint = Get-TelephoneLeadNamedArgumentValue -Arguments $ExtraArguments -Name 'StateRootOverride'
+    if ([string]::IsNullOrWhiteSpace($stateHint) -and -not [string]::IsNullOrWhiteSpace([string]$env:TELEPHONE_LINE_LEAD_STATE_ROOT)) {
+        $stateHint = [string]$env:TELEPHONE_LINE_LEAD_STATE_ROOT
+    }
+    $runRootHint = ''
+    if (-not [string]::IsNullOrWhiteSpace($stateHint)) {
+        $runRootHint = [IO.Path]::GetFullPath((Join-Path $stateHint $RunId)).TrimEnd('\')
+    }
+    if (-not [string]::IsNullOrWhiteSpace($runRootHint) -and [IO.Directory]::Exists($runRootHint)) {
+        $reconcile = Invoke-TelephoneLeadWakeReconcile -LaunchResultPath $LaunchResultPath -RunId $RunId -SessionId $SessionId -ExtraArguments $extraForLaunch -Worktree $Worktree -DiagnosticPath $diagnosticPath
+        if ([string]$reconcile.decision -cin @('attached', 'recovered_attach') -and $null -ne $reconcile.launch) {
+            $savedReconcile = Save-TelephoneNamedLaunchResult -Path $LaunchResultPath -Launch $reconcile.launch -RunId $RunId -WakeKey $WakeKey -LineJobId $LineJobId
+            if ($null -ne $savedReconcile) { return $savedReconcile }
+            return $reconcile.launch
+        }
+        $code = [string]$reconcile.error_code
+        if ([string]::IsNullOrWhiteSpace($code)) { $code = 'LEAD_WAKE_AMBIGUOUS' }
+        throw $code
+    }
+    $launch = Invoke-TelephoneFrozenLeadLauncher -LauncherPath $LauncherPath -ExtraArguments $extraForLaunch -Worktree $Worktree -PromptFile $PromptFile -SessionId $SessionId -RunId $RunId
     $saved = Save-TelephoneNamedLaunchResult -Path $LaunchResultPath -Launch $launch -RunId $RunId -WakeKey $WakeKey -LineJobId $LineJobId
     if ($null -ne $saved) { return $saved }
     return $launch
@@ -3794,7 +3833,10 @@ function Invoke-TelephoneLeadCollectorCore {
                 Invoke-TelephoneClosedBatchWake -MailboxPaths $mailbox -BatchPaths $batchPathsWake -Manifest $manifestNow -Lead $lead -JobsByPackage $jobsByPackage
             } catch {
                 $attempted = [IO.File]::Exists($batchPathsWake.wake_attempt) -or [IO.File]::Exists($batchPathsWake.wake_launch_result)
-                $code = if ($attempted) { 'LEAD_WAKE_AMBIGUOUS' } else { 'LEAD_WAKE_FAILED' }
+                $msg = [string]$_.Exception.Message
+                $code = 'LEAD_WAKE_FAILED'
+                if ($msg -ceq 'LEAD_CLI_UNLAUNCHABLE' -or $msg -ceq 'LEAD_WAKE_INCOMPLETE_HOST' -or $msg -ceq 'LEAD_WAKE_AMBIGUOUS') { $code = $msg }
+                elseif ($attempted) { $code = 'LEAD_WAKE_AMBIGUOUS' }
                 Write-TelephoneMailboxFailClosed -Path $batchPathsWake.fail_closed -BatchId $batchId -Code $code -LeadSessionId ([string]$lead.session_id)
                 foreach ($job in $jobs) {
                     if ([string]$job.batch.batch_id -cne $batchId) { continue }

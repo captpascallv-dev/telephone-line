@@ -45,7 +45,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\src\inst
 pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\TelephoneLine\src\install\Invoke-TelephoneLineDoctor.ps1"
 ```
 
-Do not dispatch work until Doctor reports `healthy=true` and `code=HEALTHY`. Telephone Line uses strict identity, path, and JSON contracts. Most users should let a local Agent generate requests from [Quick start](docs/quick-start.md), [Install](docs/install.md), [Routes](docs/routes.md), and the selected adapter documentation instead of copying another machine's absolute paths.
+Do not dispatch work until Doctor reports `healthy=true` and `code=HEALTHY`. Telephone Line uses strict identity, path, and JSON contracts. Most users should let a local Agent generate requests from [Quick start](docs/quick-start.md), [Install](docs/install.md), [Routes](docs/routes.md), and the selected adapter documentation instead of copying another machine's absolute paths. Configure the Lead CLI with `TELEPHONE_LINE_STABLE_CLI` (an independent executable, not an App version folder); see [Install](docs/install.md).
 
 If a resumable Codex Lead binding already exists, an ordinary single job uses one `telephone-line-dispatch-v1` request:
 

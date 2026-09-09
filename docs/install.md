@@ -29,3 +29,6 @@ v0.1 is Codex-first. Codex CLI is the currently built-in Lead. Other routes are 
 - `TELEPHONE_LINE_DASHBOARD_STATE` — dashboard runtime directory; default `%LOCALAPPDATA%\TelephoneLine\dashboard-runtime`
 - `TELEPHONE_LINE_DASHBOARD_PROCESS_ENV_ONLY` — when set, override and opt-out are read from this process only
 - `TELEPHONE_LINE_DASHBOARD_HEADLESS` — when set, the bundled watcher starts without a visible window
+- `TELEPHONE_LINE_STABLE_CLI` — explicit independent Lead CLI executable; not an App version directory and not discovered by globbing
+- `TELEPHONE_LINE_STABLE_CLI_POLICY` — optional `telephone-line-stable-cli-policy-v1` JSON path (`executable`, optional `sha256`/`version`); when unset, install root `stable-cli-policy.json` is read if present
+- `TELEPHONE_LINE_LEAD_STATE_ROOT` — optional Lead run-state root used to attach a missing wake launch-result to an existing same-Run directory without starting a second turn

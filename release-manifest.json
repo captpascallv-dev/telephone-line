@@ -72,8 +72,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 22543,
-      "sha256": "15d62706675299d08fb10b7235704d67676ce1a27a314f711f7f1e553680483b"
+      "bytes": 22687,
+      "sha256": "9877f7daa70c88d926f0163542362c55f15611ff2d8d76ec833c7fd08d8c8907"
     },
     {
       "path": "SECURITY.md",
@@ -87,8 +87,8 @@
     },
     {
       "path": "docs/README.zh-CN.md",
-      "bytes": 21178,
-      "sha256": "c404a89b9ca8d9a713e88ed155cadc4503e912c3d766c8559d9cff8cc53e7c72"
+      "bytes": 21320,
+      "sha256": "ede839d471a512057c789b266bbc00fe242bdea0fd5f3c62e2df13e1d37bdd5c"
     },
     {
       "path": "docs/adapter-authoring.md",
@@ -147,8 +147,8 @@
     },
     {
       "path": "docs/codex-app-server-lead.md",
-      "bytes": 25309,
-      "sha256": "7d7d64ef9234b6fa8af8d4e5757d0c9b9dc0da35b482e7328bde87c28908d636"
+      "bytes": 25406,
+      "sha256": "21d521628955dc7a63087dada2181a0590227b783bd75466fc471d31329154ab"
     },
     {
       "path": "docs/compatibility-contract.md",
@@ -237,8 +237,8 @@
     },
     {
       "path": "docs/install.md",
-      "bytes": 7602,
-      "sha256": "bf524767cfab6e099f7e1b80f873cafd3f7a8737cb8d1d8c2ff0dda278d03851"
+      "bytes": 8127,
+      "sha256": "944bc4dbdbdd6d1a8fed0fcec5bab4bf4af4735ce73ffdea4005c27c90a66f9f"
     },
     {
       "path": "docs/licensing.md",
@@ -257,8 +257,8 @@
     },
     {
       "path": "docs/quick-start.md",
-      "bytes": 16760,
-      "sha256": "c6211ab0cd54478fea644928b065187cc5feb6b31d69fe89a8cdfb47ee872a50"
+      "bytes": 17536,
+      "sha256": "537d6354258d5e5d125290703da4ea785429cd2e5f75635d5969ba81e478a4c1"
     },
     {
       "path": "docs/redistribution-audit.md",
@@ -761,9 +761,14 @@
       "sha256": "f9f52ffc5b81d6ccc679495ce0c017fcf76a036c1d6c001c3bded89f537e21a4"
     },
     {
+      "path": "src/core/TelephoneLeadRuntime.Common.ps1",
+      "bytes": 36903,
+      "sha256": "6d1bba22a4b51fa1723ad9b9b1b13a4fd078ebe628d265a5688173746a7580b8"
+    },
+    {
       "path": "src/core/TelephoneLine.Common.ps1",
-      "bytes": 187709,
-      "sha256": "9a3f3d7589f8694a38a773969538a549cb11523d86621ab693b5a4b66521541d"
+      "bytes": 191128,
+      "sha256": "da084cf833f192b6f5585eb32570a645df9ba5c56aeeaa2d9b2259b059d2e930"
     },
     {
       "path": "src/dashboard/Ensure-TelephoneDashboard.ps1",
@@ -782,8 +787,8 @@
     },
     {
       "path": "src/dashboard/TelephoneDashboard.Projection.ps1",
-      "bytes": 135199,
-      "sha256": "446826826fe916fd18294ab60ee4352e6b543f49831ccb427f0cc02711064394"
+      "bytes": 136167,
+      "sha256": "45f1e3bf758dc6eb6895c27759b9dea5aa2c42d7b680b9b2177d8241cf32d7f2"
     },
     {
       "path": "src/dashboard/TelephoneDashboard.Reducer.ps1",
@@ -1426,6 +1431,11 @@
       "sha256": "21478194c540a8f624391dbcd6b57d90096aae82c098ee5e877c869b62bb5c90"
     },
     {
+      "path": "tests/core/test_lead_runtime_hardening.ps1",
+      "bytes": 24556,
+      "sha256": "ebff8448a84df0c1ee8d525dad39cb8246d910cc33758fbd2ace153e7d6b051d"
+    },
+    {
       "path": "tests/core/test_telephone_line.ps1",
       "bytes": 92408,
       "sha256": "8994459fdd78ccc1086f981467b4cce5aeeb4a229cc83abcdbb9d38d1b92e061"
@@ -1502,8 +1512,8 @@
     }
   ],
   "counts": {
-    "files": 294,
-    "bytes": 3953829
+    "files": 296,
+    "bytes": 4021359
   },
   "excluded": [
     ".control/**",

@@ -88,7 +88,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File .\src\inst
 pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\TelephoneLine\src\install\Invoke-TelephoneLineDoctor.ps1"
 ```
 
-Doctor 返回 `healthy=true` 和 `code=HEALTHY` 后再派任务。Telephone Line 使用严格的身份、路径和 JSON 契约，普通用户通常不需要手写请求文件；让本机 Agent 根据 [快速开始](quick-start.md)、[安装说明](install.md)、[路线说明](routes.md) 和对应 adapter 文档生成，会比复制别人的绝对路径安全。
+Doctor 返回 `healthy=true` 和 `code=HEALTHY` 后再派任务。Telephone Line 使用严格的身份、路径和 JSON 契约，普通用户通常不需要手写请求文件；让本机 Agent 根据 [快速开始](quick-start.md)、[安装说明](install.md)、[路线说明](routes.md) 和对应 adapter 文档生成，会比复制别人的绝对路径安全。Lead CLI 请用 `TELEPHONE_LINE_STABLE_CLI` 指向独立可执行文件，不要指向 App 版本目录；详见 [安装说明](install.md)。
 
 已经有可恢复的 Codex Lead binding 时，普通单任务使用一个 `telephone-line-dispatch-v1` 请求：
 

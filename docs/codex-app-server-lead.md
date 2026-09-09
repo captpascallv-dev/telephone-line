@@ -12,7 +12,7 @@ The accepted local Windows runtime has completed three consecutive automatic cal
 
 ## What it does
 
-1. Binds the installed Codex executable and the generated stable app-server schema fingerprint.
+1. Binds the installed Codex executable and the generated stable app-server schema fingerprint. Pass `-CodexCommand` as an explicit independent executable; do not glob App version directories.
 2. Creates a durable new Lead by issuing stable `thread/start` and its first `turn/start` in one app-server process, or adopts an exact thread through stable `thread/resume` plus `thread/read`.
 3. Emits the ordinary `telephone-line-lead-binding-v1` object whose `session_id` is that thread id; durable-create mode publishes it only after the first turn is accepted.
 4. Wakes that exact thread through the generic launcher signature `-WorktreePath`, `-PromptFile`, `-ResumeSessionId`, `-RunId`.
