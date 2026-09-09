@@ -1464,6 +1464,9 @@ function Test-TelephoneNativeWakeInputBinding {
     if ([string]::IsNullOrWhiteSpace($promptPath)) {
         throw 'Lead native attempt is missing the frozen prompt identity.'
     }
+    if ([string]::IsNullOrWhiteSpace($promptSha) -or $promptSha -cnotmatch '^[0-9a-fA-F]{64}$') {
+        throw 'Lead native attempt is missing the frozen prompt hash.'
+    }
     $fullPrompt = [IO.Path]::GetFullPath($promptPath)
     if (-not (Test-TelephonePathContainedInRoot -Path $fullPrompt -Root $RunRoot) -and -not [IO.File]::Exists($fullPrompt)) {
         throw 'Lead native attempt prompt is missing.'
@@ -1472,15 +1475,21 @@ function Test-TelephoneNativeWakeInputBinding {
         throw 'Lead native attempt prompt is missing.'
     }
     $identity = Get-TelephoneFileIdentity -Path $fullPrompt
-    if (-not [string]::IsNullOrWhiteSpace($promptSha) -and [string]$identity.sha256 -cne $promptSha.ToLowerInvariant()) {
+    if ([string]$identity.sha256 -cne $promptSha.ToLowerInvariant()) {
         throw 'Lead native attempt prompt identity drifted from the frozen input.'
     }
     $body = [IO.File]::ReadAllText($fullPrompt)
-    if (-not [string]::IsNullOrWhiteSpace($ExpectedReceiptSha256) -and $body -notmatch [regex]::Escape($ExpectedReceiptSha256)) {
-        throw 'Lead native attempt prompt does not contain the intended receipt.'
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedReceiptSha256)) {
+        $receiptLine = '(?m)^- receipt_sha256:\s*' + [regex]::Escape($ExpectedReceiptSha256) + '\s*$'
+        if ($body -notmatch $receiptLine) {
+            throw 'Lead native attempt prompt does not contain the intended receipt.'
+        }
     }
-    if (-not [string]::IsNullOrWhiteSpace($ExpectedWakeKey) -and $body -notmatch [regex]::Escape($ExpectedWakeKey)) {
-        throw 'Lead native attempt prompt does not contain the intended wake key.'
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedWakeKey)) {
+        $wakeLine = '(?m)^- wake_key:\s*' + [regex]::Escape($ExpectedWakeKey) + '\s*$'
+        if ($body -notmatch $wakeLine) {
+            throw 'Lead native attempt prompt does not contain the intended wake key.'
+        }
     }
     return $true
 }
@@ -3766,6 +3775,52 @@ function Test-TelephoneTrustedConsumingRun {
     if (-not [string]::IsNullOrWhiteSpace($ForbiddenRunId) -and $run -ceq $ForbiddenRunId) {
         return [ordered]@{ ok = $false; reason = 'consuming_run_is_failed_original' }
     }
+    if (-not [IO.File]::Exists($eventsPath)) {
+        return [ordered]@{ ok = $false; reason = 'consuming_run_event_missing'; session_id = $session; run_id = $run; root = $root }
+    }
+    $nativeEvent = $false
+    $eventRunIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $foreignRun = $false
+    try {
+        foreach ($line in @([IO.File]::ReadAllLines($eventsPath))) {
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            try {
+                $evt = $line | ConvertFrom-Json -AsHashtable -Depth 16 -DateKind String
+            } catch {
+                continue
+            }
+            if ($evt -isnot [Collections.IDictionary]) { continue }
+            $etype = ''
+            if ($evt.Contains('type')) { $etype = [string]$evt['type'] }
+            elseif ($evt.Contains('event')) { $etype = [string]$evt['event'] }
+            if ($etype -ceq 'thread.started' -or $etype -ceq 'turn.started' -or $etype -ceq 'session.created' -or $etype -ceq 'turn.completed') {
+                $nativeEvent = $true
+            }
+            $evtRun = ''
+            if ($evt.Contains('run_id')) { $evtRun = [string]$evt['run_id'] }
+            if (-not [string]::IsNullOrWhiteSpace($evtRun)) {
+                [void]$eventRunIds.Add($evtRun)
+                if (-not [string]::IsNullOrWhiteSpace($ForbiddenRunId) -and $evtRun -ceq $ForbiddenRunId) { $foreignRun = $true }
+                if (-not [string]::IsNullOrWhiteSpace($run) -and $evtRun -cne $run -and $evtRun -cne $ForbiddenRunId) { }
+            }
+            $threadId = ''
+            if ($evt.Contains('thread_id')) { $threadId = [string]$evt['thread_id'] }
+            if (-not [string]::IsNullOrWhiteSpace($threadId) -and $threadId -cne $ExpectedSessionId) {
+                return [ordered]@{ ok = $false; reason = 'consuming_run_wrong_session'; session_id = $session; run_id = $run; root = $root }
+            }
+        }
+    } catch {
+        return [ordered]@{ ok = $false; reason = 'consuming_run_event_unreadable'; session_id = $session; run_id = $run; root = $root }
+    }
+    if (-not $nativeEvent) {
+        return [ordered]@{ ok = $false; reason = 'consuming_run_event_missing'; session_id = $session; run_id = $run; root = $root }
+    }
+    if ($foreignRun -and ($eventRunIds.Count -eq 1 -or [string]::IsNullOrWhiteSpace($run) -or -not $eventRunIds.Contains($run))) {
+        return [ordered]@{ ok = $false; reason = 'consuming_run_is_failed_original'; session_id = $session; run_id = $run; root = $root }
+    }
+    if ($eventRunIds.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($run) -and -not $eventRunIds.Contains($run)) {
+        return [ordered]@{ ok = $false; reason = 'consuming_run_event_foreign'; session_id = $session; run_id = $run; root = $root }
+    }
     if ([IO.File]::Exists($hostTerminal)) {
         try {
             $term = (Read-TelephoneJson -Path $hostTerminal).value
@@ -3790,6 +3845,139 @@ function Test-TelephoneTrustedConsumingRun {
         return [ordered]@{ ok = $false; reason = 'consuming_run_input_unbound'; session_id = $session; run_id = $run; root = $root }
     }
     return [ordered]@{ ok = $true; reason = ''; session_id = $session; run_id = $run; root = $root }
+}
+
+function Test-TelephoneMailboxItemConsumed {
+    [CmdletBinding()]
+    param([AllowNull()][object]$Item)
+    if ($null -eq $Item -or $Item -isnot [Collections.IDictionary]) { return $false }
+    if ($Item.Contains('trusted_manual_closeout') -and [bool]$Item['trusted_manual_closeout']) { return $true }
+    $kind = ''
+    if ($Item.Contains('delivery_kind')) { $kind = [string]$Item['delivery_kind'] }
+    if ($kind -ceq 'AUTOMATIC_WAKE_ACK' -or $kind -ceq 'MANUAL_TRUSTED_CONSUMPTION') { return $true }
+    if ($Item.Contains('automatic_callback_success') -and [bool]$Item['automatic_callback_success']) { return $true }
+    return $false
+}
+
+function Merge-TelephoneTrustedCollectionConsumption {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][object]$MailboxPaths,
+        [Parameter(Mandatory = $true)][string]$BatchId,
+        [Parameter(Mandatory = $true)][string]$LineJobId,
+        [Parameter(Mandatory = $true)][string]$ReceiptSha256,
+        [Parameter(Mandatory = $true)][string]$EvidenceSha256,
+        [bool]$SiblingPending = $false
+    )
+    $batchPaths = Get-TelephoneBatchPaths -MailboxPaths $MailboxPaths -BatchId $BatchId
+    [IO.Directory]::CreateDirectory([string]$batchPaths.root) | Out-Null
+    $existing = $null
+    if ([IO.File]::Exists([string]$batchPaths.collection)) {
+        $existing = (Read-TelephoneJson -Path ([string]$batchPaths.collection)).value
+        if ($existing -isnot [Collections.IDictionary]) { throw 'mailbox_collection_invalid' }
+    }
+    $n = 1
+    $counted = 1
+    $packageIds = @()
+    $missing = @()
+    $implicit = $false
+    $retryOf = $null
+    $protocol = 'telephone-line-batch-collection-v1'
+    if ($existing -is [Collections.IDictionary]) {
+        if ($existing.Contains('n')) { $n = [int]$existing['n'] }
+        if ($existing.Contains('counted')) { $counted = [int]$existing['counted'] }
+        if ($existing.Contains('package_ids') -and $null -ne $existing['package_ids']) { $packageIds = @($existing['package_ids']) }
+        if ($existing.Contains('missing') -and $null -ne $existing['missing']) { $missing = @($existing['missing']) }
+        if ($existing.Contains('implicit')) { $implicit = [bool]$existing['implicit'] }
+        if ($existing.Contains('retry_of')) { $retryOf = $existing['retry_of'] }
+        if ($existing.Contains('protocol_version')) { $protocol = [string]$existing['protocol_version'] }
+    }
+    $incomplete = $false
+    if ($n -gt $counted) { $incomplete = $true }
+    if ($missing.Count -gt 0) { $incomplete = $true }
+    if ($SiblingPending) { $incomplete = $true }
+    $state = 'lead_consumed'
+    if ($incomplete) { $state = 'lead_consumed_pending_siblings' }
+    $collection = [ordered]@{}
+    if ($existing -is [Collections.IDictionary]) {
+        foreach ($key in @($existing.Keys)) { $collection[$key] = $existing[$key] }
+    }
+    $collection['protocol_version'] = $protocol
+    $collection['batch_id'] = $BatchId
+    $collection['n'] = $n
+    $collection['counted'] = $counted
+    $collection['closed'] = (-not $incomplete)
+    $collection['acceptance_eligible'] = $false
+    $collection['state'] = $state
+    $collection['lead_consumed_line_job_id'] = $LineJobId
+    $collection['lead_consumed_receipt_sha256'] = $ReceiptSha256
+    $collection['lead_consumed_evidence_sha256'] = $EvidenceSha256
+    if ($packageIds.Count -gt 0) { $collection['package_ids'] = @($packageIds) }
+    $collection['missing'] = @($missing)
+    $collection['implicit'] = [bool]$implicit
+    $collection['retry_of'] = $retryOf
+    $collection['updated_at_utc'] = [DateTimeOffset]::UtcNow.ToString('o')
+    $null = Write-TelephoneJsonReplace -Path ([string]$batchPaths.collection) -Value $collection
+    return $collection
+}
+
+function Assert-TelephoneTrustedMailboxCloseoutIdentity {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][object]$JobPaths,
+        [Parameter(Mandatory = $true)][object]$Dispatch,
+        [Parameter(Mandatory = $true)][string]$LeadSessionId,
+        [Parameter(Mandatory = $true)][string]$ReceiptSha256,
+        [Parameter(Mandatory = $true)][object]$Item,
+        [Parameter(Mandatory = $true)][string]$LeadKey,
+        [Parameter(Mandatory = $true)][string]$BatchId,
+        [Parameter(Mandatory = $true)][string]$ItemId
+    )
+    $lead = $null
+    if ($Dispatch -is [Collections.IDictionary] -and $Dispatch.Contains('lead')) { $lead = $Dispatch['lead'] }
+    elseif ($null -ne $Dispatch.lead) { $lead = $Dispatch.lead }
+    if ($null -eq $lead) { throw 'mailbox_lead_binding_missing' }
+    $canonical = Get-TelephoneLeadCanonicalIdentity -Lead $lead
+    if ([string]$canonical.identity_sha256 -cne $LeadKey) { throw 'mailbox_lead_identity_mismatch' }
+    if ([string]$canonical.session_id -cne $LeadSessionId) { throw 'mailbox_lead_session_mismatch' }
+    $lineJobId = [string]$Dispatch.line_job_id
+    if ([string]::IsNullOrWhiteSpace($lineJobId)) { throw 'mailbox_item_job_mismatch' }
+    $itemLead = ''
+    $itemBatch = ''
+    $itemJob = ''
+    $itemOwnId = ''
+    if ($Item.Contains('lead_identity_sha256')) { $itemLead = [string]$Item['lead_identity_sha256'] }
+    if ($Item.Contains('batch_id')) { $itemBatch = [string]$Item['batch_id'] }
+    if ($Item.Contains('line_job_id')) { $itemJob = [string]$Item['line_job_id'] }
+    if ($Item.Contains('item_id')) { $itemOwnId = [string]$Item['item_id'] }
+    if ([string]::IsNullOrWhiteSpace($itemLead) -or $itemLead -cne $LeadKey) { throw 'mailbox_item_foreign_lead' }
+    if ([string]::IsNullOrWhiteSpace($itemBatch) -or $itemBatch -cne $BatchId) { throw 'mailbox_item_batch_mismatch' }
+    if ([string]::IsNullOrWhiteSpace($itemJob) -or $itemJob -cne $lineJobId) { throw 'mailbox_item_job_mismatch' }
+    $itemReceiptSha = ''
+    if ($Item.Contains('receipt') -and $Item['receipt'] -is [Collections.IDictionary] -and $Item['receipt'].Contains('sha256')) {
+        $itemReceiptSha = [string]$Item['receipt']['sha256']
+    } elseif ($Item.Contains('receipt_sha256')) {
+        $itemReceiptSha = [string]$Item['receipt_sha256']
+    }
+    if ([string]::IsNullOrWhiteSpace($itemReceiptSha) -or $itemReceiptSha -cne $ReceiptSha256) { throw 'mailbox_item_receipt_mismatch' }
+    if ([IO.File]::Exists([string]$JobPaths.dispatch)) {
+        $dispatchSha = [string](Get-TelephoneFileIdentity -Path ([string]$JobPaths.dispatch)).sha256
+        $itemDispatchSha = ''
+        if ($Item.Contains('dispatch') -and $Item['dispatch'] -is [Collections.IDictionary] -and $Item['dispatch'].Contains('sha256')) {
+            $itemDispatchSha = [string]$Item['dispatch']['sha256']
+        } elseif ($Item.Contains('dispatch_sha256')) {
+            $itemDispatchSha = [string]$Item['dispatch_sha256']
+        }
+        if (-not [string]::IsNullOrWhiteSpace($itemDispatchSha) -and $itemDispatchSha -cne $dispatchSha) { throw 'mailbox_item_dispatch_mismatch' }
+    }
+    $expectedItemId = Get-TelephoneMailboxItemId -LeadKey ([string]$canonical.identity_sha256) -LineJobId $lineJobId -ReceiptSha256 $ReceiptSha256
+    if ($ItemId -cne $expectedItemId) { throw 'mailbox_item_id_mismatch' }
+    if (-not [string]::IsNullOrWhiteSpace($itemOwnId) -and $itemOwnId -cne $expectedItemId) { throw 'mailbox_item_id_mismatch' }
+    return [ordered]@{
+        canonical = $canonical
+        expected_item_id = $expectedItemId
+        line_job_id = $lineJobId
+    }
 }
 
 function Complete-TelephoneTrustedMailboxCloseout {
@@ -3838,20 +4026,19 @@ function Complete-TelephoneTrustedMailboxCloseout {
         $existingKind = ''
         if ($item.Contains('delivery_kind')) { $existingKind = [string]$item['delivery_kind'] }
         if ($existingKind -ceq 'AUTOMATIC_WAKE_ACK') { throw 'automatic_mailbox_item' }
-        $itemLead = ''
-        $itemBatch = ''
-        $itemJob = ''
-        if ($item.Contains('lead_identity_sha256')) { $itemLead = [string]$item['lead_identity_sha256'] }
-        if ($item.Contains('batch_id')) { $itemBatch = [string]$item['batch_id'] }
-        if ($item.Contains('line_job_id')) { $itemJob = [string]$item['line_job_id'] }
-        if (-not [string]::IsNullOrWhiteSpace($itemLead) -and $itemLead -cne $leadKey) { throw 'mailbox_item_foreign_lead' }
-        if (-not [string]::IsNullOrWhiteSpace($itemBatch) -and $itemBatch -cne $batchId) { throw 'mailbox_item_batch_mismatch' }
-        if (-not [string]::IsNullOrWhiteSpace($itemJob) -and $itemJob -cne $lineJobId) { throw 'mailbox_item_job_mismatch' }
-        $item['trusted_manual_closeout'] = $true
-        $item['trusted_receipt_sha256'] = $ReceiptSha256
-        $item['trusted_evidence_sha256'] = $EvidenceSha256
-        $item['trusted_closed_at_utc'] = [DateTimeOffset]::UtcNow.ToString('o')
-        $null = Write-TelephoneJsonReplace -Path $canonicalItem -Value $item
+        $bound = Assert-TelephoneTrustedMailboxCloseoutIdentity -JobPaths $JobPaths -Dispatch $Dispatch -LeadSessionId $LeadSessionId -ReceiptSha256 $ReceiptSha256 -Item $item -LeadKey $leadKey -BatchId $batchId -ItemId $itemId
+        $lineJobId = [string]$bound.line_job_id
+        $alreadyTrusted = ($item.Contains('trusted_manual_closeout') -and [bool]$item['trusted_manual_closeout'])
+        if ($alreadyTrusted) {
+            if ($item.Contains('trusted_receipt_sha256') -and [string]$item['trusted_receipt_sha256'] -cne $ReceiptSha256) { throw 'mailbox_item_receipt_mismatch' }
+            if ($item.Contains('trusted_evidence_sha256') -and -not [string]::IsNullOrWhiteSpace([string]$item['trusted_evidence_sha256']) -and [string]$item['trusted_evidence_sha256'] -cne $EvidenceSha256) { throw 'mailbox_item_evidence_mismatch' }
+        } else {
+            $item['trusted_manual_closeout'] = $true
+            $item['trusted_receipt_sha256'] = $ReceiptSha256
+            $item['trusted_evidence_sha256'] = $EvidenceSha256
+            $item['trusted_closed_at_utc'] = [DateTimeOffset]::UtcNow.ToString('o')
+            $null = Write-TelephoneJsonReplace -Path $canonicalItem -Value $item
+        }
         $siblingPending = $false
         if ([IO.Directory]::Exists([string]$mailbox.mailbox)) {
             foreach ($siblingPath in @([IO.Directory]::GetFiles([string]$mailbox.mailbox, '*.json'))) {
@@ -3863,12 +4050,11 @@ function Complete-TelephoneTrustedMailboxCloseout {
                     $sibBatch = ''
                     if ($sibling.Contains('batch_id')) { $sibBatch = [string]$sibling['batch_id'] }
                     if ($sibBatch -cne $batchId) { continue }
-                    $sibClosed = $false
-                    if ($sibling.Contains('trusted_manual_closeout')) { $sibClosed = [bool]$sibling['trusted_manual_closeout'] }
-                    if (-not $sibClosed) { $siblingPending = $true }
+                    if (-not (Test-TelephoneMailboxItemConsumed -Item $sibling)) { $siblingPending = $true }
                 } catch { throw }
             }
         }
+        $null = Merge-TelephoneTrustedCollectionConsumption -MailboxPaths $mailbox -BatchId $batchId -LineJobId $lineJobId -ReceiptSha256 $ReceiptSha256 -EvidenceSha256 $EvidenceSha256 -SiblingPending $siblingPending
         $existingRow = $null
         if ([IO.File]::Exists([string]$mailbox.truth)) {
             $truth = (Read-TelephoneJson -Path ([string]$mailbox.truth)).value
@@ -4067,6 +4253,17 @@ function Complete-TelephoneTrustedManualConsumption {
                     if (-not $previewItem.Equals($canonicalPreview, [StringComparison]::OrdinalIgnoreCase)) {
                         return [ordered]@{ ok = $false; code = 'TRUSTED_CONSUMPTION_REJECTED'; reason = 'mailbox_item_path_mismatch'; delivery_present = [IO.File]::Exists($paths.delivery); automatic = $false }
                     }
+                    if ([IO.File]::Exists($canonicalPreview)) {
+                        $previewItemDoc = (Read-TelephoneJson -Path $canonicalPreview).value
+                        if ($previewItemDoc -isnot [Collections.IDictionary]) {
+                            return [ordered]@{ ok = $false; code = 'TRUSTED_CONSUMPTION_REJECTED'; reason = 'mailbox_item_invalid'; delivery_present = [IO.File]::Exists($paths.delivery); automatic = $false }
+                        }
+                        try {
+                            Assert-TelephoneTrustedMailboxCloseoutIdentity -JobPaths $paths -Dispatch $dispatch -LeadSessionId $leadSessionId -ReceiptSha256 $actualSha -Item $previewItemDoc -LeadKey $previewKey -BatchId ([string]$previewRef['batch_id']) -ItemId $previewItemId | Out-Null
+                        } catch {
+                            return [ordered]@{ ok = $false; code = 'TRUSTED_CONSUMPTION_REJECTED'; reason = [string]$_.Exception.Message; delivery_present = [IO.File]::Exists($paths.delivery); automatic = $false }
+                        }
+                    }
                 }
             }
         } catch {
@@ -4127,8 +4324,27 @@ function Complete-TelephoneTrustedManualConsumption {
                 if ([string]$row.batch_id -cne $batch) { continue }
                 $found = $true
                 if ([string]$row.evidence_sha256 -cne [string]$evidenceIdentity.sha256) { return $false }
+                $rowReceipt = ''
+                try { $rowReceipt = [string]$row.receipt_sha256 } catch { $rowReceipt = '' }
+                if (-not [string]::IsNullOrWhiteSpace($rowReceipt) -and $rowReceipt -cne $actualSha) { return $false }
             }
-            return [bool]$found
+            if (-not $found) { return $false }
+            $batchPaths = Get-TelephoneBatchPaths -MailboxPaths $box -BatchId $batch
+            if (-not [IO.File]::Exists([string]$batchPaths.collection)) { return $false }
+            $colDoc = (Read-TelephoneJson -Path ([string]$batchPaths.collection)).value
+            if ($colDoc -isnot [Collections.IDictionary]) { return $false }
+            if ([string]$colDoc.state -ceq 'awaiting_delivery') { return $false }
+            if ($colDoc.Contains('acceptance_eligible') -and [bool]$colDoc['acceptance_eligible']) { return $false }
+            $colState = [string]$colDoc.state
+            if ($colState -cne 'lead_consumed' -and $colState -cne 'lead_consumed_pending_siblings') { return $false }
+            if ($colDoc.Contains('lead_consumed_receipt_sha256') -and [string]$colDoc['lead_consumed_receipt_sha256'] -cne $actualSha) { return $false }
+            if (-not [IO.File]::Exists($paths.trusted_consumption)) { return $false }
+            try {
+                Assert-TelephoneTrustedMailboxCloseoutIdentity -JobPaths $paths -Dispatch $dispatch -LeadSessionId $leadSessionId -ReceiptSha256 $actualSha -Item $itemDoc -LeadKey $key -BatchId $batch -ItemId $itemId | Out-Null
+            } catch {
+                return $false
+            }
+            return $true
         } catch {
             return $false
         }
@@ -4305,7 +4521,7 @@ function Complete-TelephoneOwnerJobDelivery {
     $wakeAcknowledgment = Wait-TelephoneLeadWakeAcknowledged -RunRoot ([string]$Launch.run_root) -ExpectedSessionId $LeadSessionId -ExpectedRunId $attemptRunId -ExpectedWakeKey ([string]$WakeIdentity.wake_key) -ExpectedReceiptSha256 $(if ([IO.File]::Exists($JobPaths.receipt)) { [string](Get-TelephoneFileIdentity -Path $JobPaths.receipt).sha256 } else { '' })
     $drainTerminal = $null
     if (-not [string]::IsNullOrWhiteSpace([string]$Launch.run_root)) {
-        $drainTerminal = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot ([string]$Launch.run_root) -WaitMilliseconds 120000
+        $drainTerminal = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot ([string]$Launch.run_root) -WaitMilliseconds 1500
     }
     $delivery = [ordered]@{
         protocol_version = 'telephone-line-delivery-v1'
@@ -4320,6 +4536,7 @@ function Complete-TelephoneOwnerJobDelivery {
         automatic_callback_success = $true
         wake_acknowledgment = $wakeAcknowledgment
         owned_drain_terminal = $drainTerminal
+        owned_drain_pending = [bool]$(if ($null -ne $drainTerminal -and $drainTerminal.Contains('pending')) { $drainTerminal['pending'] } else { $true })
         delivered_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
     }
     $delivery=Add-TelephoneControlPlaneDeliveryBinding -Delivery $delivery -Dispatch $Dispatch -JobPaths $JobPaths

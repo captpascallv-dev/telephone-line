@@ -567,7 +567,8 @@ function Complete-TelephoneLeadOpenDrain {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][int]$ProcessId,
-        [switch]$Wait
+        [switch]$Wait,
+        [int]$WaitMilliseconds = 0
     )
     $key = [string]$ProcessId
     if (-not $script:TelephoneLeadOpenDrains.Contains($key)) {
@@ -577,9 +578,10 @@ function Complete-TelephoneLeadOpenDrain {
     $process = $drain.process
     $exited = $false
     $exitCode = 1
+    $boundMs = [Math]::Max(0, [int]$WaitMilliseconds)
     try {
-        if ($Wait -and $null -ne $process -and -not $process.HasExited) {
-            $null = $process.WaitForExit()
+        if ($Wait -and $boundMs -gt 0 -and $null -ne $process -and -not $process.HasExited) {
+            $null = $process.WaitForExit($boundMs)
         }
         if ($null -ne $process) {
             $exited = [bool]$process.HasExited
@@ -593,15 +595,24 @@ function Complete-TelephoneLeadOpenDrain {
     }
     $stdoutEof = $false
     $stderrEof = $false
+    $streamMs = if ($boundMs -gt 0) { $boundMs } else { 5000 }
     try {
         if ($null -ne $drain.stdout_task) {
-            $null = $drain.stdout_task.GetAwaiter().GetResult()
+            if ($drain.stdout_task.Wait($streamMs)) {
+                $null = $drain.stdout_task.GetAwaiter().GetResult()
+                $stdoutEof = $true
+            }
+        } else {
             $stdoutEof = $true
         }
     } catch { }
     try {
         if ($null -ne $drain.stderr_task) {
-            $null = $drain.stderr_task.GetAwaiter().GetResult()
+            if ($drain.stderr_task.Wait($streamMs)) {
+                $null = $drain.stderr_task.GetAwaiter().GetResult()
+                $stderrEof = $true
+            }
+        } else {
             $stderrEof = $true
         }
     } catch { }
@@ -639,6 +650,157 @@ function Complete-TelephoneLeadOpenDrain {
     }
 }
 
+function Read-TelephoneLeadDrainRecord {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not [IO.File]::Exists($Path)) { return $null }
+    try {
+        $doc = (Read-TelephoneJson -Path $Path).value
+        if ($doc -is [Collections.IDictionary]) { return $doc }
+        return $null
+    } catch {
+        return [ordered]@{ unreadable = $true; path = [string]$Path }
+    }
+}
+
+function Test-TelephoneLeadDrainIdentityComplete {
+    [CmdletBinding()]
+    param(
+        [AllowNull()][object]$Doc,
+        [string]$SessionId = '',
+        [string]$RunId = ''
+    )
+    if ($null -eq $Doc -or $Doc -isnot [Collections.IDictionary]) { return $false }
+    if ($Doc.Contains('unreadable') -and [bool]$Doc['unreadable']) { return $false }
+    $ownedPid = 0
+    $ticks = [int64]0
+    $exe = ''
+    $session = ''
+    $run = ''
+    try {
+        if ($Doc.Contains('pid')) { $ownedPid = [int]$Doc['pid'] }
+        elseif ($Doc.Contains('target_pid')) { $ownedPid = [int]$Doc['target_pid'] }
+        if ($Doc.Contains('start_time_utc_ticks')) { $ticks = [int64]$Doc['start_time_utc_ticks'] }
+        if ($Doc.Contains('executable_path')) { $exe = [string]$Doc['executable_path'] }
+        if ($Doc.Contains('session_id')) { $session = [string]$Doc['session_id'] }
+        if ($Doc.Contains('run_id')) { $run = [string]$Doc['run_id'] }
+    } catch {
+        return $false
+    }
+    if ($ownedPid -le 0 -or $ticks -le 0 -or [string]::IsNullOrWhiteSpace($exe)) { return $false }
+    if ([string]::IsNullOrWhiteSpace($session) -or [string]::IsNullOrWhiteSpace($run)) { return $false }
+    if (-not [string]::IsNullOrWhiteSpace($SessionId) -and $session -cne $SessionId) { return $false }
+    if (-not [string]::IsNullOrWhiteSpace($RunId) -and $run -cne $RunId) { return $false }
+    return $true
+}
+
+function Test-TelephoneLeadExactProcessAlive {
+    [CmdletBinding()]
+    param([AllowNull()][object]$Doc)
+    if (-not (Test-TelephoneLeadDrainIdentityComplete -Doc $Doc)) { return $false }
+    $ownedPid = 0
+    if ($Doc.Contains('pid')) { $ownedPid = [int]$Doc['pid'] }
+    elseif ($Doc.Contains('target_pid')) { $ownedPid = [int]$Doc['target_pid'] }
+    try {
+        $process = Get-Process -Id $ownedPid -ErrorAction Stop
+        try {
+            if ($process.StartTime.ToUniversalTime().Ticks -ne [int64]$Doc['start_time_utc_ticks']) { return $false }
+            $path = ''
+            try { $path = [string]$process.Path } catch { $path = '' }
+            if ([string]::IsNullOrWhiteSpace($path)) { return $false }
+            $exe = [IO.Path]::GetFullPath([string]$Doc['executable_path'])
+            $live = [IO.Path]::GetFullPath($path)
+            if (-not $live.Equals($exe, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+            return $true
+        } finally {
+            $process.Dispose()
+        }
+    } catch {
+        return $false
+    }
+}
+
+function Test-TelephoneLeadDurableDrainTerminal {
+    [CmdletBinding()]
+    param([AllowNull()][object]$Doc)
+    if (-not (Test-TelephoneLeadDrainIdentityComplete -Doc $Doc)) { return $false }
+    $exited = $false
+    $stdoutEof = $false
+    $stderrEof = $false
+    try {
+        if ($Doc.Contains('process_exited')) { $exited = [bool]$Doc['process_exited'] }
+        if ($Doc.Contains('stdout_eof')) { $stdoutEof = [bool]$Doc['stdout_eof'] }
+        if ($Doc.Contains('stderr_eof')) { $stderrEof = [bool]$Doc['stderr_eof'] }
+    } catch {
+        return $false
+    }
+    if (-not $exited -or -not $stdoutEof -or -not $stderrEof) { return $false }
+    if (Test-TelephoneLeadExactProcessAlive -Doc $Doc) { return $false }
+    return $true
+}
+
+function Get-TelephoneLeadOwnedDrainSnapshot {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$RunRoot,
+        [string]$SessionId = '',
+        [string]$RunId = ''
+    )
+    $root = [IO.Path]::GetFullPath($RunRoot).TrimEnd('\')
+    $hostDocs = [Collections.Generic.List[object]]::new()
+    $childDocs = [Collections.Generic.List[object]]::new()
+    $hostUnreadable = $false
+    $childUnreadable = $false
+    $hostPresent = $false
+    $childPresent = $false
+    foreach ($name in @('owner.json', 'host-owner.json', 'host-drain-lifecycle.json', 'host-drain-handoff.json')) {
+        $path = Join-Path $root $name
+        if (-not [IO.File]::Exists($path)) { continue }
+        $hostPresent = $true
+        $doc = Read-TelephoneLeadDrainRecord -Path $path
+        if ($null -eq $doc -or ($doc -is [Collections.IDictionary] -and $doc.Contains('unreadable'))) {
+            $hostUnreadable = $true
+            continue
+        }
+        $hostDocs.Add($doc)
+    }
+    foreach ($name in @('cli-child.json', 'cli-drain-lifecycle.json', 'cli-drain-handoff.json')) {
+        $path = Join-Path $root $name
+        if (-not [IO.File]::Exists($path)) { continue }
+        $childPresent = $true
+        $doc = Read-TelephoneLeadDrainRecord -Path $path
+        if ($null -eq $doc -or ($doc -is [Collections.IDictionary] -and $doc.Contains('unreadable'))) {
+            $childUnreadable = $true
+            continue
+        }
+        $childDocs.Add($doc)
+    }
+    $hostIdentity = $null
+    foreach ($doc in $hostDocs) {
+        if (Test-TelephoneLeadDrainIdentityComplete -Doc $doc -SessionId $SessionId -RunId $RunId) {
+            $hostIdentity = $doc
+            break
+        }
+    }
+    $childIdentity = $null
+    foreach ($doc in $childDocs) {
+        if (Test-TelephoneLeadDrainIdentityComplete -Doc $doc -SessionId $SessionId -RunId $RunId) {
+            $childIdentity = $doc
+            break
+        }
+    }
+    return [ordered]@{
+        host_present = [bool]$hostPresent
+        child_present = [bool]$childPresent
+        host_unreadable = [bool]$hostUnreadable
+        child_unreadable = [bool]$childUnreadable
+        host_identity = $hostIdentity
+        child_identity = $childIdentity
+        host_docs = @($hostDocs)
+        child_docs = @($childDocs)
+    }
+}
+
 function Wait-TelephoneLeadOwnedDrainTerminal {
     [CmdletBinding()]
     param(
@@ -655,84 +817,103 @@ function Wait-TelephoneLeadOwnedDrainTerminal {
         stdout_eof = $false
         stderr_eof = $false
         process_exited = $false
+        identity_status = 'UNKNOWN'
+        host_alive = $false
+        child_alive = $false
+        native_turn_complete = $false
     }
-    $deadline = [DateTimeOffset]::UtcNow.AddMilliseconds([Math]::Max(1, [int]$WaitMilliseconds))
+    $sessionId = ''
+    $runId = ''
+    $runPath = Join-Path $root 'run.json'
+    $leadRunPath = Join-Path $root 'lead-run.json'
+    foreach ($metaPath in @($runPath, $leadRunPath)) {
+        $meta = Read-TelephoneLeadDrainRecord -Path $metaPath
+        if ($null -eq $meta -or ($meta -is [Collections.IDictionary] -and $meta.Contains('unreadable'))) { continue }
+        if ($meta.Contains('session_id') -and [string]::IsNullOrWhiteSpace($sessionId)) { $sessionId = [string]$meta['session_id'] }
+        if ($meta.Contains('resume_session_id') -and [string]::IsNullOrWhiteSpace($sessionId)) { $sessionId = [string]$meta['resume_session_id'] }
+        if ($meta.Contains('run_id') -and [string]::IsNullOrWhiteSpace($runId)) { $runId = [string]$meta['run_id'] }
+        if ($meta.Contains('thread_id') -and [string]::IsNullOrWhiteSpace($sessionId)) { $sessionId = [string]$meta['thread_id'] }
+    }
+    $bound = [Math]::Max(1, [int]$WaitMilliseconds)
+    $deadline = [DateTimeOffset]::UtcNow.AddMilliseconds($bound)
+    $first = $true
     do {
-        $hostPid = 0
-        foreach ($name in @('owner.json', 'host-owner.json', 'host-drain-lifecycle.json')) {
-            $path = Join-Path $root $name
-            if (-not [IO.File]::Exists($path)) { continue }
-            try {
-                $doc = (Read-TelephoneJson -Path $path).value
-                if ($doc -is [Collections.IDictionary] -and $doc.Contains('pid')) { $hostPid = [int]$doc['pid'] }
-                if ($hostPid -gt 0) { break }
-            } catch { }
+        $snap = Get-TelephoneLeadOwnedDrainSnapshot -RunRoot $root -SessionId $sessionId -RunId $runId
+        if (-not [bool]$snap.host_present -and -not [bool]$snap.child_present) {
+            $result.identity_status = 'UNKNOWN'
+            $result.pending = $true
+            $result.host_terminal = $false
+            $result.child_terminal = $false
+            $result.process_exited = $false
+            return $result
         }
-        $childPid = 0
-        foreach ($name in @('cli-child.json', 'cli-drain-lifecycle.json')) {
-            $path = Join-Path $root $name
-            if (-not [IO.File]::Exists($path)) { continue }
-            try {
-                $doc = (Read-TelephoneJson -Path $path).value
-                if ($doc -is [Collections.IDictionary] -and $doc.Contains('pid')) { $childPid = [int]$doc['pid'] }
-                if ($childPid -gt 0) { break }
-            } catch { }
+        if ([bool]$snap.host_unreadable -or [bool]$snap.child_unreadable) {
+            $result.identity_status = 'UNKNOWN'
+            $result.pending = $true
         }
+        $remain = [int][Math]::Max(0, ($deadline - [DateTimeOffset]::UtcNow).TotalMilliseconds)
+        $hostIdentity = $snap.host_identity
+        $childIdentity = $snap.child_identity
+        $hostDone = $false
+        $childDone = $false
         $hostDrain = $null
         $childDrain = $null
-        if ($hostPid -gt 0) { $hostDrain = Complete-TelephoneLeadOpenDrain -ProcessId $hostPid -Wait:($childPid -le 0) }
-        if ($childPid -gt 0) { $childDrain = Complete-TelephoneLeadOpenDrain -ProcessId $childPid -Wait }
-        if ($hostPid -gt 0 -and $childPid -gt 0) { $hostDrain = Complete-TelephoneLeadOpenDrain -ProcessId $hostPid -Wait }
-        $hostDone = $false
-        $childDone = $true
-        if ($hostPid -gt 0) {
-            if ($null -ne $hostDrain -and [bool]$hostDrain.found) {
-                $hostDone = ([bool]$hostDrain.process_exited -and [bool]$hostDrain.stdout_eof -and [bool]$hostDrain.stderr_eof)
+        if ($null -ne $hostIdentity) {
+            $hostPid = 0
+            if ($hostIdentity.Contains('pid')) { $hostPid = [int]$hostIdentity['pid'] }
+            elseif ($hostIdentity.Contains('target_pid')) { $hostPid = [int]$hostIdentity['target_pid'] }
+            $result.host_alive = (Test-TelephoneLeadExactProcessAlive -Doc $hostIdentity)
+            if ($hostPid -gt 0) {
+                $hostDrain = Complete-TelephoneLeadOpenDrain -ProcessId $hostPid -Wait:($remain -gt 0) -WaitMilliseconds $remain
+            }
+            if ($null -ne $hostDrain -and [bool]$hostDrain.found -and [bool]$hostDrain.process_exited -and [bool]$hostDrain.stdout_eof -and [bool]$hostDrain.stderr_eof -and -not (Test-TelephoneLeadExactProcessAlive -Doc $hostIdentity)) {
+                $hostDone = $true
+                $result.stdout_eof = [bool]$hostDrain.stdout_eof
+                $result.stderr_eof = [bool]$hostDrain.stderr_eof
             } else {
-                $alive = $false
-                try { $alive = $null -ne (Get-Process -Id $hostPid -ErrorAction SilentlyContinue) } catch { $alive = $false }
-                $lifePath = Join-Path $root 'host-drain-lifecycle.json'
-                if ([IO.File]::Exists($lifePath)) {
-                    try {
-                        $life = (Read-TelephoneJson -Path $lifePath).value
-                        $hostDone = (-not $alive -and [bool]$life.process_exited -and [bool]$life.stdout_eof -and [bool]$life.stderr_eof)
-                    } catch { $hostDone = (-not $alive) }
-                } else {
-                    $hostDone = (-not $alive)
+                foreach ($doc in @($snap.host_docs)) {
+                    if (Test-TelephoneLeadDurableDrainTerminal -Doc $doc) { $hostDone = $true; $result.stdout_eof = $true; $result.stderr_eof = $true; break }
                 }
             }
-        } else {
-            $hostDone = $true
+            foreach ($doc in @($snap.host_docs)) {
+                if ($doc.Contains('native_turn_complete') -and [bool]$doc['native_turn_complete']) { $result.native_turn_complete = $true }
+            }
         }
-        if ($childPid -gt 0) {
-            $childDone = $false
-            if ($null -ne $childDrain -and [bool]$childDrain.found) {
-                $childDone = ([bool]$childDrain.process_exited -and [bool]$childDrain.stdout_eof -and [bool]$childDrain.stderr_eof)
+        if ($null -ne $childIdentity) {
+            $childPid = 0
+            if ($childIdentity.Contains('pid')) { $childPid = [int]$childIdentity['pid'] }
+            elseif ($childIdentity.Contains('target_pid')) { $childPid = [int]$childIdentity['target_pid'] }
+            $result.child_alive = (Test-TelephoneLeadExactProcessAlive -Doc $childIdentity)
+            $remain = [int][Math]::Max(0, ($deadline - [DateTimeOffset]::UtcNow).TotalMilliseconds)
+            if ($childPid -gt 0) {
+                $childDrain = Complete-TelephoneLeadOpenDrain -ProcessId $childPid -Wait:($remain -gt 0) -WaitMilliseconds $remain
+            }
+            if ($null -ne $childDrain -and [bool]$childDrain.found -and [bool]$childDrain.process_exited -and [bool]$childDrain.stdout_eof -and [bool]$childDrain.stderr_eof -and -not (Test-TelephoneLeadExactProcessAlive -Doc $childIdentity)) {
+                $childDone = $true
             } else {
-                $aliveChild = $false
-                try { $aliveChild = $null -ne (Get-Process -Id $childPid -ErrorAction SilentlyContinue) } catch { $aliveChild = $false }
-                $cliLife = Join-Path $root 'cli-drain-lifecycle.json'
-                if ([IO.File]::Exists($cliLife)) {
-                    try {
-                        $life = (Read-TelephoneJson -Path $cliLife).value
-                        $childDone = (-not $aliveChild -and [bool]$life.process_exited -and [bool]$life.stdout_eof -and [bool]$life.stderr_eof)
-                    } catch { $childDone = (-not $aliveChild) }
-                } else {
-                    $childDone = (-not $aliveChild)
+                foreach ($doc in @($snap.child_docs)) {
+                    if (Test-TelephoneLeadDurableDrainTerminal -Doc $doc) { $childDone = $true; break }
                 }
             }
         }
         $result.host_terminal = [bool]$hostDone
         $result.child_terminal = [bool]$childDone
-        $result.process_exited = [bool]$hostDone
-        if ($null -ne $hostDrain -and [bool]$hostDrain.found) {
-            $result.stdout_eof = [bool]$hostDrain.stdout_eof
-            $result.stderr_eof = [bool]$hostDrain.stderr_eof
+        $result.process_exited = [bool]($hostDone -and ((-not [bool]$snap.child_present) -or $childDone))
+        if ($null -ne $hostIdentity -and ((-not [bool]$snap.child_present) -or $null -ne $childIdentity)) {
+            $result.identity_status = 'BOUND'
+        } else {
+            $result.identity_status = 'UNKNOWN'
         }
-        if ([bool]$hostDone -and [bool]$childDone) {
+        $hostReady = $hostDone
+        $childReady = ((-not [bool]$snap.child_present) -or $childDone)
+        if ($hostReady -and $childReady -and [string]$result.identity_status -ceq 'BOUND') {
             $result.pending = $false
             return $result
         }
+        $result.pending = $true
+        if ($first -and [int]$WaitMilliseconds -le 0) { return $result }
+        $first = $false
+        if ([DateTimeOffset]::UtcNow -ge $deadline) { return $result }
         Start-Sleep -Milliseconds 200
     } while ([DateTimeOffset]::UtcNow -lt $deadline)
     $result.pending = $true

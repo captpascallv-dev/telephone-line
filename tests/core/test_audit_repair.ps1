@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
-# Correction-3 focused proofs. Isolated fixtures only; no live install, Task
+# Correction-4 focused proofs. Isolated fixtures only; no live install, Task
 # Scheduler, App, paid PI, or live mailbox mutation. Does not replay the unsafe
 # 315730a2 mailbox-ref Execute, Collect-Probe-2dbc8dd, or unchanged D3/D5 suites.
+# Does not rerun the prior 220-count classification for its own sake.
 [CmdletBinding()]
 param([Parameter(Mandatory = $true)][string]$TestRoot)
 
@@ -211,7 +212,7 @@ exit 1
     $receiptRead = Read-TelephoneJson -Path $paths.receipt -SchemaName 'receipt'
     $wake = New-TelephoneWakeIdentity -LineJobId $jobId -ReceiptIdentity $receiptRead.identity -LeadSessionId $session
     Assert-Repair ([string]$wake.wake_run_id -ceq $runId) 'Wake run id drifted from telephone-{job}.'
-    [IO.File]::WriteAllText($prompt, ("wake`nreceipt_sha256: " + [string]$receiptRead.identity.sha256 + "`nwake_key: " + [string]$wake.wake_key + "`n"), [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($prompt, ("# Telephone-line durable receipt delivery`n`n- receipt_sha256: " + [string]$receiptRead.identity.sha256 + "`n- wake_key: " + [string]$wake.wake_key + "`n"), [Text.UTF8Encoding]::new($false))
 
     $relayError = [ordered]@{
         protocol_version = 'telephone-line-relay-error-v1'
@@ -414,13 +415,10 @@ exit 0
     Assert-Repair ($lingerStartCount -eq 1) ('Native-complete linger duplicate model-start: ' + [string]$lingerStartCount)
     $lingerDelivery = (Read-TelephoneJson -Path $lingerPaths.delivery).value
     Assert-Repair ($null -ne $lingerDelivery.owned_drain_terminal) 'Coordinator did not record owned drain observation.'
-    Assert-Repair (-not [bool]$lingerDelivery.owned_drain_terminal.pending) 'Coordinator returned before the owned host reached terminal.'
-    Assert-Repair ([bool]$lingerDelivery.owned_drain_terminal.host_terminal) 'Owned host drain did not reach terminal.'
-    $lingerLife = Join-Path $leadState ($lingerRun + '\host-drain-lifecycle.json')
-    Assert-Repair ([IO.File]::Exists($lingerLife)) 'Host drain lifecycle was missing after coordinator wait.'
-    $lingerLifeDoc = (Read-TelephoneJson -Path $lingerLife).value
-    Assert-Repair ([bool]$lingerLifeDoc.process_exited) 'Coordinator did not observe host process_exited.'
-    Assert-Repair ([bool]$lingerLifeDoc.stdout_eof -and [bool]$lingerLifeDoc.stderr_eof) 'Coordinator did not observe host stream EOF.'
+    Assert-Repair ([bool]$lingerDelivery.owned_drain_terminal.pending) 'Native-complete linger drain was fabricated as terminal.'
+    Assert-Repair (-not [bool]$lingerDelivery.owned_drain_terminal.host_terminal) 'Lingering host was marked host_terminal without durable EOF.'
+    Assert-Repair ([bool]$lingerDelivery.automatic_callback_success) 'Receipt wake ack was withheld because drain was still pending.'
+    Assert-Repair ([bool]$lingerDelivery.owned_drain_pending) 'Delivery did not keep host-drain pending separate from receipt consumption.'
 
     $incompleteLauncher = Join-Path $testRoot 'incomplete-host.ps1'
     [IO.File]::WriteAllText($incompleteLauncher, @'
@@ -461,8 +459,9 @@ exit 0
         Assert-Repair ([string]$_.Exception.Message -cin @('LEAD_WAKE_FAILED', 'LEAD_WAKE_INCOMPLETE_HOST')) ('Foreign host unexpected code: ' + [string]$_.Exception.Message)
     }
 
-    $isolatedLeadKey = '59f66ca4e9d6cc27db865fb141f844289081bdbfeeb0d6cc14757b9485cbcf3d'
-    $isolatedItemId = 'isolated-mailbox-item'
+    $isolatedCanonical = Get-TelephoneLeadCanonicalIdentity -Lead $leadBinding
+    $isolatedLeadKey = [string]$isolatedCanonical.identity_sha256
+    $isolatedItemId = Get-TelephoneMailboxItemId -LeadKey $isolatedLeadKey -LineJobId $jobId -ReceiptSha256 ([string]$receiptRead.identity.sha256)
     $isolatedMailbox = Get-TelephoneLeadMailboxPaths -StateRoot $testRoot -LeadKey $isolatedLeadKey
     [IO.Directory]::CreateDirectory([string]$isolatedMailbox.mailbox) | Out-Null
     [IO.Directory]::CreateDirectory((Join-Path ([string]$isolatedMailbox.batches) $jobId)) | Out-Null
@@ -475,6 +474,8 @@ exit 0
         lead_session_id = $session
         lead_identity_sha256 = $isolatedLeadKey
         classification = 'pending'
+        receipt = @{ sha256 = [string]$receiptRead.identity.sha256 }
+        dispatch = @{ sha256 = [string]$dispatchId.sha256 }
     })
     $null = Write-TelephoneJsonCreateNew -Path (Join-Path (Join-Path ([string]$isolatedMailbox.batches) $jobId) 'collection.json') -Value ([ordered]@{
         protocol_version = 'telephone-line-batch-collection-v1'
@@ -728,7 +729,7 @@ exit 0
     }
     Assert-Repair (Test-TelephoneDashboardJobMustRemainVisible -Job $unknownJob) 'UNKNOWN job without a live process was hidden.'
 
-    $showPath = Join-Path $repoRoot '_audit_correction3_artifacts_20260909\private-candidate\cockpit\Show-PascalGlobalAutopilotStatus.ps1'
+    $showPath = Join-Path $repoRoot '_audit_correction4_artifacts_20260909\private-candidate\cockpit\Show-PascalGlobalAutopilotStatus.ps1'
     $showText = [IO.File]::ReadAllText($showPath)
     $cut = $showText.IndexOf('if ($LibraryOnly) { return }')
     $start = $showText.IndexOf('$script:ThreadIdCache')
@@ -741,6 +742,8 @@ exit 0
         protocol_version = 'telephone-line-direct-cursor-request-v1'
         job_id = $directId
         workspace = $work
+        model = 'cursor-grok-4.6-xhigh'
+        route = 'direct-cursor'
     }
     [IO.File]::WriteAllText((Join-Path $directRoot 'request.json'), (($directRequest | ConvertTo-Json -Depth 8) + "`n"), [Text.UTF8Encoding]::new($false))
     $dispatchForMap = $dispatch | ConvertTo-Json -Depth 16 | ConvertFrom-Json
@@ -752,9 +755,28 @@ exit 0
         id = 'other-id'
         lead_thread_id = $session
         worktree = $work
+        worker_telephone_job_ids = @($jobId)
+        worker_direct_cursor_job_ids = @($directId)
     }
     $bindOk = Get-StatusRegisteredDirectBinding -Dispatch $dispatchForMap -Project $projectOkObj
     Assert-Repair ($null -ne $bindOk) 'Correct session/workspace/job alias mapping was rejected.'
+    $reqForIdent = Get-Content -LiteralPath (Join-Path $directRoot 'request.json') -Raw | ConvertFrom-Json
+    $identOk = Get-StatusJobIdentity -Dispatch $dispatchForMap -Request $reqForIdent -Route 'direct-cursor'
+    Assert-Repair ([string]$identOk.state -ceq 'ok') ('Registered exact pair still unregistered: ' + [string]$identOk.state)
+    Assert-Repair ([string]$identOk.label -notmatch '未登记') ('Registered executor identity stayed unregistered: ' + [string]$identOk.label)
+    $projectAliasMismatch = [pscustomobject]@{
+        current_line_job_id = $jobId
+        current_direct_job_id = $directId
+        current_direct_job_root = $directRoot
+        dispatch_project_id = 'audit-repair'
+        id = 'other-id'
+        lead_thread_id = $session
+        worktree = $work
+        worker_telephone_job_ids = @('ffffffff-ffff-ffff-ffff-ffffffffffff')
+        worker_direct_cursor_job_ids = @($directId)
+    }
+    $bindAlias = Get-StatusRegisteredDirectBinding -Dispatch $dispatchForMap -Project $projectAliasMismatch
+    Assert-Repair ($null -eq $bindAlias) 'Worker array mismatch was accepted as the current exact pair.'
     $projectWrongObj = [pscustomobject]@{
         current_line_job_id = $jobId
         current_direct_job_id = $directId
@@ -799,7 +821,11 @@ exit 0
     Assert-Repair ([string]$leadWait.code -ceq 'awaiting_lead_engineering') 'Executor receipt was not mapped to original Lead engineering acceptance.'
     Assert-Repair ([string]$leadWait.flow_label -notmatch 'Root') 'Executor receipt still named Root.'
     $packetPath = Join-Path $testRoot 'FINAL_REVIEW_PACKET.md'
-    [IO.File]::WriteAllText($packetPath, "isolated packet`nrun-final-1`n", [Text.UTF8Encoding]::new($false))
+    $packetHead = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    $packetTree = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+    $packetReceipt = ('c' * 64)
+    $packetJob = $jobId
+    [IO.File]::WriteAllText($packetPath, ("isolated packet`nrun-final-1`n" + $packetHead + "`n" + $packetTree + "`n" + $packetReceipt + "`n" + $packetJob + "`n"), [Text.UTF8Encoding]::new($false))
     $packetSha = Get-RepairSha256 -Path $packetPath
     $packetProject = [pscustomobject]@{
         registry_status = 'ACTIVE'
@@ -833,6 +859,10 @@ exit 0
         current_final_review_packet_path = $packetPath
         current_final_review_packet_sha256 = $packetSha
         current_run_id = 'run-final-1'
+        current_candidate_head = $packetHead
+        current_candidate_tree = $packetTree
+        current_receipt_sha256 = $packetReceipt
+        current_line_job_id = $packetJob
         final_review_arranged_by = 'Pascal, previous independent Astra Max auditor'
         final_review_dispatch_by_lead_forbidden = $true
     }
@@ -912,6 +942,19 @@ exit 0
     }
     $missingRunResp = Get-StatusAcceptanceResponsibility -Project $missingRunProject -Group $missingRunGroup -CollectionMatched $true
     Assert-Repair ([string]$missingRunResp.code -cne 'awaiting_pascal_max') 'Missing current run identity still produced Pascal-Max ready.'
+    $noBindPacket = [pscustomobject]@{
+        current_final_review_packet_path = $packetPath
+        current_final_review_packet_sha256 = $packetSha
+    }
+    Assert-Repair (-not (Test-StatusFinalReviewPacketActuallyReady -Project $noBindPacket)) 'Packet without current candidate/receipt/job linkage was treated as ready.'
+    $eligibleOnly = [pscustomobject]@{
+        registry_status = 'ACTIVE'
+        current_state = 'COLLECTED'
+        current_collection_path = $reproCollection
+        current_collection_sha256 = $reproSha
+        current_collection_status = 'acceptance_eligible'
+    }
+    Assert-Repair ([string](Get-StatusCollectedDecisionState -Project $eligibleOnly) -cne 'waiting_root') 'acceptance_eligible/COLLECTED without ROOT_DECISION_PENDING was shown as Root pending.'
 
     $wrapperDir = Join-Path $testRoot 'wrapper-owner\src\supervisor'
     [IO.Directory]::CreateDirectory($wrapperDir) | Out-Null
@@ -1176,16 +1219,9 @@ Invoke-TelephoneLeadDrainedProcess -FileName '$($pwsh.Replace('''', ''''''))' -A
 
     $isoState = Join-Path $testRoot 'iso-mailbox-state'
     $isoJobId = 'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeee6'
-    $isoLeadKey = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-    $isoItemId = 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
     $isoJob = Join-Path $isoState ('jobs\' + $isoJobId)
-    $isoLead = Join-Path $isoState ('leads\' + $isoLeadKey)
-    $isoMailboxDir = Join-Path $isoLead 'mailbox'
-    $isoBatchDir = Join-Path $isoLead ('batches\' + $isoJobId)
     $isoConsume = Join-Path $isoState 'consuming-run'
-    foreach ($d in @($isoJob, $isoMailboxDir, $isoBatchDir, $isoConsume)) { [IO.Directory]::CreateDirectory($d) | Out-Null }
-    $isoItemPath = Join-Path $isoMailboxDir ($isoItemId + '.json')
-    $isoReceiptPath = Join-Path $isoJob 'receipt.json'
+    foreach ($d in @($isoJob, $isoConsume)) { [IO.Directory]::CreateDirectory($d) | Out-Null }
     $isoPaths = Get-TelephoneJobPaths -JobRoot $isoJob
     $isoLeadBinding = [ordered]@{
         protocol_version = 'telephone-line-lead-binding-v1'
@@ -1252,8 +1288,16 @@ Invoke-TelephoneLeadDrainedProcess -FileName '$($pwsh.Replace('''', ''''''))' -A
     $null = Write-TelephoneJsonCreateNew -Path $isoPaths.receipt -Value $isoReceipt
     $isoReceiptRead = Read-TelephoneJson -Path $isoPaths.receipt -SchemaName 'receipt'
     $isoWake = New-TelephoneWakeIdentity -LineJobId $isoJobId -ReceiptIdentity $isoReceiptRead.identity -LeadSessionId $session
+    $isoCanonical = Get-TelephoneLeadCanonicalIdentity -Lead $isoLeadBinding
+    $isoLeadKey = [string]$isoCanonical.identity_sha256
+    $isoItemId = Get-TelephoneMailboxItemId -LeadKey $isoLeadKey -LineJobId $isoJobId -ReceiptSha256 ([string]$isoReceiptRead.identity.sha256)
+    $isoLead = Join-Path $isoState ('leads\' + $isoLeadKey)
+    $isoMailboxDir = Join-Path $isoLead 'mailbox'
+    $isoBatchDir = Join-Path $isoLead ('batches\' + $isoJobId)
+    foreach ($d in @($isoLead, $isoMailboxDir, $isoBatchDir)) { [IO.Directory]::CreateDirectory($d) | Out-Null }
+    $isoItemPath = Join-Path $isoMailboxDir ($isoItemId + '.json')
     $isoPrompt = Join-Path $isoConsume 'prompt.md'
-    [IO.File]::WriteAllText($isoPrompt, ("consume`nreceipt_sha256: " + [string]$isoReceiptRead.identity.sha256 + "`nwake_key: " + [string]$isoWake.wake_key + "`n"), [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($isoPrompt, ("# Telephone-line durable receipt delivery`n`n- line_job_id: $isoJobId`n- receipt_sha256: " + [string]$isoReceiptRead.identity.sha256 + "`n- wake_key: " + [string]$isoWake.wake_key + "`n"), [Text.UTF8Encoding]::new($false))
     $isoPromptId = Get-TelephoneFileIdentity -Path $isoPrompt
     $null = Write-TelephoneJsonCreateNew -Path (Join-Path $isoConsume 'lead-run.json') -Value ([ordered]@{
         protocol_version = 'huhu-concerto-cli-lead-run-v1'
@@ -1273,6 +1317,8 @@ Invoke-TelephoneLeadDrainedProcess -FileName '$($pwsh.Replace('''', ''''''))' -A
         lead_session_id = $session
         lead_identity_sha256 = $isoLeadKey
         classification = 'success'
+        receipt = @{ sha256 = [string]$isoReceiptRead.identity.sha256 }
+        dispatch = @{ sha256 = [string]$isoDispatchId.sha256 }
     }
     $null = Write-TelephoneJsonCreateNew -Path $isoItemPath -Value $isoItem
     $isoSiblingId = 'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
@@ -1291,7 +1337,9 @@ Invoke-TelephoneLeadDrainedProcess -FileName '$($pwsh.Replace('''', ''''''))' -A
         n = 2
         counted = 2
         closed = $false
-        state = 'open'
+        acceptance_eligible = $false
+        state = 'awaiting_delivery'
+        extra_collection_field = 'keep-collection'
     })
     $null = Write-TelephoneJsonCreateNew -Path (Join-Path $isoLead 'truth.json') -Value ([ordered]@{
         protocol_version = 'telephone-line-mailbox-truth-v1'
@@ -1326,6 +1374,16 @@ Invoke-TelephoneLeadDrainedProcess -FileName '$($pwsh.Replace('''', ''''''))' -A
         receipt = @{ sha256 = [string]$isoReceiptRead.identity.sha256 }
     })
     $isoEvidenceSha = [string](Get-TelephoneFileIdentity -Path $isoEvidence).sha256
+    $isoItemOriginal = [IO.File]::ReadAllBytes($isoItemPath)
+    $wrongItemDoc = (Read-TelephoneJson -Path $isoItemPath).value
+    $wrongItemDoc['receipt'] = @{ sha256 = ('c' * 64) }
+    $null = Write-TelephoneJsonReplace -Path $isoItemPath -Value $wrongItemDoc
+    $wrongSha = Get-RepairSha256 -Path $isoItemPath
+    $wrongDry = Complete-TelephoneTrustedManualConsumption -JobRoot $isoJob -ExpectedReceiptSha256 ([string]$isoReceiptRead.identity.sha256) -ExpectedWakeKey ([string]$isoWake.wake_key) -ExpectedLeadSessionId $session -ConsumptionEvidencePath $isoEvidence -ExpectedEvidenceSha256 $isoEvidenceSha
+    Assert-Repair (-not [bool]$wrongDry.ok) 'Wrong mailbox item receipt was accepted.'
+    Assert-Repair ([string]$wrongDry.reason -ceq 'mailbox_item_receipt_mismatch') ('Wrong-receipt reason drifted: ' + [string]$wrongDry.reason)
+    Assert-Repair ((Get-RepairSha256 -Path $isoItemPath) -ceq $wrongSha) 'Wrong-receipt dry-run mutated the mailbox item.'
+    [IO.File]::WriteAllBytes($isoItemPath, $isoItemOriginal)
     $isoDry = Complete-TelephoneTrustedManualConsumption -JobRoot $isoJob -ExpectedReceiptSha256 ([string]$isoReceiptRead.identity.sha256) -ExpectedWakeKey ([string]$isoWake.wake_key) -ExpectedLeadSessionId $session -ConsumptionEvidencePath $isoEvidence -ExpectedEvidenceSha256 $isoEvidenceSha
     Assert-Repair ([string]$isoDry.code -ceq 'DRY_RUN') 'Isolated rebound mailbox dry-run did not validate.'
     $isoExec = Complete-TelephoneTrustedManualConsumption -JobRoot $isoJob -ExpectedReceiptSha256 ([string]$isoReceiptRead.identity.sha256) -ExpectedWakeKey ([string]$isoWake.wake_key) -ExpectedLeadSessionId $session -ConsumptionEvidencePath $isoEvidence -ExpectedEvidenceSha256 $isoEvidenceSha -Execute
@@ -1338,6 +1396,17 @@ Invoke-TelephoneLeadDrainedProcess -FileName '$($pwsh.Replace('''', ''''''))' -A
     $isoBatchRow = @($isoTruthAfter.batches | Where-Object { [string]$_.batch_id -ceq $isoJobId })[0]
     Assert-Repair (-not [bool]$isoBatchRow.closed) 'One-item closeout closed a multi-item batch.'
     Assert-Repair ([string]$isoBatchRow.extra_field -ceq 'keep-me') 'Mailbox truth replace dropped sibling/current fields.'
+    $isoCollectionAfter = (Read-TelephoneJson -Path (Join-Path $isoBatchDir 'collection.json')).value
+    Assert-Repair ([string]$isoCollectionAfter.state -ceq 'lead_consumed_pending_siblings') ('Collection did not leave awaiting_delivery: ' + [string]$isoCollectionAfter.state)
+    Assert-Repair (-not [bool]$isoCollectionAfter.closed) 'Sibling-pending closeout closed collection.'
+    Assert-Repair (-not [bool]$isoCollectionAfter.acceptance_eligible) 'Trusted closeout marked incomplete collection acceptance_eligible.'
+    Assert-Repair ([string]$isoCollectionAfter.extra_collection_field -ceq 'keep-collection') 'Collection merge replaced unrelated batch fields.'
+    $isoObserved = @(Get-TelephoneMailboxObservationalBatches -StateRoot $isoState)
+    $isoObservedRow = @($isoObserved | Where-Object { [string]$_.batch_id -ceq $isoJobId })[0]
+    Assert-Repair ($null -ne $isoObservedRow) 'Observational consumer lost the batch after closeout.'
+    Assert-Repair ([string]$isoObservedRow.state -ceq 'lead_consumed_pending_siblings') ('Observational consumer stayed on stale collection: ' + [string]$isoObservedRow.state)
+    Assert-Repair (-not [bool]$isoObservedRow.closed) 'Observational consumer closed a pending-sibling batch.'
+    Assert-Repair (-not [bool]$isoObservedRow.acceptance_eligible) 'Observational consumer marked incomplete collection eligible.'
     $repeatIso = Complete-TelephoneTrustedManualConsumption -JobRoot $isoJob -ExpectedReceiptSha256 ([string]$isoReceiptRead.identity.sha256) -ExpectedWakeKey ([string]$isoWake.wake_key) -ExpectedLeadSessionId $session -ConsumptionEvidencePath $isoEvidence -ExpectedEvidenceSha256 $isoEvidenceSha -Execute
     Assert-Repair ([string]$repeatIso.code -ceq 'ALREADY_CLOSED') 'Repeat closeout was not idempotent after actual mailbox convergence.'
 
@@ -1376,15 +1445,8 @@ Invoke-TelephoneLeadDrainedProcess -FileName '$($pwsh.Replace('''', ''''''))' -A
     foreach ($name in @('dispatch.json', 'receipt.json', 'relay-error.json')) {
         Copy-Item -LiteralPath (Join-Path $isoJob $name) -Destination (Join-Path $crashJob $name) -Force
     }
-    $crashItemId = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
-    $crashItemPath = Join-Path $isoMailboxDir ($crashItemId + '.json')
-    $null = Write-TelephoneJsonCreateNew -Path $crashItemPath -Value ([ordered]@{
-        protocol_version = 'telephone-line-mailbox-item-v1'
-        item_id = $crashItemId
-        batch_id = $isoJobId
-        line_job_id = $isoJobId
-        lead_identity_sha256 = $isoLeadKey
-    })
+    $crashItemId = $isoItemId
+    $crashItemPath = $isoItemPath
     $null = Write-TelephoneJsonCreateNew -Path (Join-Path $crashJob 'mailbox-ref.json') -Value ([ordered]@{
         protocol_version = 'telephone-line-mailbox-ref-v1'
         lead_identity_sha256 = $isoLeadKey
@@ -1428,8 +1490,8 @@ Invoke-TelephoneLeadDrainedProcess -FileName '$($pwsh.Replace('''', ''''''))' -A
     Assert-Repair (-not [bool]$wrongBind.ok) 'Unrelated same-session run without receipt input was accepted as consuming run.'
 
     # D5 isolated adapter follow_up is an unchanged proof class; not rerun here.
-    $v23Launcher = Join-Path $repoRoot '_audit_correction3_artifacts_20260909\private-candidate\launchers\Invoke-V23_11WiredLead.ps1'
-    $v23Helper = Join-Path $repoRoot '_audit_correction3_artifacts_20260909\private-candidate\launchers\DirectCursor.Common.ps1'
+    $v23Launcher = Join-Path $repoRoot '_audit_correction4_artifacts_20260909\private-candidate\launchers\Invoke-V23_11WiredLead.ps1'
+    $v23Helper = Join-Path $repoRoot '_audit_correction4_artifacts_20260909\private-candidate\launchers\DirectCursor.Common.ps1'
     Assert-Repair ([IO.File]::Exists($v23Launcher)) 'Candidate V23 launcher copy was missing.'
     Assert-Repair ([IO.File]::Exists($v23Helper)) 'Candidate DirectCursor helper copy was missing.'
     $env:TELEPHONE_LINE_DIRECTCURSOR_COMMON = $v23Helper
@@ -1513,7 +1575,7 @@ public static class IsolatedLeadCli {
         '-ReasoningEffort', 'low'
     )
     $v23Prompt = Join-Path $testRoot 'v23-prompt.md'
-    [IO.File]::WriteAllText($v23Prompt, ("v23 wake`nreceipt_sha256: " + [string]$receiptRead.identity.sha256 + "`nwake_key: " + [string]$wake.wake_key + "`n"), [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($v23Prompt, ("# Telephone-line durable receipt delivery`n`n- receipt_sha256: " + [string]$receiptRead.identity.sha256 + "`n- wake_key: " + [string]$wake.wake_key + "`n"), [Text.UTF8Encoding]::new($false))
     $env:TELEPHONE_FAKE_LEAD_MODE = 'consume'
     $freshId = 'v23-fresh-1'
     $freshLaunch = Invoke-TelephoneFrozenLeadLauncher -LauncherPath $v23Launcher -ExtraArguments $v23Extra -Worktree $v23Work -PromptFile $v23Prompt -SessionId $session -RunId $freshId
@@ -1595,6 +1657,59 @@ public static class IsolatedLeadCli {
     $null = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $retryRoot -WaitMilliseconds 30000
     Remove-Item Env:TELEPHONE_FAKE_LEAD_MODE -ErrorAction SilentlyContinue
     Remove-Item Env:TELEPHONE_LINE_DIRECTCURSOR_COMMON -ErrorAction SilentlyContinue
+
+    $emptyDrain = Join-Path $testRoot 'empty-drain-run'
+    [IO.Directory]::CreateDirectory($emptyDrain) | Out-Null
+    $emptyWait = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $emptyDrain -WaitMilliseconds 800
+    Assert-Repair ([bool]$emptyWait.pending) 'Empty drain directory was not pending.'
+    Assert-Repair (-not [bool]$emptyWait.host_terminal) 'Empty drain directory fabricated host_terminal.'
+    Assert-Repair (-not [bool]$emptyWait.child_terminal) 'Empty drain directory fabricated child_terminal.'
+    Assert-Repair (-not [bool]$emptyWait.process_exited) 'Empty drain directory fabricated process_exited.'
+    Assert-Repair ([string]$emptyWait.identity_status -ceq 'UNKNOWN') ('Empty drain identity was not UNKNOWN: ' + [string]$emptyWait.identity_status)
+
+    $lingerRoot = Join-Path $testRoot 'linger-drain-run'
+    [IO.Directory]::CreateDirectory($lingerRoot) | Out-Null
+    $lingerProc = Start-Process -FilePath $pwsh -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 60') -PassThru -WindowStyle Hidden
+    try {
+        $lingerExe = [string]$lingerProc.Path
+        if ([string]::IsNullOrWhiteSpace($lingerExe)) { $lingerExe = $pwsh }
+        $lingerOwner = [ordered]@{
+            protocol_version = 'telephone-line-bound-owner-v1'
+            pid = [int]$lingerProc.Id
+            start_time_utc_ticks = [int64]$lingerProc.StartTime.ToUniversalTime().Ticks
+            started_at_utc = $lingerProc.StartTime.ToUniversalTime().ToString('o')
+            executable_path = $lingerExe
+            session_id = $session
+            run_id = 'linger-drain-1'
+        }
+        $null = Write-TelephoneJsonCreateNew -Path (Join-Path $lingerRoot 'owner.json') -Value $lingerOwner
+        $null = Write-TelephoneJsonCreateNew -Path (Join-Path $lingerRoot 'host-drain-lifecycle.json') -Value ([ordered]@{
+            protocol_version = 'telephone-line-drained-process-v1'
+            pid = [int]$lingerProc.Id
+            start_time_utc_ticks = [int64]$lingerProc.StartTime.ToUniversalTime().Ticks
+            executable_path = $lingerExe
+            session_id = $session
+            run_id = 'linger-drain-1'
+            process_exited = $false
+            stdout_eof = $false
+            stderr_eof = $false
+            native_turn_complete = $true
+            recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+        })
+        $lingerWait = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $lingerRoot -WaitMilliseconds 1200
+        Assert-Repair ([bool]$lingerWait.pending) 'Lingering owned host was treated as drain terminal.'
+        Assert-Repair (-not [bool]$lingerWait.host_terminal) 'Lingering owned host fabricated host_terminal.'
+        Assert-Repair (-not [bool]$lingerWait.process_exited) 'Lingering owned host fabricated process_exited.'
+        Assert-Repair ([bool]$lingerWait.host_alive) 'Lingering owned host was not observed alive.'
+        $stillLive = $null
+        try { $stillLive = Get-Process -Id ([int]$lingerProc.Id) -ErrorAction SilentlyContinue } catch { $stillLive = $null }
+        Assert-Repair ($null -ne $stillLive) 'Lingering-host proof killed the process as recovery.'
+        if ($null -ne $stillLive) { $stillLive.Dispose() }
+    } finally {
+        try { Stop-Process -Id ([int]$lingerProc.Id) -Force -ErrorAction SilentlyContinue } catch { }
+        try { $lingerProc.Dispose() } catch { }
+    }
+
     Write-Output ('AUDIT_REPAIR_ASSERTIONS=' + $assertions)
 } finally {
     [Environment]::SetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_STATE', $previousDashState, 'Process')

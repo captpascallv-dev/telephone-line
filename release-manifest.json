@@ -19,14 +19,14 @@
     {
       "name": "telephone-line-0.1.2-source.zip",
       "contains": "src/, schemas/, docs/, .github/, tests/, and root README.md, LICENSE, CONTRIBUTING.md, SECURITY.md, THIRD-PARTY-NOTICES.md, .gitattributes",
-      "bytes": 941985,
-      "sha256": "274e8e97606d7022f2cf39dab9031463bb9ae5d1d186cef2049790f9849324b2"
+      "bytes": 946659,
+      "sha256": "2c4f5df1a1d25bc1667489994290273be053d2208a611c89c163466af59ec033"
     },
     {
       "name": "telephone-line-0.1.2-windows.zip",
       "contains": "src/, schemas/, docs/, and root README.md, LICENSE, CONTRIBUTING.md, SECURITY.md, THIRD-PARTY-NOTICES.md, .gitattributes; excludes tests/ and .github/",
-      "bytes": 522965,
-      "sha256": "44c9f2359ec60c17a1443cd7893b08580fd2471bdc8bf74b66ae9ab2aea5a9a2"
+      "bytes": 525976,
+      "sha256": "5713bd91279a49e71951adafd70ee480c9cfe4aef45b9f2a4e48833a2f50cf30"
     }
   ],
   "files": [
@@ -762,13 +762,13 @@
     },
     {
       "path": "src/core/TelephoneLeadRuntime.Common.ps1",
-      "bytes": 84350,
-      "sha256": "7caf907292536802755d90251b9314638359e3c5a3db607aea6ec09673bf13e3"
+      "bytes": 92429,
+      "sha256": "00bedc8729d5be74a9aad51d817113e031b942ebc67e60f4888ba965be002906"
     },
     {
       "path": "src/core/TelephoneLine.Common.ps1",
-      "bytes": 258699,
-      "sha256": "3afaad8a251dbfef059e1683dfa79d721e206c8202280174bb4ee3d8cf80fa07"
+      "bytes": 272168,
+      "sha256": "e4d0db2f9a3781f0d083069616fff151ca7b28693a65494b00d6266af18cc637"
     },
     {
       "path": "src/dashboard/Ensure-TelephoneDashboard.ps1",
@@ -1422,8 +1422,8 @@
     },
     {
       "path": "tests/core/test_audit_repair.ps1",
-      "bytes": 114219,
-      "sha256": "684a03d356a6b9e7145d64d53969c727febe2ee57ff9796bc055de161c197ef8"
+      "bytes": 122952,
+      "sha256": "3f74e4443b77400fbce23daa994b81128e2a368b962bfda022d80b84a0c137cf"
     },
     {
       "path": "tests/core/test_autonomous_event_chain.ps1",
@@ -1518,7 +1518,7 @@
   ],
   "counts": {
     "files": 297,
-    "bytes": 4302991
+    "bytes": 4333272
   },
   "excluded": [
     ".control/**",
