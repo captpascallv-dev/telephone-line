@@ -140,12 +140,20 @@ function Invoke-CursorProcess {
         [string]$NodePath,
         [string]$IndexPath,
         [int]$ProcessTimeoutSeconds,
-        [int]$OutputByteLimit = 16777216
+        [int]$OutputByteLimit = 16777216,
+        [string]$DiagnosticRoot,
+        [string]$DispatchId,
+        [string]$RequestedSessionId,
+        [string]$Stage = 'cursor_execution'
     )
 
     $argumentsJson = $Arguments | ConvertTo-Json -Compress
     $argumentsBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($argumentsJson))
     if ($argumentsBase64.Length -gt 24000) { throw 'Cursor argument payload is too large for the guarded Windows host. Use a file-backed task specification.' }
+    $diagRoot = if (-not [string]::IsNullOrWhiteSpace($DiagnosticRoot)) { $DiagnosticRoot } else { $stateRoot }
+    $diagDir = New-DirectCursorProcessDiagnosticDirectory -SessionRoot $diagRoot -DispatchId $DispatchId
+    $stdoutPath = Join-Path $diagDir 'stdout.bin'
+    $stderrPath = Join-Path $diagDir 'stderr.bin'
     $gateName = 'Local\CursorAgentDispatchGate_' + [Guid]::NewGuid().ToString('N')
     $createdNew = $false
     $gate = [Threading.EventWaitHandle]::new($false, [Threading.EventResetMode]::ManualReset, $gateName, [ref]$createdNew)
@@ -177,11 +185,23 @@ function Invoke-CursorProcess {
     $jobClosed = $false
     $rootExited = $false
     $runFailure = $null
+    $overLimit = $false
+    $timedOut = $false
+    $nativePid = 0
+    $nativeTicks = [int64]0
+    $nativeExe = [string]$pwshPath
+    $nativeExit = $null
+    $stdoutFile = $null
+    $stderrFile = $null
     $stdoutMemory = [IO.MemoryStream]::new()
     $stderrMemory = [IO.MemoryStream]::new()
     try {
+        $stdoutFile = [IO.FileStream]::new($stdoutPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+        $stderrFile = [IO.FileStream]::new($stderrPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
         $processStarted = $process.Start()
         if (-not $processStarted) { throw 'Cursor CLI process did not start.' }
+        $nativePid = [int]$process.Id
+        try { $nativeTicks = [int64]$process.StartTime.ToUniversalTime().Ticks } catch { }
         [CursorAgentDispatch.NativeJob]::Assign($jobHandle, $process.Handle)
         $jobAssigned = $true
         [void]$gate.Set()
@@ -199,8 +219,12 @@ function Invoke-CursorProcess {
                 $count = $stdoutRead.GetAwaiter().GetResult()
                 if ($count -eq 0) { $stdoutClosed = $true }
                 else {
-                    if (($stdoutMemory.Length + $stderrMemory.Length + $count) -gt $OutputByteLimit) { throw 'Cursor CLI output exceeded the bounded result size.' }
-                    $stdoutMemory.Write($stdoutBuffer, 0, $count)
+                    $stdoutFile.Write($stdoutBuffer, 0, $count)
+                    if (-not $overLimit -and (($stdoutMemory.Length + $stderrMemory.Length + $count) -le $OutputByteLimit)) {
+                        $stdoutMemory.Write($stdoutBuffer, 0, $count)
+                    } else {
+                        $overLimit = $true
+                    }
                     $stdoutRead = $stdoutStream.ReadAsync($stdoutBuffer, 0, $stdoutBuffer.Length)
                 }
             }
@@ -208,19 +232,30 @@ function Invoke-CursorProcess {
                 $count = $stderrRead.GetAwaiter().GetResult()
                 if ($count -eq 0) { $stderrClosed = $true }
                 else {
-                    if (($stdoutMemory.Length + $stderrMemory.Length + $count) -gt $OutputByteLimit) { throw 'Cursor CLI output exceeded the bounded result size.' }
-                    $stderrMemory.Write($stderrBuffer, 0, $count)
+                    $stderrFile.Write($stderrBuffer, 0, $count)
+                    if (-not $overLimit -and (($stdoutMemory.Length + $stderrMemory.Length + $count) -le $OutputByteLimit)) {
+                        $stderrMemory.Write($stderrBuffer, 0, $count)
+                    } else {
+                        $overLimit = $true
+                    }
                     $stderrRead = $stderrStream.ReadAsync($stderrBuffer, 0, $stderrBuffer.Length)
                 }
             }
-            if ($null -ne $deadline -and [DateTimeOffset]::UtcNow -gt $deadline) { throw 'Cursor CLI startup or command probe exceeded its bounded window.' }
+            if ($null -ne $deadline -and [DateTimeOffset]::UtcNow -gt $deadline) {
+                $timedOut = $true
+                break
+            }
             if (-not ($process.HasExited -and $stdoutClosed -and $stderrClosed)) { Start-Sleep -Milliseconds 20 }
         }
-        $process.WaitForExit()
+        if (-not $timedOut) { $process.WaitForExit() }
         $rootExited = $process.HasExited
+        if ($rootExited) { $nativeExit = [int]$process.ExitCode }
     } catch {
         $runFailure = $_
+        try { if ($processStarted -and $process.HasExited) { $nativeExit = [int]$process.ExitCode } } catch { }
     } finally {
+        if ($null -ne $stdoutFile) { try { $stdoutFile.Flush(); $stdoutFile.Dispose() } catch { } }
+        if ($null -ne $stderrFile) { try { $stderrFile.Flush(); $stderrFile.Dispose() } catch { } }
         $gate.Dispose()
         if ($processStarted -and -not $jobAssigned -and -not $process.HasExited) { try { $process.Kill() } catch { } }
         if ($jobHandle -ne [IntPtr]::Zero) {
@@ -229,17 +264,66 @@ function Invoke-CursorProcess {
         }
         if ($processStarted -and -not $rootExited) {
             try { $rootExited = $process.WaitForExit(10000) -and $process.HasExited } catch { }
+            if ($rootExited -and $null -eq $nativeExit) { try { $nativeExit = [int]$process.ExitCode } catch { } }
         }
     }
-    if (-not $jobClosed -or ($processStarted -and -not $rootExited)) {
-        throw 'Cursor process-tree termination could not be confirmed. Further dispatch is blocked.'
+
+    $failMessage = $null
+    $failType = ''
+    if ($null -ne $runFailure) {
+        $failMessage = [string]$runFailure.Exception.Message
+        $failType = $runFailure.Exception.GetType().FullName
+    } elseif ($overLimit) {
+        $failMessage = 'Cursor CLI output exceeded the bounded result size.'
+        $failType = 'System.InvalidOperationException'
+    } elseif ($timedOut) {
+        $failMessage = 'Cursor CLI startup or command probe exceeded its bounded window.'
+        $failType = 'System.InvalidOperationException'
+    } elseif (-not $jobClosed -or ($processStarted -and -not $rootExited)) {
+        $failMessage = 'Cursor process-tree termination could not be confirmed. Further dispatch is blocked.'
+        $failType = 'System.InvalidOperationException'
     }
-    if ($null -ne $runFailure) { throw $runFailure }
+    $classification = if (-not [string]::IsNullOrWhiteSpace($failMessage)) {
+        Get-DirectCursorFailureClassification -Message $failMessage -Stage $Stage
+    } else { $null }
+    $diag = Write-DirectCursorProcessDiagnostic `
+        -Directory $diagDir `
+        -Stage $Stage `
+        -ExceptionType $failType `
+        -ExceptionMessage $failMessage `
+        -Classification $classification `
+        -RequestedSessionId $RequestedSessionId `
+        -ReturnedSessionId '' `
+        -NativePid $nativePid `
+        -NativeStartTicks $nativeTicks `
+        -NativeExecutable $nativeExe `
+        -NativeExitCode $nativeExit `
+        -StdoutPath $stdoutPath `
+        -StderrPath $stderrPath `
+        -OutputByteLimit $OutputByteLimit `
+        -MemoryStdoutBytes ([int]$stdoutMemory.Length) `
+        -MemoryStderrBytes ([int]$stderrMemory.Length) `
+        -ProcessTimeoutSeconds $ProcessTimeoutSeconds `
+        -OverLimit $overLimit
+
+    if (-not [string]::IsNullOrWhiteSpace($failMessage)) {
+        $ex = [InvalidOperationException]::new($failMessage)
+        $ex.Data['telephone_direct_cursor_diagnostic_path'] = [string]$diag.path
+        $ex.Data['telephone_direct_cursor_exception_type'] = $failType
+        $ex.Data['telephone_direct_cursor_stdout_bytes'] = [int64]$diag.stdout_bytes
+        $ex.Data['telephone_direct_cursor_stderr_bytes'] = [int64]$diag.stderr_bytes
+        if ($null -ne $diag.native_exit_code) { $ex.Data['telephone_direct_cursor_native_exit_code'] = [int]$diag.native_exit_code }
+        throw $ex
+    }
     return [pscustomobject]@{
-        ExitCode = $process.ExitCode
+        ExitCode = [int]$process.ExitCode
         Stdout = [Text.Encoding]::UTF8.GetString($stdoutMemory.ToArray())
         Stderr = [Text.Encoding]::UTF8.GetString($stderrMemory.ToArray())
         DurationMs = [int]([DateTimeOffset]::UtcNow - $startedAt).TotalMilliseconds
+        Diagnostic = $diag
+        StdoutBytes = [int64]$diag.stdout_bytes
+        StderrBytes = [int64]$diag.stderr_bytes
+        NativePid = $nativePid
     }
 }
 
@@ -308,6 +392,7 @@ $normalizedRequestSha256 = $null
 $mutex = $null
 $failureStage = 'input_validation'
 $failureEvidence = $null
+$run = $null
 $volatileSnapshotExclusions = @()
 try {
     if (-not $QualifiedProbe -and [string]::IsNullOrWhiteSpace($Prompt)) { throw 'Prompt must not be empty.' }
@@ -456,8 +541,17 @@ try {
     try {
         $failureStage = 'cli_qualification'
         $probeTimeoutSeconds = 90
-        $versionProbe = Invoke-CursorProcess -Arguments @('--version') -WorkingDirectory $workspace -NodePath ([string]$install.node) -IndexPath ([string]$install.index) -ProcessTimeoutSeconds $probeTimeoutSeconds
-        if ($versionProbe.ExitCode -ne 0) { throw 'Cursor CLI version probe failed.' }
+        $versionProbe = Invoke-CursorProcess -Arguments @('--version') -WorkingDirectory $workspace -NodePath ([string]$install.node) -IndexPath ([string]$install.index) -ProcessTimeoutSeconds $probeTimeoutSeconds -DiagnosticRoot $stateRoot -DispatchId $dispatchId -RequestedSessionId $ResumeSessionId -Stage 'cli_qualification'
+        if ($versionProbe.ExitCode -ne 0) {
+            $probeEx = [InvalidOperationException]::new('Cursor CLI version probe failed.')
+            if ($null -ne $versionProbe.Diagnostic) {
+                $probeEx.Data['telephone_direct_cursor_diagnostic_path'] = [string]$versionProbe.Diagnostic.path
+                $probeEx.Data['telephone_direct_cursor_stdout_bytes'] = [int64]$versionProbe.StdoutBytes
+                $probeEx.Data['telephone_direct_cursor_stderr_bytes'] = [int64]$versionProbe.StderrBytes
+                $probeEx.Data['telephone_direct_cursor_native_exit_code'] = [int]$versionProbe.ExitCode
+            }
+            throw $probeEx
+        }
         if (-not [string]::IsNullOrWhiteSpace($ExpectedAccount) -or -not [string]::IsNullOrWhiteSpace($ExpectedSubscription)) {
             $aboutProbe = Invoke-CursorProcess -Arguments @('about') -WorkingDirectory $workspace -NodePath ([string]$install.node) -IndexPath ([string]$install.index) -ProcessTimeoutSeconds $probeTimeoutSeconds
             if ($aboutProbe.ExitCode -ne 0) { throw 'Cursor account identity could not be read.' }
@@ -474,8 +568,17 @@ try {
                 }
             }
         }
-        $modelsProbe = Invoke-CursorProcess -Arguments @('models') -WorkingDirectory $workspace -NodePath ([string]$install.node) -IndexPath ([string]$install.index) -ProcessTimeoutSeconds $probeTimeoutSeconds
-        if ($modelsProbe.ExitCode -ne 0) { throw 'Cursor model catalog probe failed.' }
+        $modelsProbe = Invoke-CursorProcess -Arguments @('models') -WorkingDirectory $workspace -NodePath ([string]$install.node) -IndexPath ([string]$install.index) -ProcessTimeoutSeconds $probeTimeoutSeconds -DiagnosticRoot $stateRoot -DispatchId $dispatchId -RequestedSessionId $ResumeSessionId -Stage 'cli_qualification'
+        if ($modelsProbe.ExitCode -ne 0) {
+            $probeEx = [InvalidOperationException]::new('Cursor model catalog probe failed.')
+            if ($null -ne $modelsProbe.Diagnostic) {
+                $probeEx.Data['telephone_direct_cursor_diagnostic_path'] = [string]$modelsProbe.Diagnostic.path
+                $probeEx.Data['telephone_direct_cursor_stdout_bytes'] = [int64]$modelsProbe.StdoutBytes
+                $probeEx.Data['telephone_direct_cursor_stderr_bytes'] = [int64]$modelsProbe.StderrBytes
+                $probeEx.Data['telephone_direct_cursor_native_exit_code'] = [int]$modelsProbe.ExitCode
+            }
+            throw $probeEx
+        }
         $modelMatch = [regex]::Match($modelsProbe.Stdout, "(?m)^$([regex]::Escape($Model))\s+-\s+(.+?)\r?$")
         if (-not $modelMatch.Success) { throw 'Requested Cursor model is not available.' }
         $expectedModelDisplay = ConvertTo-StableCursorModelDisplay -Display $modelMatch.Groups[1].Value
@@ -504,7 +607,7 @@ try {
         $arguments += @('--', $Prompt)
 
         $failureStage = 'cursor_execution'
-        $run = Invoke-CursorProcess -Arguments $arguments -WorkingDirectory $workspace -NodePath ([string]$install.node) -IndexPath ([string]$install.index) -ProcessTimeoutSeconds $TimeoutSeconds -OutputByteLimit $MaxOutputBytes
+        $run = Invoke-CursorProcess -Arguments $arguments -WorkingDirectory $workspace -NodePath ([string]$install.node) -IndexPath ([string]$install.index) -ProcessTimeoutSeconds $TimeoutSeconds -OutputByteLimit $MaxOutputBytes -DiagnosticRoot $stateRoot -DispatchId $dispatchId -RequestedSessionId $ResumeSessionId -Stage $failureStage
         if (Test-DirectWorkspaceReparse -Root $workspace) { throw 'Workspace contains a reparse point and is not eligible for automated dispatch.' }
         $afterExclusions = @()
         $afterSnapshot = Get-WorkspaceSnapshot -Root $workspace -AllowedWriteRelative $allowedWriteRelative -VolatileExclusions ([ref]$afterExclusions)
@@ -528,7 +631,14 @@ try {
         if ($completed.outcome -ceq 'cursor_failure') {
             $failureEvidence = $completed.evidence
             if ([string]$completed.error_message -cmatch '(?i)Cursor CLI exited|Cursor CLI wrote to stderr') { $failureStage = 'cursor_execution' }
-            throw $completed.error_message
+            $failEx = [InvalidOperationException]::new([string]$completed.error_message)
+            if ($null -ne $run -and $null -ne $run.Diagnostic) {
+                $failEx.Data['telephone_direct_cursor_diagnostic_path'] = [string]$run.Diagnostic.path
+                $failEx.Data['telephone_direct_cursor_stdout_bytes'] = [int64]$run.StdoutBytes
+                $failEx.Data['telephone_direct_cursor_stderr_bytes'] = [int64]$run.StderrBytes
+                if ($null -ne $run.ExitCode) { $failEx.Data['telephone_direct_cursor_native_exit_code'] = [int]$run.ExitCode }
+            }
+            throw $failEx
         }
 
         if ($true -eq $completed.register_session) {
@@ -587,6 +697,54 @@ try {
     $promptPublicIdentity = if ($null -ne $promptIdentity) {
         [ordered]@{ path = [string]$promptIdentity.FullName; bytes = [int64]$promptBytes.Length; sha256 = $promptSha256 }
     } else { $null }
+    if ($null -eq $failureEvidence -or $failureEvidence -isnot [Collections.IDictionary]) {
+        $failureEvidence = [ordered]@{}
+    }
+    $failureEvidence.exception_type = $_.Exception.GetType().FullName
+    if ($null -ne $_.Exception.InnerException) {
+        $failureEvidence.inner_exception_type = $_.Exception.InnerException.GetType().FullName
+    }
+    $failureEvidence.requested_native_session_id = [string]$ResumeSessionId
+    $failureEvidence.returned_native_session_id = ''
+    $diagPath = ''
+    if ($null -ne $_.Exception.Data -and $null -ne $_.Exception.Data['telephone_direct_cursor_diagnostic_path']) {
+        $diagPath = [string]$_.Exception.Data['telephone_direct_cursor_diagnostic_path']
+    } elseif ($null -ne $run -and $null -ne $run.Diagnostic) {
+        $diagPath = [string]$run.Diagnostic.path
+    }
+    $stdoutBytes = [int64]0
+    $stderrBytes = [int64]0
+    $nativeExit = $null
+    if ($null -ne $_.Exception.Data -and $null -ne $_.Exception.Data['telephone_direct_cursor_stdout_bytes']) {
+        $stdoutBytes = [int64]$_.Exception.Data['telephone_direct_cursor_stdout_bytes']
+    }
+    if ($null -ne $_.Exception.Data -and $null -ne $_.Exception.Data['telephone_direct_cursor_stderr_bytes']) {
+        $stderrBytes = [int64]$_.Exception.Data['telephone_direct_cursor_stderr_bytes']
+    }
+    if ($null -ne $_.Exception.Data -and $null -ne $_.Exception.Data['telephone_direct_cursor_native_exit_code']) {
+        $nativeExit = [int]$_.Exception.Data['telephone_direct_cursor_native_exit_code']
+    }
+    if ([string]::IsNullOrWhiteSpace($diagPath)) {
+        $diagRoot = Join-Path $stateRoot 'diagnostics'
+        if ([IO.Directory]::Exists($diagRoot)) {
+            $latest = @(Get-ChildItem -LiteralPath $diagRoot -Recurse -Filter 'process-diagnostic.json' -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending)
+            if ($latest.Count -gt 0) { $diagPath = [string]$latest[0].FullName }
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($diagPath) -and [IO.File]::Exists($diagPath)) {
+        $failureEvidence.diagnostic = Get-DirectFileIdentity -Path $diagPath
+        $diagDir = [IO.Path]::GetDirectoryName($diagPath)
+        $sp = Join-Path $diagDir 'stdout.bin'
+        $ep = Join-Path $diagDir 'stderr.bin'
+        if ([IO.File]::Exists($sp)) {
+            $failureEvidence.stdout = Get-DirectFileIdentity -Path $sp
+            $stdoutBytes = [int64]$failureEvidence.stdout.bytes
+        }
+        if ([IO.File]::Exists($ep)) {
+            $failureEvidence.stderr_spool = Get-DirectFileIdentity -Path $ep
+            $stderrBytes = [int64]$failureEvidence.stderr_spool.bytes
+        }
+    }
     [ordered]@{
         success = $false
         dispatch_id = $dispatchId
@@ -595,13 +753,19 @@ try {
         failure_kind = [string]$classification.failure_kind
         failure_code = [string]$classification.failure_code
         failure_stage = [string]$classification.failure_stage
+        exception_type = $_.Exception.GetType().FullName
         error = Get-DirectPublicError -ErrorCode ([string]$classification.public_error_code)
         workspace = $workspace
         mode = $Mode
         model_id = $Model
         allowed_write_paths = $allowedWriteRelative
         resume_session_id = $ResumeSessionId
+        requested_native_session_id = [string]$ResumeSessionId
+        returned_native_session_id = ''
         session_id = ''
+        native_exit_code = $nativeExit
+        stdout_bytes = $stdoutBytes
+        stderr_bytes = $stderrBytes
         fast_disabled = $true
         changed_files = @($changes)
         volatile_snapshot_exclusions = @($volatileSnapshotExclusions)

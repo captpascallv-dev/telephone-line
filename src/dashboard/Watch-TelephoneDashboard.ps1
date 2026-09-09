@@ -89,7 +89,7 @@ function Publish-TelephoneDashboardWatchOnce {
         if (-not [string]::IsNullOrWhiteSpace($injected) -and -not $Recover) {
             throw $injected
         }
-        $projection = Get-TelephoneDashboardProjection -ConfigPath $ConfigPath
+        $projection = Get-TelephoneDashboardProjection -ConfigPath $ConfigPath -DashboardStateRoot $root
         $jsonText = (($projection | ConvertTo-Json -Depth 32).Replace("`r`n", "`n") + "`n")
         Assert-TelephoneJsonSchema -JsonText $jsonText -SchemaName 'dashboard-projection' -Label 'dashboard projection'
     } catch {
@@ -110,18 +110,10 @@ function Publish-TelephoneDashboardWatchOnce {
         $summary = Format-TelephoneDashboardSummary -Projection $projection
         $null = Write-TelephoneBytesReplace -Path $paths.summary -Bytes ([Text.UTF8Encoding]::new($false).GetBytes($summary))
         try {
-            if ([IO.File]::Exists([string]$paths.line_sources)) {
-                $srcDoc = (Read-TelephoneJson -Path ([string]$paths.line_sources)).value
-                if ($srcDoc -is [Collections.IDictionary]) {
-                    $now = [DateTimeOffset]::UtcNow.ToString('o')
-                    if ($projectionFailed) {
-                        $srcDoc['last_read_error_at_utc'] = $now
-                    } else {
-                        $srcDoc['last_success_at_utc'] = $now
-                        $srcDoc['last_read_error_at_utc'] = ''
-                    }
-                    $null = Write-TelephoneJsonReplace -Path ([string]$paths.line_sources) -Value $srcDoc
-                }
+            if ($projectionFailed) {
+                Update-TelephoneDashboardLineSourceObservation -DashboardStateRoot $root -ReadError
+            } else {
+                Update-TelephoneDashboardLineSourceObservation -DashboardStateRoot $root -Success
             }
         } catch { }
         if (-not $Headless) {

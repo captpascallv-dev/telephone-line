@@ -64,6 +64,16 @@ try {
             }
             if ([bool]$claimed.terminal -or [bool]$claimed.replayed) { continue }
             $request = $claimed.record.value
+            $runDir = Join-Path $paths.runs ([string]$request.run_id)
+            if (-not [IO.Directory]::Exists($runDir)) { [IO.Directory]::CreateDirectory($runDir) | Out-Null }
+            $hostIntent = [ordered]@{
+                protocol_version = 'telephone-line-supervisor-host-start-intent-v1'
+                run_id = [string]$request.run_id
+                request_sha256 = [string]$request.request_sha256
+                supervisor_pid = [int]$PID
+                recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+            }
+            try { $null = Write-TelephoneJsonCreateNew -Path (Join-Path $runDir 'host-start-intent.json') -Value $hostIntent } catch [IO.IOException] { }
             $runHost = Join-Path $PSScriptRoot 'Invoke-TelephoneSupervisorRunHost.ps1'
             $versionId = ''
             if ($request.Contains('installed_version') -and -not [string]::IsNullOrWhiteSpace([string]$request.installed_version.version_id)) {

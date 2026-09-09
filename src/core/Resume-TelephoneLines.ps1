@@ -11,12 +11,13 @@ $ErrorActionPreference = 'Stop'
 
 $state = Assert-TelephoneDirectoryPath -Path $StateRoot -Label 'State root'
 $null = Invoke-TelephoneDashboardEnsure
-try {
-    $null = Register-TelephoneDashboardLineSource -LineStateRoot $state
-} catch { }
 $jobsRoot = Join-Path $state 'jobs'
 $summary = [ordered]@{ scanned = 0; relays_started = 0; interrupted_receipts_created = 0; command_start_ambiguous_receipts_created = 0; command_start_pending = 0; already_delivered = 0 }
-if (-not [IO.Directory]::Exists($jobsRoot)) { $summary | ConvertTo-Json -Compress; exit 0 }
+if (-not [IO.Directory]::Exists($jobsRoot)) {
+    try { $null = Register-TelephoneDashboardLineSource -LineStateRoot $state } catch { }
+    $summary | ConvertTo-Json -Compress; exit 0
+}
+try { $null = Register-TelephoneDashboardLineSource -LineStateRoot $state } catch { }
 
 foreach ($job in @(Get-ChildItem -LiteralPath $jobsRoot -Directory -ErrorAction SilentlyContinue | Sort-Object Name)) {
     $summary.scanned += 1
@@ -98,6 +99,9 @@ foreach ($job in @(Get-ChildItem -LiteralPath $jobsRoot -Directory -ErrorAction 
         if ([IO.File]::Exists($paths.dispatch)) {
             $dispatch = (Read-TelephoneJson -Path $paths.dispatch).value
             $session = if ($null -ne $dispatch.lead) { [string]$dispatch.lead.session_id } else { '' }
+            try {
+                $null = Register-TelephoneDashboardLineSource -LineStateRoot $state -LineJobId ([string]$dispatch.line_job_id) -Project ([string]$dispatch.project) -LeadSessionId $session -LeadRunId ('telephone-' + [string]$dispatch.line_job_id) -Route ([string]$dispatch.route)
+            } catch { }
             if (-not [string]::IsNullOrWhiteSpace([string]$dispatch.project) -and -not [string]::IsNullOrWhiteSpace($session)) {
                 $null = Write-TelephonePublicLifecycleEvent -Root $job.FullName -Kind 'restart' -Transport 'wired' -Project ([string]$dispatch.project) -LeadSessionId $session -LineJobId ([string]$dispatch.line_job_id)
             }

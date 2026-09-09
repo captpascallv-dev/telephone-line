@@ -38,6 +38,8 @@ $script:TelephoneInstallPublicMessage = [ordered]@{
     HEALTHY = 'The install is healthy.'
     DRIFT_DETECTED = 'Installed files do not match the install manifest.'
     ADAPTER_DESCRIPTOR_INVALID = 'One or more adapter descriptors did not validate.'
+    SUPERVISOR_STATE_FOREIGN = 'Supervisor or line state is not bound to this install or task. Uninstall refused that resource.'
+    SUPERVISOR_STATE_AMBIGUOUS = 'Supervisor state ownership is ambiguous. Uninstall refused that resource.'
     SUPERVISOR_TASK_OWNED_BY_OTHER_INSTALL = 'A different Telephone Line install already owns the supervisor task. This install root was not changed.'
 }
 
@@ -938,21 +940,41 @@ function Invoke-TelephoneLineUninstall {
             if ([string]::IsNullOrWhiteSpace($stateRoot)) {
                 return (New-TelephoneInstallResult -Ok $false -Action 'uninstall' -Code 'STATE_ROOT_REQUIRED')
             }
-            $inFlight = Get-TelephoneInFlightJobCount -StateRoot $stateRoot
-            if ($inFlight -gt 0) {
-                return (New-TelephoneInstallResult -Ok $true -Action 'uninstall' -Code 'IN_FLIGHT_JOBS_PRESENT' -Status 'refused_in_flight' -Extra ([ordered]@{
-                    changed = $false
-                    in_flight_jobs = [int]$inFlight
-                }))
+            $resolvedLineEarly = Resolve-TelephoneInstallCallerPath -Path $stateRoot
+            $lineBound = ($resolvedLineEarly.Equals($dest, [StringComparison]::OrdinalIgnoreCase) -or $resolvedLineEarly.StartsWith($dest + '\', [StringComparison]::OrdinalIgnoreCase))
+            if ($lineBound) {
+                $inFlight = Get-TelephoneInFlightJobCount -StateRoot $stateRoot
+                if ($inFlight -gt 0) {
+                    return (New-TelephoneInstallResult -Ok $true -Action 'uninstall' -Code 'IN_FLIGHT_JOBS_PRESENT' -Status 'refused_in_flight' -Extra ([ordered]@{
+                        changed = $false
+                        in_flight_jobs = [int]$inFlight
+                    }))
+                }
             }
         }
 
         Import-TelephoneSupervisorCommon
         $taskGate = Test-TelephoneSupervisorTaskAvailableForInstallRoot -InstallRoot $dest
         $ownsSupervisorTask = ([bool]$taskGate.registered -and [bool]$taskGate.available)
+        $taskRecord = $null
+        try { $taskRecord = Invoke-TelephoneSupervisorTaskOperation -Operation get -InstallRoot $dest } catch { $taskRecord = $null }
+        $taskState = ''
+        if ($null -ne $taskRecord) { $taskState = Get-TelephoneSupervisorTaskOwnedStateRoot -Task $taskRecord }
+        $envSup = ''
+        try {
+            if (-not [string]::IsNullOrWhiteSpace([string]$env:TELEPHONE_LINE_SUPERVISOR_STATE_ROOT)) {
+                $envSup = [IO.Path]::GetFullPath([string]$env:TELEPHONE_LINE_SUPERVISOR_STATE_ROOT).TrimEnd('\')
+            }
+        } catch { $envSup = '' }
         $supState = $null
         if ($ownsSupervisorTask) {
-            $supState = Resolve-TelephoneSupervisorStateRoot
+            if ([string]::IsNullOrWhiteSpace($taskState)) {
+                return (New-TelephoneInstallResult -Ok $false -Action 'uninstall' -Code 'SUPERVISOR_STATE_AMBIGUOUS')
+            }
+            if (-not [string]::IsNullOrWhiteSpace($envSup) -and -not $envSup.Equals($taskState, [StringComparison]::OrdinalIgnoreCase)) {
+                return (New-TelephoneInstallResult -Ok $false -Action 'uninstall' -Code 'SUPERVISOR_STATE_FOREIGN')
+            }
+            $supState = $taskState
             try { $null = Write-TelephoneSupervisorPause -StateRoot $supState -Paused $true } catch { }
             foreach ($run in @(Get-TelephoneSupervisorActiveRunList -StateRoot $supState)) {
                 $null = Stop-TelephoneSupervisorExactRun -StateRoot $supState -RunId ([string]$run.run_id)
@@ -971,9 +993,6 @@ function Invoke-TelephoneLineUninstall {
         }
         if (-not [string]::IsNullOrWhiteSpace($supState)) {
             $null = Wait-TelephoneRecycleOwnershipQuiescence -StateRoot $supState
-        }
-        if (-not [string]::IsNullOrWhiteSpace($stateRoot) -and ([string]::IsNullOrWhiteSpace($supState) -or -not $stateRoot.Equals($supState, [StringComparison]::OrdinalIgnoreCase))) {
-            $null = Wait-TelephoneRecycleOwnershipQuiescence -StateRoot $stateRoot
         }
         foreach ($row in @($manifest.files)) {
             $rel = [string]$row.path
@@ -1001,8 +1020,17 @@ function Invoke-TelephoneLineUninstall {
         $stateRemoved = $false
         if ($RemoveState) {
             $targets = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+            $lineOwned = $false
             if (-not [string]::IsNullOrWhiteSpace($stateRoot) -and (Test-TelephoneRecyclePathPresent -Path $stateRoot)) {
-                [void]$targets.Add((Resolve-TelephoneInstallCallerPath -Path $stateRoot))
+                $resolvedLine = Resolve-TelephoneInstallCallerPath -Path $stateRoot
+                if ($resolvedLine.Equals($dest, [StringComparison]::OrdinalIgnoreCase) -or $resolvedLine.StartsWith($dest + '\', [StringComparison]::OrdinalIgnoreCase)) {
+                    $lineOwned = $true
+                } elseif (-not [string]::IsNullOrWhiteSpace($supState) -and $resolvedLine.Equals($supState, [StringComparison]::OrdinalIgnoreCase)) {
+                    $lineOwned = $true
+                }
+                if ($lineOwned) {
+                    [void]$targets.Add($resolvedLine)
+                }
             }
             if ($ownsSupervisorTask -and -not [string]::IsNullOrWhiteSpace($supState) -and (Test-TelephoneRecyclePathPresent -Path $supState)) {
                 [void]$targets.Add((Resolve-TelephoneInstallCallerPath -Path $supState))

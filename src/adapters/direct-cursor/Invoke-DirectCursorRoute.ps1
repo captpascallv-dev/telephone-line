@@ -141,9 +141,11 @@ function New-DirectReceipt {
     } else { '' }
     $cursorResult = $null
     $transportError = $null
+    $parsedResult = $null
     try {
         if ([string]::IsNullOrWhiteSpace($stdoutText)) { throw 'Cursor result is missing.' }
-        $cursorResult = $stdoutText | ConvertFrom-Json -AsHashtable -Depth 64 -DateKind String
+        $parsedResult = $stdoutText | ConvertFrom-Json -AsHashtable -Depth 64 -DateKind String
+        $cursorResult = $parsedResult
         if ($cursorResult -isnot [Collections.IDictionary] -or $cursorResult.success -isnot [bool]) { throw 'Cursor result is not a terminal result object.' }
         if ([string]$cursorResult.prompt_sha256 -cne [string]$request.prompt.sha256) { throw 'Cursor result prompt binding differs.' }
         if (-not [IO.Path]::GetFullPath([string]$cursorResult.workspace).Equals([IO.Path]::GetFullPath([string]$request.workspace), [StringComparison]::OrdinalIgnoreCase)) { throw 'Cursor result workspace differs.' }
@@ -153,7 +155,10 @@ function New-DirectReceipt {
         $expectedAllowed = [string[]]@($request.allowed_write_paths | ForEach-Object { [string]$_ } | Sort-Object -Unique)
         if (($actualAllowed -join "`n") -cne ($expectedAllowed -join "`n")) { throw 'Cursor result write scope differs.' }
         if ($cursorResult.Contains('error') -and -not [string]::IsNullOrWhiteSpace([string]$cursorResult.error)) {
-            $cursorResult.error = Get-DirectPublicError -Message ([string]$cursorResult.error)
+            if (-not $cursorResult.Contains('public_error')) {
+                $cursorResult['public_error'] = Get-DirectPublicError -Message ([string]$cursorResult.error)
+            }
+            $cursorResult.error = [string]$cursorResult['public_error']
         }
         $isPolicy = $cursorResult.Contains('failure_kind') -and [string]$cursorResult.failure_kind -ceq 'policy'
         if ([bool]$cursorResult.success -ne $true -and -not $isPolicy) {
@@ -161,7 +166,7 @@ function New-DirectReceipt {
         }
     } catch {
         $transportError = Get-DirectPublicError -Message $_.Exception.Message
-        $cursorResult = $null
+        if ($parsedResult -is [Collections.IDictionary]) { $cursorResult = $parsedResult } else { $cursorResult = $null }
     }
 
     $transportComplete = $null -eq $transportError -and $null -ne $cursorResult
@@ -226,7 +231,8 @@ function Wait-DirectJob {
 function Write-AdapterResult {
     param(
         [Parameter(Mandatory = $true)][string]$Op,
-        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$SessionId,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$RequestedSessionId,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$ReturnedSessionId,
         [Parameter(Mandatory = $true)][object]$Terminal
     )
     $value = $Terminal.value
@@ -237,7 +243,10 @@ function Write-AdapterResult {
         protocol_version = 'telephone-line-adapter-result-v1'
         route_id = 'direct-cursor'
         operation = $Op
-        native_session_id = $SessionId
+        native_session_id = $ReturnedSessionId
+        requested_native_session_id = $RequestedSessionId
+        returned_native_session_id = $ReturnedSessionId
+        returned_session_verified = -not [string]::IsNullOrWhiteSpace($ReturnedSessionId)
         job_id = [string]$value.job_id
         automatic_rerun = $false
         replacement_started = $false
@@ -257,15 +266,32 @@ function Write-AdapterResult {
         if ($null -ne $prompt) { $result.prompt = $prompt }
         $promptSha256 = [string](Get-DirectNoteValue -Object $cursorResult -Name 'prompt_sha256')
         if (-not [string]::IsNullOrWhiteSpace($promptSha256)) { $result.prompt_sha256 = $promptSha256 }
-        foreach ($field in @('failure_kind', 'failure_code', 'failure_stage')) {
+        foreach ($field in @('failure_kind', 'failure_code', 'failure_stage', 'exception_type', 'stdout_bytes', 'stderr_bytes', 'native_exit_code')) {
             $fieldValue = Get-DirectNoteValue -Object $cursorResult -Name $field
-            if ($null -ne $fieldValue -and -not [string]::IsNullOrWhiteSpace([string]$fieldValue)) { $result[$field] = [string]$fieldValue }
+            if ($null -ne $fieldValue -and -not [string]::IsNullOrWhiteSpace([string]$fieldValue)) { $result[$field] = $fieldValue }
         }
+        $evidence = Get-DirectNoteValue -Object $cursorResult -Name 'evidence'
+        if ($null -ne $evidence) { $result.evidence = $evidence }
         if (-not $result.Contains('failure_kind') -and $result.transport_complete -ne $true) { $result.failure_kind = 'transport' }
         if (-not $result.Contains('failure_code') -and $result.transport_complete -ne $true) { $result.failure_code = 'adapter_transport_failure' }
         if (-not $result.Contains('failure_stage') -and $result.transport_complete -ne $true) { $result.failure_stage = 'cursor_execution' }
     }
     $result | ConvertTo-Json -Depth 16
+}
+
+function Complete-DirectCursorAdapterTerminal {
+    param(
+        [Parameter(Mandatory = $true)][string]$Op,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$RequestedSessionId,
+        [Parameter(Mandatory = $true)][object]$Terminal
+    )
+    $returned = Resolve-DirectCursorReturnedSessionId -Terminal $Terminal
+    if ($Op -eq 'follow_up') {
+        $gate = Test-DirectCursorFollowUpSessionGate -RequestedSessionId $RequestedSessionId -ReturnedSessionId $returned
+        if ([bool]$gate.reject) { throw 'Adapter native session id does not match the frozen session.' }
+    }
+    Write-AdapterResult -Op $Op -RequestedSessionId $RequestedSessionId -ReturnedSessionId $returned -Terminal $Terminal
+    exit (Get-DirectCursorAdapterExitCode -Terminal $Terminal)
 }
 
 $adapterRoot = Get-DirectCanonicalDirectory -Path $PSScriptRoot
@@ -344,10 +370,7 @@ if ($Operation -eq 'recover') {
     $paths = Get-JobPaths -Root $resolvedStateRoot -Id $job
     if (-not [IO.Directory]::Exists($paths.root)) { throw 'Adapter durable state was not found.' }
     $terminal = Wait-DirectJob -Paths $paths -TimeoutSeconds $WaitTimeoutSeconds -AllowStart $false
-    Write-AdapterResult -Op 'recover' -SessionId $NativeSessionId -Terminal $terminal
-    if ([string]$terminal.value.protocol_version -ceq 'telephone-line-direct-cursor-status-v1') { exit 3 }
-    if ($terminal.value.transport_complete -eq $true) { exit 0 }
-    exit 2
+    Complete-DirectCursorAdapterTerminal -Op 'recover' -RequestedSessionId $NativeSessionId -Terminal $terminal
 }
 
 if ([string]::IsNullOrWhiteSpace($WorkspacePath) -or [string]::IsNullOrWhiteSpace($PromptFile)) {
@@ -362,16 +385,7 @@ if ([IO.Directory]::Exists($paths.root)) {
         if ([string]$existing.value.resume_session_id -cne $NativeSessionId) { throw 'Adapter native session id does not match the frozen session.' }
     }
     $terminal = Wait-DirectJob -Paths $paths -TimeoutSeconds $WaitTimeoutSeconds -AllowStart $false
-    $session = if ($null -ne $terminal.value.native_session_id -and -not [string]::IsNullOrWhiteSpace([string]$terminal.value.native_session_id)) {
-        [string]$terminal.value.native_session_id
-    } else {
-        $fromResult = Get-DirectCursorResultSessionId -Result $(if ($null -ne $terminal.value.cursor_result) { $terminal.value.cursor_result } else { $null })
-        if (-not [string]::IsNullOrWhiteSpace($fromResult)) { $fromResult } else { [string]$existing.value.resume_session_id }
-    }
-    Write-AdapterResult -Op $Operation -SessionId $session -Terminal $terminal
-    if ([string]$terminal.value.protocol_version -ceq 'telephone-line-direct-cursor-status-v1') { exit 3 }
-    if ($terminal.value.transport_complete -eq $true) { exit 0 }
-    exit 2
+    Complete-DirectCursorAdapterTerminal -Op $Operation -RequestedSessionId $(if ($Operation -eq 'start') { '' } else { $NativeSessionId }) -Terminal $terminal
 }
 
 if ($Operation -eq 'follow_up') {
@@ -478,12 +492,11 @@ try {
 }
 
 $terminal = Wait-DirectJob -Paths $paths -TimeoutSeconds $WaitTimeoutSeconds -AllowStart $true
-$sessionId = if ($null -ne $terminal.value.native_session_id -and -not [string]::IsNullOrWhiteSpace([string]$terminal.value.native_session_id)) {
-    [string]$terminal.value.native_session_id
-} else {
-    Get-DirectCursorResultSessionId -Result $(if ($null -ne $terminal.value.cursor_result) { $terminal.value.cursor_result } else { $null })
+$sessionId = Resolve-DirectCursorReturnedSessionId -Terminal $terminal
+if ($Operation -eq 'follow_up') {
+    $gate = Test-DirectCursorFollowUpSessionGate -RequestedSessionId $NativeSessionId -ReturnedSessionId $sessionId
+    if ([bool]$gate.reject) { throw 'Adapter native session id does not match the frozen session.' }
 }
-if ($Operation -eq 'follow_up' -and $sessionId -cne $NativeSessionId) { throw 'Adapter native session id does not match the frozen session.' }
 if ($terminal.value.transport_complete -eq $true -and -not [string]::IsNullOrWhiteSpace($sessionId) -and $null -ne $terminal.identity) {
     Publish-DirectCursorRecoveryBinding -StateRoot $resolvedStateRoot -NativeSessionId $sessionId -JobId $effectiveJobId -ReceiptIdentity $terminal.identity
 }
@@ -508,7 +521,4 @@ if (-not [string]::IsNullOrWhiteSpace($sessionId) -and $terminal.value.transport
         [IO.File]::WriteAllBytes($sessionPaths.binding, $bytes)
     }
 }
-Write-AdapterResult -Op $Operation -SessionId $sessionId -Terminal $terminal
-if ([string]$terminal.value.protocol_version -ceq 'telephone-line-direct-cursor-status-v1') { exit 3 }
-if ($terminal.value.transport_complete -eq $true) { exit 0 }
-exit 2
+Complete-DirectCursorAdapterTerminal -Op $Operation -RequestedSessionId $(if ($Operation -eq 'start') { '' } else { $NativeSessionId }) -Terminal $terminal

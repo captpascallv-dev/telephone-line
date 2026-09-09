@@ -219,7 +219,7 @@ function Get-DirectCursorFailureClassification {
     } elseif ($text -cmatch '(?i)malformed NDJSON|stream must contain|terminal result|session identity is missing or inconsistent') {
         $code = 'cursor_terminal_invalid'
         $publicCode = 'DIRECT_CURSOR_TERMINAL_INVALID'
-    } elseif ($text -cmatch '(?i)Cursor CLI exited|Cursor CLI wrote to stderr|Cursor process-tree|Cursor CLI process did not start') {
+    }     elseif ($text -cmatch '(?i)Cursor CLI exited|Cursor CLI wrote to stderr|Cursor process-tree|Cursor CLI process did not start|output exceeded the bounded result size|startup or command probe exceeded') {
         $code = 'cursor_cli_failure'
         $publicCode = 'DIRECT_CURSOR_CLI_FAILURE'
     }
@@ -230,6 +230,172 @@ function Get-DirectCursorFailureClassification {
         failure_stage = $(if ([string]::IsNullOrWhiteSpace($Stage)) { 'unknown' } else { $Stage })
         public_error_code = $publicCode
     }
+}
+
+function New-DirectCursorProcessDiagnosticDirectory {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$SessionRoot,
+        [string]$DispatchId
+    )
+
+    $root = [IO.Path]::GetFullPath($SessionRoot).TrimEnd('\')
+    $dispatch = if ([string]::IsNullOrWhiteSpace($DispatchId)) { [Guid]::NewGuid().ToString('D') } else { $DispatchId }
+    $dir = Join-Path $root ('diagnostics\' + $dispatch + '\' + [Guid]::NewGuid().ToString('N'))
+    [IO.Directory]::CreateDirectory($dir) | Out-Null
+    return $dir
+}
+
+function Write-DirectCursorProcessDiagnostic {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Directory,
+        [string]$Stage = 'unknown',
+        [AllowNull()][string]$ExceptionType,
+        [AllowNull()][string]$ExceptionMessage,
+        [AllowNull()][object]$Classification,
+        [string]$RequestedSessionId = '',
+        [string]$ReturnedSessionId = '',
+        [int]$NativePid = 0,
+        [int64]$NativeStartTicks = 0,
+        [string]$NativeExecutable = '',
+        [AllowNull()][object]$NativeExitCode,
+        [string]$StdoutPath = '',
+        [string]$StderrPath = '',
+        [int]$OutputByteLimit = 0,
+        [int]$MemoryStdoutBytes = 0,
+        [int]$MemoryStderrBytes = 0,
+        [int]$ProcessTimeoutSeconds = 0,
+        [bool]$OverLimit = $false
+    )
+
+    $dir = [IO.Path]::GetFullPath($Directory).TrimEnd('\')
+    $stdoutIdentity = $null
+    $stderrIdentity = $null
+    $stdoutBytes = [int64]0
+    $stderrBytes = [int64]0
+    if (-not [string]::IsNullOrWhiteSpace($StdoutPath) -and [IO.File]::Exists($StdoutPath)) {
+        $stdoutIdentity = Get-DirectFileIdentity -Path $StdoutPath
+        $stdoutBytes = [int64]$stdoutIdentity.bytes
+    }
+    if (-not [string]::IsNullOrWhiteSpace($StderrPath) -and [IO.File]::Exists($StderrPath)) {
+        $stderrIdentity = Get-DirectFileIdentity -Path $StderrPath
+        $stderrBytes = [int64]$stderrIdentity.bytes
+    }
+    $exitValue = $null
+    if ($null -ne $NativeExitCode -and [string]$NativeExitCode -ne '') {
+        $exitValue = [int]$NativeExitCode
+    }
+    $doc = [ordered]@{
+        protocol_version = 'telephone-line-direct-cursor-process-diagnostic-v1'
+        stage = $(if ([string]::IsNullOrWhiteSpace($Stage)) { 'unknown' } else { $Stage })
+        exception_type = $(if ([string]::IsNullOrWhiteSpace($ExceptionType)) { '' } else { $ExceptionType })
+        exception_message = Limit-DirectText -Text ([string]$ExceptionMessage) -Limit 2000
+        failure_kind = if ($null -ne $Classification) { [string](Get-DirectNoteValue -Object $Classification -Name 'failure_kind') } else { '' }
+        failure_code = if ($null -ne $Classification) { [string](Get-DirectNoteValue -Object $Classification -Name 'failure_code') } else { '' }
+        failure_stage = if ($null -ne $Classification) { [string](Get-DirectNoteValue -Object $Classification -Name 'failure_stage') } else { $Stage }
+        public_error_code = if ($null -ne $Classification) { [string](Get-DirectNoteValue -Object $Classification -Name 'public_error_code') } else { '' }
+        requested_native_session_id = [string]$RequestedSessionId
+        returned_native_session_id = [string]$ReturnedSessionId
+        returned_session_verified = $false
+        native_pid = [int]$NativePid
+        native_start_time_utc_ticks = [int64]$NativeStartTicks
+        native_executable = [string]$NativeExecutable
+        native_exit_code = $exitValue
+        stdout_bytes = $stdoutBytes
+        stderr_bytes = $stderrBytes
+        memory_stdout_bytes = [int]$MemoryStdoutBytes
+        memory_stderr_bytes = [int]$MemoryStderrBytes
+        output_byte_limit = [int]$OutputByteLimit
+        process_timeout_seconds = [int]$ProcessTimeoutSeconds
+        over_limit = [bool]$OverLimit
+        stdout = $stdoutIdentity
+        stderr = $stderrIdentity
+        recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+    }
+    $path = Join-Path $dir 'process-diagnostic.json'
+    $identity = Write-DirectJsonCreateNew -Path $path -Value $doc
+    return [ordered]@{
+        path = [string]$identity.path
+        bytes = [int64]$identity.bytes
+        sha256 = [string]$identity.sha256
+        stdout_bytes = $stdoutBytes
+        stderr_bytes = $stderrBytes
+        native_exit_code = $exitValue
+        native_pid = [int]$NativePid
+        directory = $dir
+        stdout = $stdoutIdentity
+        stderr = $stderrIdentity
+        requested_native_session_id = [string]$RequestedSessionId
+        returned_native_session_id = [string]$ReturnedSessionId
+    }
+}
+
+function Test-DirectCursorFollowUpSessionGate {
+    [CmdletBinding()]
+    param(
+        [string]$RequestedSessionId,
+        [string]$ReturnedSessionId
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ReturnedSessionId)) {
+        return [ordered]@{
+            reject = $false
+            reason = 'empty_returned_is_not_identity_mismatch'
+            returned_verified = $false
+        }
+    }
+    if ($ReturnedSessionId -cne $RequestedSessionId) {
+        return [ordered]@{
+            reject = $true
+            reason = 'genuine_returned_session_mismatch'
+            returned_verified = $false
+        }
+    }
+    return [ordered]@{
+        reject = $false
+        reason = 'returned_matches_frozen'
+        returned_verified = $true
+    }
+}
+
+function Resolve-DirectCursorReturnedSessionId {
+    [CmdletBinding()]
+    param($Terminal)
+
+    $value = $null
+    if ($null -ne $Terminal -and $Terminal -is [Collections.IDictionary] -and $Terminal.Contains('value')) {
+        $value = $Terminal['value']
+    } else {
+        $value = $Terminal
+    }
+    $fromTerminal = [string](Get-DirectNoteValue -Object $value -Name 'native_session_id')
+    if (-not [string]::IsNullOrWhiteSpace($fromTerminal)) { return $fromTerminal }
+    $cursorResult = Get-DirectNoteValue -Object $value -Name 'cursor_result'
+    $fromResult = [string](Get-DirectNoteValue -Object $cursorResult -Name 'session_id')
+    if (-not [string]::IsNullOrWhiteSpace($fromResult)) { return $fromResult }
+    $fromReturned = [string](Get-DirectNoteValue -Object $cursorResult -Name 'returned_native_session_id')
+    if (-not [string]::IsNullOrWhiteSpace($fromReturned)) { return $fromReturned }
+    return ''
+}
+
+function Get-DirectCursorAdapterExitCode {
+    [CmdletBinding()]
+    param($Terminal)
+
+    $value = $null
+    if ($null -ne $Terminal -and $Terminal -is [Collections.IDictionary] -and $Terminal.Contains('value')) {
+        $value = $Terminal['value']
+    } else {
+        $value = $Terminal
+    }
+    if ([string](Get-DirectNoteValue -Object $value -Name 'protocol_version') -ceq 'telephone-line-direct-cursor-status-v1') {
+        return 3
+    }
+    $transportComplete = Get-DirectNoteValue -Object $value -Name 'transport_complete'
+    $cursorSuccess = Get-DirectNoteValue -Object $value -Name 'cursor_success'
+    if ($transportComplete -eq $true -and $cursorSuccess -eq $true) { return 0 }
+    return 2
 }
 
 function Get-DirectCursorPreflightCheckCodes {
@@ -630,8 +796,11 @@ function ConvertFrom-DirectCursorNdjson {
         }
     }
 
-    $initEvents = @($events | Where-Object { $_.type -eq 'system' -and $_.subtype -eq 'init' })
-    $resultEvents = @($events | Where-Object { $_.type -eq 'result' })
+    $initEvents = @($events | Where-Object {
+        [string](Get-DirectNoteValue -Object $_ -Name 'type') -eq 'system' -and
+        [string](Get-DirectNoteValue -Object $_ -Name 'subtype') -eq 'init'
+    })
+    $resultEvents = @($events | Where-Object { [string](Get-DirectNoteValue -Object $_ -Name 'type') -eq 'result' })
     $shapeOk = ($initEvents.Count -eq 1 -and $resultEvents.Count -eq 1)
     return [ordered]@{
         available = $true
@@ -963,6 +1132,13 @@ function Complete-DirectCursorAgentRun {
         }
     }
 
+    if ([int]$Run.ExitCode -ne 0) {
+        return (& $cursorFailure ('Cursor CLI exited {0}: {1}' -f [int]$Run.ExitCode, (Limit-DirectText -Text ([string]$Run.Stderr) -Limit $MaxErrorChars)))
+    }
+    if (-not [string]::IsNullOrWhiteSpace([string]$Run.Stderr)) {
+        return (& $cursorFailure ('Cursor CLI wrote to stderr: {0}' -f (Limit-DirectText -Text ([string]$Run.Stderr) -Limit $MaxErrorChars)))
+    }
+
     if ($true -ne $validation.valid) {
         return (& $cursorFailure ([string]$validation.error_message))
     }
@@ -1006,12 +1182,6 @@ function Complete-DirectCursorAgentRun {
 
     if ($Mode -ceq 'ReadOnly' -and $normalizedChanges.Count -gt 0) {
         return (& $cursorFailure 'Read-only Cursor dispatch changed workspace files.')
-    }
-    if ([int]$Run.ExitCode -ne 0) {
-        return (& $cursorFailure ('Cursor CLI exited {0}: {1}' -f [int]$Run.ExitCode, (Limit-DirectText -Text ([string]$Run.Stderr) -Limit $MaxErrorChars)))
-    }
-    if (-not [string]::IsNullOrWhiteSpace([string]$Run.Stderr)) {
-        return (& $cursorFailure ('Cursor CLI wrote to stderr: {0}' -f (Limit-DirectText -Text ([string]$Run.Stderr) -Limit $MaxErrorChars)))
     }
 
     $init = $validation.init

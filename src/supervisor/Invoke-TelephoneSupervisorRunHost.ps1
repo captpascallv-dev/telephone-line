@@ -23,6 +23,25 @@ if ([string]$request.run_id -cne [string]$RunId) { throw 'Supervisor claimed run
 
 $env:TELEPHONE_LINE_SUPERVISOR_RUN_ID = [string]$RunId
 $env:TELEPHONE_LINE_SUPERVISOR_STATE_ROOT = [string]$resolvedState
+$pathsEarly = Get-TelephoneSupervisorPaths -StateRoot $resolvedState
+$runDirEarly = Join-Path $pathsEarly.runs $RunId
+if (-not [IO.Directory]::Exists($runDirEarly)) { [IO.Directory]::CreateDirectory($runDirEarly) | Out-Null }
+$hostProcEarly = Get-Process -Id $PID
+try {
+    $launchIntent = [ordered]@{
+        protocol_version = 'telephone-line-supervisor-launch-intent-v1'
+        run_id = [string]$RunId
+        request_sha256 = [string]$request.request_sha256
+        pid = [int]$hostProcEarly.Id
+        start_time_utc_ticks = [int64]$hostProcEarly.StartTime.ToUniversalTime().Ticks
+        started_at_utc = $hostProcEarly.StartTime.ToUniversalTime().ToString('o')
+        executable_path = [string]([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
+        recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+    }
+} finally {
+    $hostProcEarly.Dispose()
+}
+try { $null = Write-TelephoneJsonCreateNew -Path (Join-Path $runDirEarly 'launch-intent.json') -Value $launchIntent } catch [IO.IOException] { }
 $scriptRuntime = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..')).TrimEnd('\')
 $installCandidate = ''
 if (-not [string]::IsNullOrWhiteSpace($InstallRoot)) {

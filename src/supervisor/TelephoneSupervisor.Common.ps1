@@ -804,10 +804,52 @@ function Get-TelephoneSupervisorInstallRootFromWrapperIdentity {
             if ($recordedSha -cne $sha) { continue }
             $recordedPath = ''
             if ($doc.Contains('wrapper_path')) { $recordedPath = Convert-TelephoneSupervisorNormalizedInstallRoot -Path ([string]$doc['wrapper_path']) }
-            if (-not [string]::IsNullOrWhiteSpace($recordedPath) -and -not $recordedPath.Equals($full, [StringComparison]::OrdinalIgnoreCase)) { continue }
+            if (-not [string]::IsNullOrWhiteSpace($recordedPath) -and -not $recordedPath.Equals($full, [StringComparison]::OrdinalIgnoreCase)) {
+                if (-not [IO.File]::Exists($recordedPath)) { continue }
+                $canonicalBytes = [IO.File]::ReadAllBytes($recordedPath)
+                $canonicalSha = ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($canonicalBytes))).ToLowerInvariant()
+                if ($canonicalSha -cne $sha) { continue }
+            }
             $installRoot = ''
             if ($doc.Contains('install_root')) { $installRoot = Convert-TelephoneSupervisorNormalizedInstallRoot -Path ([string]$doc['install_root']) }
             if ([string]::IsNullOrWhiteSpace($installRoot)) { continue }
+            $targetScript = ''
+            if ($doc.Contains('target_script')) { $targetScript = Convert-TelephoneSupervisorNormalizedInstallRoot -Path ([string]$doc['target_script']) }
+            if ([string]::IsNullOrWhiteSpace($targetScript)) { continue }
+            $targetName = [IO.Path]::GetFileName($targetScript)
+            if ($targetName -cnotin @('Start-TelephoneSupervisorHostVisible.ps1', 'Invoke-TelephoneSupervisor.ps1')) { continue }
+            if (-not $targetScript.StartsWith($installRoot + '\', [StringComparison]::OrdinalIgnoreCase) -and -not $targetScript.Equals($installRoot, [StringComparison]::OrdinalIgnoreCase)) { continue }
+            $working = ''
+            if ($doc.Contains('working_directory')) { $working = Convert-TelephoneSupervisorNormalizedInstallRoot -Path ([string]$doc['working_directory']) }
+            if (-not [string]::IsNullOrWhiteSpace($working) -and -not $working.Equals($installRoot, [StringComparison]::OrdinalIgnoreCase)) { continue }
+            $utf8 = [Text.Encoding]::UTF8.GetString($bytes)
+            $utf16 = [Text.Encoding]::Unicode.GetString($bytes)
+            $needle = [IO.Path]::GetFileName($targetScript)
+            $targetPresent = ($utf8.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0) -or ($utf16.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0)
+            if (-not $targetPresent) {
+                foreach ($hay in @($utf8, $utf16)) {
+                    foreach ($blob in @([regex]::Matches($hay, '[A-Za-z0-9+/]{32,}={0,2}'))) {
+                        try {
+                            $raw = [Convert]::FromBase64String([string]$blob.Value)
+                            foreach ($decoded in @([Text.Encoding]::UTF8.GetString($raw), [Text.Encoding]::Unicode.GetString($raw))) {
+                                if (
+                                    $decoded.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                                    $decoded.IndexOf($targetScript, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                                    $decoded.IndexOf($installRoot, [StringComparison]::OrdinalIgnoreCase) -ge 0
+                                ) {
+                                    if ($decoded.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or $decoded.IndexOf($targetScript, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                                        $targetPresent = $true
+                                        break
+                                    }
+                                }
+                            }
+                        } catch { }
+                        if ($targetPresent) { break }
+                    }
+                    if ($targetPresent) { break }
+                }
+            }
+            if (-not $targetPresent) { continue }
             return $installRoot
         } catch { }
     }
@@ -848,6 +890,55 @@ function Get-TelephoneSupervisorInstallRootFromArguments {
     $bare = [regex]::Match($text, '(?i)-InstallRoot\s+(\S+)')
     if ($bare.Success) { return (Convert-TelephoneSupervisorNormalizedInstallRoot -Path ([string]$bare.Groups[1].Value.Trim('"'))) }
     return (Get-TelephoneSupervisorInstallRootFromActionScript -ActionScript (Get-TelephoneSupervisorTaskActionScript -Arguments $text))
+}
+
+function Get-TelephoneSupervisorStateRootFromArguments {
+    [CmdletBinding()]
+    param([AllowNull()][string]$Arguments)
+    $text = [string]$Arguments
+    if ([string]::IsNullOrWhiteSpace($text)) { return '' }
+    $encoded = [regex]::Match($text, '(?i)-EncodedCommand\s+([A-Za-z0-9+/=]+)')
+    if ($encoded.Success) {
+        try {
+            $command = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String([string]$encoded.Groups[1].Value))
+            $nested = Get-TelephoneSupervisorStateRootFromArguments -Arguments $command
+            if (-not [string]::IsNullOrWhiteSpace($nested)) { return $nested }
+        } catch { }
+    }
+    $single = [regex]::Match($text, "(?i)-StateRoot\s+'((?:''|[^'])+)'")
+    if ($single.Success) { return (Convert-TelephoneSupervisorNormalizedInstallRoot -Path ([string]$single.Groups[1].Value.Replace("''", "'"))) }
+    $quoted = [regex]::Match($text, '(?i)-StateRoot\s+"([^"]+)"')
+    if ($quoted.Success) { return (Convert-TelephoneSupervisorNormalizedInstallRoot -Path ([string]$quoted.Groups[1].Value)) }
+    $bare = [regex]::Match($text, '(?i)-StateRoot\s+(\S+)')
+    if ($bare.Success) { return (Convert-TelephoneSupervisorNormalizedInstallRoot -Path ([string]$bare.Groups[1].Value.Trim('"'))) }
+    return ''
+}
+
+function Get-TelephoneSupervisorTaskOwnedStateRoot {
+    [CmdletBinding()]
+    param([AllowNull()][object]$Task)
+    if ($null -eq $Task) { return '' }
+    $registered = $false
+    if ($Task -is [Collections.IDictionary]) {
+        if ($Task.Contains('registered')) { $registered = [bool]$Task['registered'] }
+    } else {
+        try { $registered = [bool]$Task.registered } catch { $registered = $false }
+    }
+    if (-not $registered) { return '' }
+    $found = [Collections.Generic.List[string]]::new()
+    foreach ($candidate in @(
+        (Convert-TelephoneSupervisorNormalizedInstallRoot -Path (Get-TelephoneSupervisorTaskMapText -Task $Task -Name 'state_root')),
+        (Get-TelephoneSupervisorStateRootFromArguments -Arguments (Get-TelephoneSupervisorTaskMapText -Task $Task -Name 'action_arguments'))
+    )) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+        $dup = $false
+        foreach ($existing in $found) {
+            if ($existing.Equals($candidate, [StringComparison]::OrdinalIgnoreCase)) { $dup = $true; break }
+        }
+        if (-not $dup) { [void]$found.Add($candidate) }
+    }
+    if ($found.Count -eq 1) { return [string]$found[0] }
+    return ''
 }
 
 function Get-TelephoneSupervisorTaskOwnedInstallRoot {
@@ -2097,31 +2188,31 @@ function Reconcile-TelephoneSupervisorClaimed {
         $runId = [string]$claimed.value.run_id
         $outboxPath = Get-TelephoneSupervisorRecordPath -StateRoot $StateRoot -Kind outbox -RunId $runId
         if ([IO.File]::Exists($outboxPath)) { continue }
+        $runDir = Join-Path $paths.runs $runId
+        if (-not [IO.Directory]::Exists($runDir)) { [IO.Directory]::CreateDirectory($runDir) | Out-Null }
+        $intentPath = Join-Path $runDir 'host-start-intent.json'
+        $launchIntentPath = Join-Path $runDir 'launch-intent.json'
+        $hasIntent = ([IO.File]::Exists($intentPath) -or [IO.File]::Exists($launchIntentPath))
         $ownerRead = Read-TelephoneSupervisorRunOwner -StateRoot $StateRoot -RunId $runId
         if ($null -eq $ownerRead) {
             $memberRead = Read-TelephoneSupervisorJobMembers -StateRoot $StateRoot -RunId $runId
             $job = Open-TelephoneSupervisorRunJob -RunId $runId -WaitMilliseconds 0
-            $decision = 'proven_not_started'
-            $errorCode = 'SUPERVISOR_CLAIMED_NOT_STARTED'
-            $terminal = 'failed'
+            $decision = 'UNKNOWN'
+            $errorCode = 'SUPERVISOR_CLAIMED_UNKNOWN'
             try {
                 if (Test-TelephoneSupervisorLiveExactMembers -MemberRecord $memberRead -Job $job) {
                     $decision = 'attached'
                     $errorCode = ''
-                    $terminal = ''
                 } elseif ($null -ne $job -and [IntPtr]$job.handle -ne [IntPtr]::Zero) {
                     $left = @(Get-TelephoneSupervisorJobProcessIds -Job $job)
                     if ($left.Count -gt 0) {
                         $decision = 'UNKNOWN'
                         $errorCode = 'SUPERVISOR_CLAIMED_UNKNOWN'
-                        $terminal = 'failed'
                     }
                 }
             } finally {
                 Close-TelephoneSupervisorRunJob -Job $job
             }
-            $runDir = Join-Path $paths.runs $runId
-            if (-not [IO.Directory]::Exists($runDir)) { [IO.Directory]::CreateDirectory($runDir) | Out-Null }
             $reconcilePath = Join-Path $runDir 'claimed-reconcile.json'
             $record = [ordered]@{
                 protocol_version = 'telephone-line-supervisor-claimed-reconcile-v1'
@@ -2130,12 +2221,12 @@ function Reconcile-TelephoneSupervisorClaimed {
                 error_code = $errorCode
                 replay = $false
                 silent_skip = $false
+                launch_intent_present = [bool]$hasIntent
                 recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
             }
             try { $null = Write-TelephoneJsonReplace -Path $reconcilePath -Value $record } catch { }
             if ($decision -ceq 'attached') { continue }
-            $null = Write-TelephoneSupervisorOutbox -StateRoot $StateRoot -RunId $runId -Terminal $terminal -Request $claimed.value -ErrorCode $errorCode
-            [void]$reconciled.Add([ordered]@{ run_id = $runId; terminal = $terminal; decision = $decision })
+            [void]$reconciled.Add([ordered]@{ run_id = $runId; terminal = ''; decision = $decision })
             continue
         }
         if (Test-TelephoneSupervisorExactOwner -Owner $ownerRead.value) { continue }

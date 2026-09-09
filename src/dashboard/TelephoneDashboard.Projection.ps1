@@ -1653,7 +1653,7 @@ function Test-TelephoneDashboardJobMustRemainVisible {
         elseif ($null -ne $finding.PSObject.Properties['code']) { $code = [string]$finding.code }
         if (-not [string]::IsNullOrWhiteSpace($code)) { [void]$codes.Add($code) }
     }
-    foreach ($keep in @('RECEIPT_AWAITING_DELIVERY', 'UNKNOWN_EXECUTION', 'CALLBACK_MISSING', 'TURN_DONE_HOST_INCOMPLETE', 'BATCH_COLLECTING')) {
+    foreach ($keep in @('UNKNOWN', 'RECEIPT_AWAITING_DELIVERY', 'UNKNOWN_EXECUTION', 'CALLBACK_MISSING', 'CALLBACK_PENDING', 'TURN_DONE_HOST_INCOMPLETE', 'BATCH_COLLECTING')) {
         if ($codes.Contains($keep)) { return $true }
     }
     $receiptPresent = $false
@@ -1989,7 +1989,8 @@ function Get-TelephoneDashboardProjection {
     [CmdletBinding()]
     param(
         [string]$ConfigPath,
-        [string]$StateRoot
+        [string]$StateRoot,
+        [string]$DashboardStateRoot
     )
 
     $groups = [Collections.Generic.List[object]]::new()
@@ -2048,19 +2049,24 @@ function Get-TelephoneDashboardProjection {
     $lastSuccessAt = ''
     $lastReadErrorAt = ''
     $sourceStale = $false
+    $dashRootForSources = $DashboardStateRoot
+    if ([string]::IsNullOrWhiteSpace($dashRootForSources)) {
+        try { $dashRootForSources = Get-TelephoneDashboardStateRoot } catch { $dashRootForSources = '' }
+    }
     try {
-        $registered = @(Read-TelephoneDashboardLineSources)
-        $dashPathsNow = Get-TelephoneDashboardPaths
-        if ([IO.File]::Exists([string]$dashPathsNow.line_sources)) {
-            try {
-                $srcDoc = (Read-TelephoneJson -Path ([string]$dashPathsNow.line_sources)).value
-                if ($srcDoc -is [Collections.IDictionary]) {
-                    if ($srcDoc.Contains('updated_at_utc')) { $sourceUpdatedAt = [string]$srcDoc['updated_at_utc'] }
-                    if ($srcDoc.Contains('last_success_at_utc')) { $lastSuccessAt = [string]$srcDoc['last_success_at_utc'] }
-                    if ($srcDoc.Contains('last_read_error_at_utc')) { $lastReadErrorAt = [string]$srcDoc['last_read_error_at_utc'] }
-                }
-            } catch { }
+        $sourceDoc = Read-TelephoneDashboardLineSourcesDocument -DashboardStateRoot $dashRootForSources
+        $registered = @()
+        if ([bool]$sourceDoc.ok) {
+            $registered = @($sourceDoc.sources)
+            $sourceUpdatedAt = [string]$sourceDoc.updated_at_utc
+            $lastSuccessAt = [string]$sourceDoc.last_success_at_utc
+            $lastReadErrorAt = [string]$sourceDoc.last_read_error_at_utc
+        } else {
+            $lastReadErrorAt = [string]$sourceDoc.last_read_error_at_utc
+            if ([string]::IsNullOrWhiteSpace($lastReadErrorAt)) { $lastReadErrorAt = [DateTimeOffset]::UtcNow.ToString('o') }
+            $sourceStale = $true
         }
+        $dashPathsNow = Get-TelephoneDashboardPaths -StateRoot $dashRootForSources
         $seenRoots = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
         foreach ($existing in $descriptors) {
             $er = ''
@@ -2518,11 +2524,11 @@ function Get-TelephoneDashboardProjection {
 
     $updated = [DateTimeOffset]::UtcNow.ToString('o')
     $stale = $false
-    if (-not [string]::IsNullOrWhiteSpace($lastReadErrorAt) -and [string]::IsNullOrWhiteSpace($lastSuccessAt)) { $stale = $true }
-    if (-not [string]::IsNullOrWhiteSpace($sourceUpdatedAt)) {
+    if (-not [string]::IsNullOrWhiteSpace($lastReadErrorAt)) { $stale = $true; $sourceStale = $true }
+    if (-not $sourceStale -and -not [string]::IsNullOrWhiteSpace($lastSuccessAt)) {
         try {
-            $age = ([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse($sourceUpdatedAt).ToUniversalTime()).TotalSeconds
-            if ($age -gt 120) { $sourceStale = $true }
+            $successAge = ([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse($lastSuccessAt).ToUniversalTime()).TotalSeconds
+            if ($successAge -gt 120) { $sourceStale = $true }
         } catch { }
     }
     $projection = [ordered]@{
@@ -2535,7 +2541,7 @@ function Get-TelephoneDashboardProjection {
         groups = @($visibleGroups)
     }
     if (-not [string]::IsNullOrWhiteSpace($sourceUpdatedAt)) { $projection['source_updated_at_utc'] = [string]$sourceUpdatedAt }
-    $projection['last_success_at_utc'] = $(if ([string]::IsNullOrWhiteSpace($lastSuccessAt)) { $updated } else { [string]$lastSuccessAt })
+    if (-not [string]::IsNullOrWhiteSpace($lastSuccessAt)) { $projection['last_success_at_utc'] = [string]$lastSuccessAt }
     if (-not [string]::IsNullOrWhiteSpace($lastReadErrorAt)) { $projection['last_read_error_at_utc'] = [string]$lastReadErrorAt }
     return $projection
 }

@@ -126,6 +126,7 @@ function Get-TelephoneDashboardPaths {
         watcher = Join-Path $root 'watcher.json'
         projection = Join-Path $root 'projection.json'
         summary = Join-Path $root 'summary.txt'
+        config = if ([string]::IsNullOrWhiteSpace($StateRoot)) { Get-TelephoneDashboardConfigPath } else { Join-Path $root 'config.json' }
         line_sources = Join-Path $root 'line-sources.json'
     }
 }
@@ -416,22 +417,78 @@ function Stop-TelephoneDashboardExactWatcher {
     return [ordered]@{ stopped = @($stopped); refused = @($refused) }
 }
 
-function Read-TelephoneDashboardLineSources {
+function Read-TelephoneDashboardLineSourcesDocument {
     [CmdletBinding()]
     param([string]$DashboardStateRoot = '')
     $root = $DashboardStateRoot
     if ([string]::IsNullOrWhiteSpace($root)) {
-        try { $root = Get-TelephoneDashboardStateRoot } catch { return @() }
+        try { $root = Get-TelephoneDashboardStateRoot } catch {
+            return [ordered]@{ ok = $false; error = 'state_root_missing'; sources = @(); path = ''; last_success_at_utc = ''; last_read_error_at_utc = ''; updated_at_utc = '' }
+        }
     }
     $paths = Get-TelephoneDashboardPaths -StateRoot $root
     $path = [string]$paths.line_sources
-    if ([string]::IsNullOrWhiteSpace($path) -or -not [IO.File]::Exists($path)) { return @() }
+    if ([string]::IsNullOrWhiteSpace($path) -or -not [IO.File]::Exists($path)) {
+        return [ordered]@{ ok = $true; error = ''; sources = @(); path = $path; last_success_at_utc = ''; last_read_error_at_utc = ''; updated_at_utc = '' }
+    }
     try {
         $doc = (Read-TelephoneJson -Path $path).value
-        if ($doc -isnot [Collections.IDictionary] -or -not $doc.Contains('sources') -or $null -eq $doc['sources']) { return @() }
-        return @($doc['sources'])
+        if ($doc -isnot [Collections.IDictionary]) { throw 'malformed' }
+        $sources = @()
+        if ($doc.Contains('sources') -and $null -ne $doc['sources']) { $sources = @($doc['sources']) }
+        return [ordered]@{
+            ok = $true
+            error = ''
+            sources = $sources
+            path = $path
+            last_success_at_utc = $(if ($doc.Contains('last_success_at_utc')) { [string]$doc['last_success_at_utc'] } else { '' })
+            last_read_error_at_utc = $(if ($doc.Contains('last_read_error_at_utc')) { [string]$doc['last_read_error_at_utc'] } else { '' })
+            updated_at_utc = $(if ($doc.Contains('updated_at_utc')) { [string]$doc['updated_at_utc'] } else { '' })
+        }
     } catch {
-        return @()
+        return [ordered]@{ ok = $false; error = 'malformed'; sources = @(); path = $path; last_success_at_utc = ''; last_read_error_at_utc = [DateTimeOffset]::UtcNow.ToString('o'); updated_at_utc = '' }
+    }
+}
+
+function Read-TelephoneDashboardLineSources {
+    [CmdletBinding()]
+    param([string]$DashboardStateRoot = '')
+    $doc = Read-TelephoneDashboardLineSourcesDocument -DashboardStateRoot $DashboardStateRoot
+    if (-not [bool]$doc.ok) { return @() }
+    return @($doc.sources)
+}
+
+function Update-TelephoneDashboardLineSourceObservation {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$DashboardStateRoot,
+        [switch]$Success,
+        [switch]$ReadError
+    )
+    $root = [IO.Path]::GetFullPath($DashboardStateRoot).TrimEnd('\')
+    $paths = Get-TelephoneDashboardPaths -StateRoot $root
+    $sourcePath = [string]$paths.line_sources
+    if (-not [IO.File]::Exists($sourcePath)) { return }
+    $lockPath = Join-Path $root 'line-sources.lock'
+    $gate = Open-TelephoneExclusiveGate -Path $lockPath -WaitMilliseconds 5000
+    if ($null -eq $gate) { return }
+    try {
+        $now = [DateTimeOffset]::UtcNow.ToString('o')
+        try {
+            $doc = (Read-TelephoneJson -Path $sourcePath).value
+            if ($doc -isnot [Collections.IDictionary]) { throw 'malformed' }
+        } catch {
+            return
+        }
+        if ($ReadError) {
+            $doc['last_read_error_at_utc'] = $now
+        } elseif ($Success) {
+            $doc['last_success_at_utc'] = $now
+            $doc['last_read_error_at_utc'] = ''
+        }
+        $null = Write-TelephoneJsonReplace -Path $sourcePath -Value $doc
+    } finally {
+        $gate.Dispose()
     }
 }
 

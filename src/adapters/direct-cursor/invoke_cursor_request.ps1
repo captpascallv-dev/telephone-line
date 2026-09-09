@@ -74,12 +74,21 @@ if (-not [string]::IsNullOrWhiteSpace([string]$request.cursor_agent_root)) { $pa
 if ($true -eq $authority.allow_write) { $parameters.AllowWrite = $true }
 if ($allowedWritePaths.Count -gt 0) { $parameters.AllowedWritePath = $allowedWritePaths }
 
+$exitCode = 1
 try {
     $utf8 = [Text.UTF8Encoding]::new($false, $true)
     [Console]::OutputEncoding = $utf8
     $OutputEncoding = $utf8
     & $expectedWrapperPath @parameters
+    $wrapperSucceeded = $?
     $exitCode = if (Test-Path variable:LASTEXITCODE) { [int]$LASTEXITCODE } else { 0 }
+    if (-not $wrapperSucceeded -and $exitCode -eq 0) { $exitCode = 1 }
+} catch {
+    $exitCode = 1
+    if ((Test-Path variable:LASTEXITCODE) -and $null -ne $LASTEXITCODE -and [int]$LASTEXITCODE -ne 0) {
+        $exitCode = [int]$LASTEXITCODE
+    }
+    [Console]::Error.WriteLine(('Direct Cursor request terminating exception: ' + $_.Exception.GetType().FullName))
 } finally {
     $parameters.Clear()
 }
