@@ -72,8 +72,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 22687,
-      "sha256": "9877f7daa70c88d926f0163542362c55f15611ff2d8d76ec833c7fd08d8c8907"
+      "bytes": 22957,
+      "sha256": "12d2e4e7b87eb9136e3d3cc1381341a72381ee8194262c64bd57a420e6758c1a"
     },
     {
       "path": "SECURITY.md",
@@ -87,8 +87,8 @@
     },
     {
       "path": "docs/README.zh-CN.md",
-      "bytes": 21320,
-      "sha256": "ede839d471a512057c789b266bbc00fe242bdea0fd5f3c62e2df13e1d37bdd5c"
+      "bytes": 21609,
+      "sha256": "0332b0284ebee62a186b1d6899eef0a8b1e93efe7d3f202b539fc909425d5242"
     },
     {
       "path": "docs/adapter-authoring.md",
@@ -157,8 +157,8 @@
     },
     {
       "path": "docs/control-plane.md",
-      "bytes": 6871,
-      "sha256": "ddc475b26097645952a822c6db079c322c675604274b7ce8dd15d09ac54ba152"
+      "bytes": 7273,
+      "sha256": "cccb749aee4a014274f9321817dcdb1e6b48c1c45555510de3f0f04997173f19"
     },
     {
       "path": "docs/cursor-external-lead.md",
@@ -172,8 +172,8 @@
     },
     {
       "path": "docs/examples/caller-supplied-lead/Invoke-GenericLeadLauncher.ps1",
-      "bytes": 4386,
-      "sha256": "383995019f95eedaf9c1efb3bd3f2c49cec3bfc6db90e34f794cc4c086f58ec4"
+      "bytes": 4491,
+      "sha256": "4a3b8c4b1e36738b600063891420bf1c2dac710e698ea6b1c04dd7f99c259cf4"
     },
     {
       "path": "docs/examples/codex-app-server-lead/README.md",
@@ -237,8 +237,8 @@
     },
     {
       "path": "docs/install.md",
-      "bytes": 8127,
-      "sha256": "944bc4dbdbdd6d1a8fed0fcec5bab4bf4af4735ce73ffdea4005c27c90a66f9f"
+      "bytes": 8459,
+      "sha256": "bd01ddd850dc9603f0e02ced83134159c830ff8726de623c9522743d7ee3f418"
     },
     {
       "path": "docs/licensing.md",
@@ -257,8 +257,8 @@
     },
     {
       "path": "docs/quick-start.md",
-      "bytes": 17536,
-      "sha256": "537d6354258d5e5d125290703da4ea785429cd2e5f75635d5969ba81e478a4c1"
+      "bytes": 19381,
+      "sha256": "e1a2eb1cb1b5ec4d8c5ef7c8f564656e555606e54bb95cdb6ca2ba063d780371"
     },
     {
       "path": "docs/redistribution-audit.md",
@@ -432,8 +432,8 @@
     },
     {
       "path": "schemas/dashboard-projection.schema.json",
-      "bytes": 8498,
-      "sha256": "7cd6cc72b56a592fc552baa93741978acc2eeebeb7b6425622160f5822f9b260"
+      "bytes": 8855,
+      "sha256": "53efd57c98303b6d37a1d9b9cc516cc71a85214f1074a240511d3228e4c654d8"
     },
     {
       "path": "schemas/dispatch.schema.json",
@@ -752,23 +752,23 @@
     },
     {
       "path": "src/core/Resume-TelephoneLines.ps1",
-      "bytes": 6693,
-      "sha256": "aa20ca9979088c97066a1423fbc59446ca6ab45c8989f54e64a501f6d42b0178"
+      "bytes": 6783,
+      "sha256": "f5549d32dd1d7061d293600e98c355fb57ca412a59d5a8aefeded814e086da6c"
     },
     {
       "path": "src/core/Start-TelephoneLineJob.ps1",
-      "bytes": 10923,
-      "sha256": "f9f52ffc5b81d6ccc679495ce0c017fcf76a036c1d6c001c3bded89f537e21a4"
+      "bytes": 11210,
+      "sha256": "ccb1d1d83438a1f8761db01807c854eaa5402c61f25928d79f61abe4fb8d3787"
     },
     {
       "path": "src/core/TelephoneLeadRuntime.Common.ps1",
-      "bytes": 36903,
-      "sha256": "6d1bba22a4b51fa1723ad9b9b1b13a4fd078ebe628d265a5688173746a7580b8"
+      "bytes": 45220,
+      "sha256": "bfe4b4135f882441a337898128c0117a771786c6ffb89d983f069d78ee2bc598"
     },
     {
       "path": "src/core/TelephoneLine.Common.ps1",
-      "bytes": 191128,
-      "sha256": "da084cf833f192b6f5585eb32570a645df9ba5c56aeeaa2d9b2259b059d2e930"
+      "bytes": 212237,
+      "sha256": "771792b87e9c8517ee74befb92cf7cf1c5d07fe88e52e56809223d62dbf4b3f4"
     },
     {
       "path": "src/dashboard/Ensure-TelephoneDashboard.ps1",
@@ -782,13 +782,13 @@
     },
     {
       "path": "src/dashboard/TelephoneDashboard.Common.ps1",
-      "bytes": 25227,
-      "sha256": "e6fd91f44ba3fad9afe2b0f392262c9ffbd9e7404acfb389aa526cdac39de627"
+      "bytes": 25972,
+      "sha256": "4acfe0f36279aaa51c09151c9871d0a63d8c6085ebd8adf123f6e8e57aaa7a64"
     },
     {
       "path": "src/dashboard/TelephoneDashboard.Projection.ps1",
-      "bytes": 136167,
-      "sha256": "45f1e3bf758dc6eb6895c27759b9dea5aa2c42d7b680b9b2177d8241cf32d7f2"
+      "bytes": 143569,
+      "sha256": "fd740b1ea8c47861752f4ff336912090b0d8f305e5cc34caa5a44ea7fc4fb0c3"
     },
     {
       "path": "src/dashboard/TelephoneDashboard.Reducer.ps1",
@@ -797,8 +797,8 @@
     },
     {
       "path": "src/dashboard/Watch-TelephoneDashboard.ps1",
-      "bytes": 5612,
-      "sha256": "f7f751c915d40f9d4335d1d0b3858bd506b4f81de05275064da9a538c3e16d6b"
+      "bytes": 6518,
+      "sha256": "8bb5d73114caab6c60546ba784c06040e702e702112c98efc12d8100f5a7f8b0"
     },
     {
       "path": "src/install/Install-TelephoneLine.ps1",
@@ -812,8 +812,8 @@
     },
     {
       "path": "src/install/TelephoneLineInstall.Common.ps1",
-      "bytes": 66963,
-      "sha256": "a057bb6361082212455fb13656ad8ad88597c58e7ec16a3e1c5e625933d221d3"
+      "bytes": 67222,
+      "sha256": "8bc3d736d2cdfdda7d9d17ca9f48370f5b6621c039f1c19060da08b908b1aea2"
     },
     {
       "path": "src/install/Uninstall-TelephoneLine.ps1",
@@ -962,8 +962,8 @@
     },
     {
       "path": "src/supervisor/TelephoneSupervisor.Common.ps1",
-      "bytes": 118059,
-      "sha256": "c9edf48107fc2d047e5cfc27c934d9f0238bf9bdbf1634aef2162f553b14a791"
+      "bytes": 122579,
+      "sha256": "2434702585ca98bfcb409b109282b6fc9cf9edfd6de22db0768a5bf4e6d550da"
     },
     {
       "path": "tests/Invoke-OfflineTests.ps1",
@@ -1421,6 +1421,11 @@
       "sha256": "08e97fdaf0e645851ede1e8b42e50d66e988139ee8667d72d660228fd13d467e"
     },
     {
+      "path": "tests/core/test_audit_repair.ps1",
+      "bytes": 28809,
+      "sha256": "af6de82d9f0a049fd20c6a4bb1b0b6699d33de5b4d458db732912a67454ebc2b"
+    },
+    {
       "path": "tests/core/test_autonomous_event_chain.ps1",
       "bytes": 33479,
       "sha256": "049ce587983ba0a9f219a87eeb5c936163215f117e5f410d7fd2ca9af1379db3"
@@ -1512,8 +1517,8 @@
     }
   ],
   "counts": {
-    "files": 296,
-    "bytes": 4021359
+    "files": 297,
+    "bytes": 4097403
   },
   "excluded": [
     ".control/**",

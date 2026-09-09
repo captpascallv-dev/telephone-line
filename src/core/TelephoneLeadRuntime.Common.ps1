@@ -827,3 +827,198 @@ function Copy-TelephoneLeadExtraArgumentsWithCli {
     }
     return @($copy)
 }
+
+function Get-TelephoneLeadLanguageMode {
+    [CmdletBinding()]
+    param()
+    try { return [string]$ExecutionContext.SessionState.LanguageMode } catch { return '' }
+}
+
+function Set-TelephoneLastLeadLaunchDiagnostic {
+    [CmdletBinding()]
+    param([AllowNull()][object]$Diagnostic)
+    $script:TelephoneLastLeadLaunchDiagnostic = $Diagnostic
+}
+
+function Get-TelephoneLastLeadLaunchDiagnostic {
+    [CmdletBinding()]
+    param()
+    if ($null -eq $script:TelephoneLastLeadLaunchDiagnostic) { return $null }
+    return $script:TelephoneLastLeadLaunchDiagnostic
+}
+
+function New-TelephoneLeadLaunchDiagnostic {
+    [CmdletBinding()]
+    param(
+        [string]$Code = 'LEAD_WAKE_FAILED',
+        [string]$Executable = '',
+        [string]$WorkingDirectory = '',
+        [AllowNull()][object]$Captured = $null,
+        [string]$CreateProcessError = '',
+        [string]$RunId = '',
+        [string]$SessionId = '',
+        [string]$RunRoot = '',
+        [int]$Win32Error = 0
+    )
+    $stderr = ''
+    $stdout = ''
+    $exitCode = $null
+    $processExited = $false
+    $stdoutEof = $false
+    $stderrEof = $false
+    $pidValue = 0
+    $ticks = 0
+    $started = ''
+    if ($null -ne $Captured) {
+        if ($Captured -is [Collections.IDictionary]) {
+            if ($Captured.Contains('stderr')) { $stderr = [string]$Captured['stderr'] }
+            if ($Captured.Contains('stdout')) { $stdout = [string]$Captured['stdout'] }
+            if ($Captured.Contains('exit_code')) { $exitCode = [int]$Captured['exit_code'] }
+            if ($Captured.Contains('process_exited')) { $processExited = [bool]$Captured['process_exited'] }
+            if ($Captured.Contains('stdout_eof')) { $stdoutEof = [bool]$Captured['stdout_eof'] }
+            if ($Captured.Contains('stderr_eof')) { $stderrEof = [bool]$Captured['stderr_eof'] }
+            if ($Captured.Contains('pid')) { $pidValue = [int]$Captured['pid'] }
+            if ($Captured.Contains('start_time_utc_ticks')) { $ticks = [int64]$Captured['start_time_utc_ticks'] }
+            if ($Captured.Contains('started_at_utc')) { $started = [string]$Captured['started_at_utc'] }
+            if ($Captured.Contains('executable_path') -and [string]::IsNullOrWhiteSpace($Executable)) { $Executable = [string]$Captured['executable_path'] }
+        } else {
+            try { $stderr = [string]$Captured.stderr } catch { }
+            try { $stdout = [string]$Captured.stdout } catch { }
+            try { $exitCode = [int]$Captured.exit_code } catch { }
+            try { $processExited = [bool]$Captured.process_exited } catch { }
+            try { $stdoutEof = [bool]$Captured.stdout_eof } catch { }
+            try { $stderrEof = [bool]$Captured.stderr_eof } catch { }
+            try { $pidValue = [int]$Captured.pid } catch { }
+            try { $ticks = [int64]$Captured.start_time_utc_ticks } catch { }
+            try { $started = [string]$Captured.started_at_utc } catch { }
+        }
+    }
+    return [ordered]@{
+        protocol_version = 'telephone-line-lead-launch-diagnostic-v1'
+        error_code = [string]$Code
+        language_mode = Get-TelephoneLeadLanguageMode
+        executable = [string]$Executable
+        working_directory = [string]$WorkingDirectory
+        create_process_error = [string]$CreateProcessError
+        win32_error = [int]$Win32Error
+        process_exited = [bool]$processExited
+        native_turn_complete = $false
+        stdout_eof = [bool]$stdoutEof
+        stderr_eof = [bool]$stderrEof
+        exit_code = $exitCode
+        pid = [int]$pidValue
+        start_time_utc_ticks = [int64]$ticks
+        started_at_utc = [string]$started
+        run_id = [string]$RunId
+        session_id = [string]$SessionId
+        run_root = [string]$RunRoot
+        stderr = [string]$stderr
+        stdout_preview = $(if ([string]$stdout.Length -gt 2048) { [string]$stdout.Substring(0, 2048) } else { [string]$stdout })
+        recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+    }
+}
+
+function Test-TelephoneLeadActiveWriterStderr {
+    [CmdletBinding()]
+    param([AllowNull()][string]$Text)
+    $raw = [string]$Text
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $false }
+    return ($raw -match '(?i)thread-store conflict' -or $raw -match '(?i)already has an active writer')
+}
+
+function Get-TelephoneLeadWriterOwnerFromStderr {
+    [CmdletBinding()]
+    param([AllowNull()][string]$Text)
+    $raw = [string]$Text
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
+    $match = [regex]::Match($raw, '(?i)pid[=:\s]+(?<pid>\d+)')
+    if (-not $match.Success) { return $null }
+    $pidValue = [int]$match.Groups['pid'].Value
+    try {
+        $proc = Get-Process -Id $pidValue -ErrorAction Stop
+        try {
+            return [ordered]@{
+                pid = $pidValue
+                start_time_utc_ticks = [int64]$proc.StartTime.ToUniversalTime().Ticks
+                started_at_utc = $proc.StartTime.ToUniversalTime().ToString('o')
+                executable_path = $(try { [string]$proc.MainModule.FileName } catch { '' })
+            }
+        } finally {
+            $proc.Dispose()
+        }
+    } catch {
+        return [ordered]@{ pid = $pidValue; start_time_utc_ticks = 0; started_at_utc = ''; executable_path = ''; vanished = $true }
+    }
+}
+
+function Test-TelephoneLeadPreTurnActiveWriterConflict {
+    [CmdletBinding()]
+    param(
+        [string]$RunRoot = '',
+        [AllowNull()][string]$StderrText = '',
+        [AllowNull()][object]$ExitCode = $null
+    )
+    $root = ''
+    if (-not [string]::IsNullOrWhiteSpace($RunRoot)) {
+        $root = [IO.Path]::GetFullPath($RunRoot).TrimEnd('\')
+    }
+    $stderr = [string]$StderrText
+    $hostExit = $ExitCode
+    $eventsEmpty = $true
+    $hostTerminalPresent = $false
+    if (-not [string]::IsNullOrWhiteSpace($root) -and [IO.Directory]::Exists($root)) {
+        $stderrPath = Join-Path $root 'codex-stderr.txt'
+        if ([string]::IsNullOrWhiteSpace($stderr) -and [IO.File]::Exists($stderrPath)) {
+            try { $stderr = [IO.File]::ReadAllText($stderrPath) } catch { $stderr = '' }
+        }
+        $eventsPath = Join-Path $root 'codex-events.jsonl'
+        if ([IO.File]::Exists($eventsPath)) {
+            try {
+                $eventsBytes = [IO.File]::ReadAllBytes($eventsPath)
+                $eventsEmpty = ($eventsBytes.Length -eq 0)
+            } catch { $eventsEmpty = $false }
+        }
+        $hostPath = Join-Path $root 'host-terminal.json'
+        if ([IO.File]::Exists($hostPath)) {
+            $hostTerminalPresent = $true
+            try {
+                $host = (Read-TelephoneJson -Path $hostPath).value
+                if ($null -eq $hostExit -and $host -is [Collections.IDictionary] -and $host.Contains('exit_code')) {
+                    $hostExit = [int]$host['exit_code']
+                }
+            } catch { }
+        }
+    }
+    $writerPattern = Test-TelephoneLeadActiveWriterStderr -Text $stderr
+    $nonzero = $false
+    if ($null -ne $hostExit) { $nonzero = ([int]$hostExit -ne 0) }
+    $matched = ($writerPattern -and $eventsEmpty -and ($nonzero -or $hostTerminalPresent))
+    $writer = $null
+    $writerAlive = $false
+    if ($matched) {
+        $writer = Get-TelephoneLeadWriterOwnerFromStderr -Text $stderr
+        $vanished = $false
+        if ($null -ne $writer) {
+            if ($writer -is [Collections.IDictionary] -and $writer.Contains('vanished')) {
+                $vanished = [bool]$writer['vanished']
+            } elseif ($null -ne $writer.PSObject.Properties['vanished']) {
+                $vanished = [bool]$writer.vanished
+            }
+        }
+        if ($null -ne $writer -and -not $vanished) {
+            $writerAlive = Test-TelephoneOwnerAlive -Owner $writer
+        }
+    }
+    return [ordered]@{
+        matched = [bool]$matched
+        retry_eligible = [bool]$matched
+        writer_alive = [bool]$writerAlive
+        writer = $writer
+        events_empty = [bool]$eventsEmpty
+        host_terminal_present = [bool]$hostTerminalPresent
+        exit_code = $hostExit
+        stderr = [string]$stderr
+        run_root = [string]$root
+        native_turn_started = (-not $eventsEmpty)
+    }
+}

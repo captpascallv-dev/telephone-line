@@ -776,6 +776,44 @@ function Get-TelephoneSupervisorTaskMapText {
     return [string]$prop.Value
 }
 
+function Get-TelephoneSupervisorInstallRootFromWrapperIdentity {
+    [CmdletBinding()]
+    param([AllowNull()][string]$ActionScript)
+    $full = Convert-TelephoneSupervisorNormalizedInstallRoot -Path $ActionScript
+    if ([string]::IsNullOrWhiteSpace($full)) { return '' }
+    if (-not [IO.Path]::GetExtension($full).Equals('.exe', [StringComparison]::OrdinalIgnoreCase)) { return '' }
+    if (-not [IO.File]::Exists($full)) { return '' }
+    $item = Get-Item -LiteralPath $full -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item -or $item.PSIsContainer -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { return '' }
+    $bytes = [IO.File]::ReadAllBytes($full)
+    $sha = ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))).ToLowerInvariant()
+    $sidecars = @(
+        ($full + '.identity.json'),
+        (Join-Path ([IO.Path]::GetDirectoryName($full)) 'wrapper-identity.json')
+    )
+    foreach ($sidecar in $sidecars) {
+        if (-not [IO.File]::Exists($sidecar)) { continue }
+        try {
+            $doc = (Read-TelephoneJson -Path $sidecar).value
+            if ($doc -isnot [Collections.IDictionary]) { continue }
+            $protocol = ''
+            if ($doc.Contains('protocol_version')) { $protocol = [string]$doc['protocol_version'] }
+            if ($protocol -cne 'telephone-line-supervisor-wrapper-identity-v1') { continue }
+            $recordedSha = ''
+            if ($doc.Contains('sha256')) { $recordedSha = [string]$doc['sha256'] }
+            if ($recordedSha -cne $sha) { continue }
+            $recordedPath = ''
+            if ($doc.Contains('wrapper_path')) { $recordedPath = Convert-TelephoneSupervisorNormalizedInstallRoot -Path ([string]$doc['wrapper_path']) }
+            if (-not [string]::IsNullOrWhiteSpace($recordedPath) -and -not $recordedPath.Equals($full, [StringComparison]::OrdinalIgnoreCase)) { continue }
+            $installRoot = ''
+            if ($doc.Contains('install_root')) { $installRoot = Convert-TelephoneSupervisorNormalizedInstallRoot -Path ([string]$doc['install_root']) }
+            if ([string]::IsNullOrWhiteSpace($installRoot)) { continue }
+            return $installRoot
+        } catch { }
+    }
+    return ''
+}
+
 function Get-TelephoneSupervisorInstallRootFromActionScript {
     [CmdletBinding()]
     param([AllowNull()][string]$ActionScript)
@@ -785,6 +823,8 @@ function Get-TelephoneSupervisorInstallRootFromActionScript {
     if ($name -cin @('Invoke-TelephoneSupervisor.ps1', 'Start-TelephoneSupervisorHostVisible.ps1', 'Invoke-TelephoneSupervisorHidden.vbs', 'Show-TelephoneSupervisorControl.ps1')) {
         return (Convert-TelephoneSupervisorNormalizedInstallRoot -Path (Join-Path ([IO.Path]::GetDirectoryName($full)) '..\..'))
     }
+    $fromWrapper = Get-TelephoneSupervisorInstallRootFromWrapperIdentity -ActionScript $full
+    if (-not [string]::IsNullOrWhiteSpace($fromWrapper)) { return $fromWrapper }
     return ''
 }
 
@@ -2058,7 +2098,46 @@ function Reconcile-TelephoneSupervisorClaimed {
         $outboxPath = Get-TelephoneSupervisorRecordPath -StateRoot $StateRoot -Kind outbox -RunId $runId
         if ([IO.File]::Exists($outboxPath)) { continue }
         $ownerRead = Read-TelephoneSupervisorRunOwner -StateRoot $StateRoot -RunId $runId
-        if ($null -eq $ownerRead) { continue }
+        if ($null -eq $ownerRead) {
+            $memberRead = Read-TelephoneSupervisorJobMembers -StateRoot $StateRoot -RunId $runId
+            $job = Open-TelephoneSupervisorRunJob -RunId $runId -WaitMilliseconds 0
+            $decision = 'proven_not_started'
+            $errorCode = 'SUPERVISOR_CLAIMED_NOT_STARTED'
+            $terminal = 'failed'
+            try {
+                if (Test-TelephoneSupervisorLiveExactMembers -MemberRecord $memberRead -Job $job) {
+                    $decision = 'attached'
+                    $errorCode = ''
+                    $terminal = ''
+                } elseif ($null -ne $job -and [IntPtr]$job.handle -ne [IntPtr]::Zero) {
+                    $left = @(Get-TelephoneSupervisorJobProcessIds -Job $job)
+                    if ($left.Count -gt 0) {
+                        $decision = 'UNKNOWN'
+                        $errorCode = 'SUPERVISOR_CLAIMED_UNKNOWN'
+                        $terminal = 'failed'
+                    }
+                }
+            } finally {
+                Close-TelephoneSupervisorRunJob -Job $job
+            }
+            $runDir = Join-Path $paths.runs $runId
+            if (-not [IO.Directory]::Exists($runDir)) { [IO.Directory]::CreateDirectory($runDir) | Out-Null }
+            $reconcilePath = Join-Path $runDir 'claimed-reconcile.json'
+            $record = [ordered]@{
+                protocol_version = 'telephone-line-supervisor-claimed-reconcile-v1'
+                run_id = $runId
+                decision = $decision
+                error_code = $errorCode
+                replay = $false
+                silent_skip = $false
+                recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+            }
+            try { $null = Write-TelephoneJsonReplace -Path $reconcilePath -Value $record } catch { }
+            if ($decision -ceq 'attached') { continue }
+            $null = Write-TelephoneSupervisorOutbox -StateRoot $StateRoot -RunId $runId -Terminal $terminal -Request $claimed.value -ErrorCode $errorCode
+            [void]$reconciled.Add([ordered]@{ run_id = $runId; terminal = $terminal; decision = $decision })
+            continue
+        }
         if (Test-TelephoneSupervisorExactOwner -Owner $ownerRead.value) { continue }
         $memberRead = Read-TelephoneSupervisorJobMembers -StateRoot $StateRoot -RunId $runId
         $job = Open-TelephoneSupervisorRunJob -RunId $runId -WaitMilliseconds 0

@@ -10,7 +10,7 @@ Telephone Line 是一套面向 Codex CLI 的跨 Harness 协作基础设施。
 
 它通过命令行工具和脚本接入你已经在用的 Agent 与 Harness。安装的目标是把现有工具在本机接通，不需要另建一个 Agent、聊天产品或桌面应用。
 
-**建议让你自己的 Agent 先读使用说明和协议，再完成本机环境适配与调试。** 安装成功不等于本机的派发和回叫已经走通；请按下方[安装调试指令](#让-agent-代为安装和调试)，先跑通一个小任务再正式使用。
+**建议让你自己的 Agent 先读使用说明和协议，再完成本机环境适配与调试。** 公开推荐路径见 [Quick start](quick-start.md)：安装 → 独立后台 supervisor → 正常 `Start-TelephoneLineJob.ps1` 派发 → 原会话回叫 → 观察器。有线 `Start-TelephoneWiredRun.ps1`、Resume、适配器 recover 是专家下层入口，不是第一用户路径。安装成功不等于本机的派发和回叫已经走通；请按下方[安装调试指令](#让-agent-代为安装和调试)，先跑通一个小任务再正式使用。
 
 它解决的不是“换一个模型”，而是让不同智能体运行环境真正接力：Codex 负责目标判断、拆包、派发、验收和继续推进；Cursor、Claude Code、Grok、PI、DSH 或另一套 Codex 环境负责长时间执行与独立审查。派发完成后，Codex 可以退出，不必一直在线等待；外部任务完成后，结果会通过持久化回执回到原来的 Codex Lead 会话。
 

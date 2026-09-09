@@ -34,10 +34,15 @@ authority and exact Lead; the control plane never makes those judgments.
   at-logon plus one-minute periodic triggers for silent grace expiry and
   restart reconstruction. No heartbeat or online Lead is required.
 - Production activation atomically registers one dashboard descriptor and
-  updates the explicitly supplied dashboard config. That `current_state_file`
-  is the HUD's only lifecycle input. Invalid, conflicting, or stale state is
-  yellow; the dashboard exposes projection age and never scans history as a
-  substitute truth source.
+  updates the explicitly supplied dashboard config. `Start-TelephoneLineJob.ps1`
+  also writes the resolved StateRoot and line/route/Lead/project/run identity
+  into the dashboard line-source registry so a new or already-running watcher
+  consumes that source on the next scan. That `current_state_file` remains the
+  HUD's only lifecycle input when configured. Invalid, conflicting, or stale
+  state is yellow; the dashboard exposes source, last-success, and read-error
+  timestamps and never scans history as a substitute truth source. Live,
+  unknown, and receipt-awaiting-delivery jobs stay visible ahead of
+  history/retired/completedWave/retryOf hiding.
 
 ## Recovery behavior
 

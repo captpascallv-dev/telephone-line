@@ -948,9 +948,11 @@ function Invoke-TelephoneLineUninstall {
         }
 
         Import-TelephoneSupervisorCommon
-        $supState = Resolve-TelephoneSupervisorStateRoot
         $taskGate = Test-TelephoneSupervisorTaskAvailableForInstallRoot -InstallRoot $dest
-        if ([bool]$taskGate.available) {
+        $ownsSupervisorTask = ([bool]$taskGate.registered -and [bool]$taskGate.available)
+        $supState = $null
+        if ($ownsSupervisorTask) {
+            $supState = Resolve-TelephoneSupervisorStateRoot
             try { $null = Write-TelephoneSupervisorPause -StateRoot $supState -Paused $true } catch { }
             foreach ($run in @(Get-TelephoneSupervisorActiveRunList -StateRoot $supState)) {
                 $null = Stop-TelephoneSupervisorExactRun -StateRoot $supState -RunId ([string]$run.run_id)
@@ -967,8 +969,10 @@ function Invoke-TelephoneLineUninstall {
             . $dashWatch
             $null = Stop-TelephoneDashboardExactWatcher -InstallRoot $dest
         }
-        $null = Wait-TelephoneRecycleOwnershipQuiescence -StateRoot $supState
-        if (-not [string]::IsNullOrWhiteSpace($stateRoot) -and -not $stateRoot.Equals($supState, [StringComparison]::OrdinalIgnoreCase)) {
+        if (-not [string]::IsNullOrWhiteSpace($supState)) {
+            $null = Wait-TelephoneRecycleOwnershipQuiescence -StateRoot $supState
+        }
+        if (-not [string]::IsNullOrWhiteSpace($stateRoot) -and ([string]::IsNullOrWhiteSpace($supState) -or -not $stateRoot.Equals($supState, [StringComparison]::OrdinalIgnoreCase))) {
             $null = Wait-TelephoneRecycleOwnershipQuiescence -StateRoot $stateRoot
         }
         foreach ($row in @($manifest.files)) {
@@ -1000,7 +1004,7 @@ function Invoke-TelephoneLineUninstall {
             if (-not [string]::IsNullOrWhiteSpace($stateRoot) -and (Test-TelephoneRecyclePathPresent -Path $stateRoot)) {
                 [void]$targets.Add((Resolve-TelephoneInstallCallerPath -Path $stateRoot))
             }
-            if (-not [string]::IsNullOrWhiteSpace($supState) -and (Test-TelephoneRecyclePathPresent -Path $supState)) {
+            if ($ownsSupervisorTask -and -not [string]::IsNullOrWhiteSpace($supState) -and (Test-TelephoneRecyclePathPresent -Path $supState)) {
                 [void]$targets.Add((Resolve-TelephoneInstallCallerPath -Path $supState))
             }
             $allGone = $true

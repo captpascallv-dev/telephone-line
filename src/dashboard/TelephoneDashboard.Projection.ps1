@@ -38,9 +38,14 @@ function Get-TelephoneDashboardGroupKey {
     param(
         [Parameter(Mandatory = $true)][string]$Project,
         [string]$SessionId = '',
-        [string]$RunId = ''
+        [string]$RunId = '',
+        [string]$LineJobId = ''
     )
-    return ([string]$Project + '|' + [string]$SessionId + '|' + [string]$RunId)
+    $sessionPart = [string]$SessionId
+    if ([string]::IsNullOrWhiteSpace($sessionPart) -and -not [string]::IsNullOrWhiteSpace($LineJobId)) {
+        $sessionPart = 'line-job:' + [string]$LineJobId
+    }
+    return ([string]$Project + '|' + $sessionPart + '|' + [string]$RunId)
 }
 
 function Read-TelephoneDashboardOptionalJson {
@@ -1635,6 +1640,34 @@ function Test-TelephoneDashboardDirectPackageOwner {
     return $false
 }
 
+function Test-TelephoneDashboardJobMustRemainVisible {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][object]$Job)
+    if ([bool]$Job.command_alive) { return $true }
+    if ([bool]$Job.relay_alive) { return $true }
+    $codes = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($finding in @($Job.findings)) {
+        if ($null -eq $finding) { continue }
+        $code = ''
+        if ($finding -is [Collections.IDictionary] -and $finding.Contains('code')) { $code = [string]$finding['code'] }
+        elseif ($null -ne $finding.PSObject.Properties['code']) { $code = [string]$finding.code }
+        if (-not [string]::IsNullOrWhiteSpace($code)) { [void]$codes.Add($code) }
+    }
+    foreach ($keep in @('RECEIPT_AWAITING_DELIVERY', 'UNKNOWN_EXECUTION', 'CALLBACK_MISSING', 'TURN_DONE_HOST_INCOMPLETE', 'BATCH_COLLECTING')) {
+        if ($codes.Contains($keep)) { return $true }
+    }
+    $receiptPresent = $false
+    if ($Job -is [Collections.IDictionary] -and $Job.Contains('receipt') -and $null -ne $Job.receipt) {
+        if ($Job.receipt -is [Collections.IDictionary] -and $Job.receipt.Contains('present')) { $receiptPresent = [bool]$Job.receipt['present'] }
+        elseif ($null -ne $Job.receipt.PSObject.Properties['present']) { $receiptPresent = [bool]$Job.receipt.present }
+    }
+    $delivery = $false
+    if ($Job -is [Collections.IDictionary] -and $Job.Contains('delivery')) { $delivery = [bool]$Job['delivery'] }
+    elseif ($null -ne $Job.PSObject.Properties['delivery']) { $delivery = [bool]$Job.delivery }
+    if ($receiptPresent -and -not $delivery) { return $true }
+    return $false
+}
+
 function Test-TelephoneDashboardDirectHistoryRetired {
     [CmdletBinding()]
     param(
@@ -1645,6 +1678,7 @@ function Test-TelephoneDashboardDirectHistoryRetired {
         [AllowEmptyCollection()][string[]]$ProofJobIds = @(),
         [AllowEmptyCollection()][string[]]$ProofDirectSessions = @()
     )
+    if (Test-TelephoneDashboardJobMustRemainVisible -Job $Job) { return $false }
     $proofJobSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($id in @($ProofJobIds)) {
         if (-not [string]::IsNullOrWhiteSpace([string]$id)) { [void]$proofJobSet.Add([string]$id) }
@@ -2010,6 +2044,69 @@ function Get-TelephoneDashboardProjection {
         }
     }
 
+    $sourceUpdatedAt = ''
+    $lastSuccessAt = ''
+    $lastReadErrorAt = ''
+    $sourceStale = $false
+    try {
+        $registered = @(Read-TelephoneDashboardLineSources)
+        $dashPathsNow = Get-TelephoneDashboardPaths
+        if ([IO.File]::Exists([string]$dashPathsNow.line_sources)) {
+            try {
+                $srcDoc = (Read-TelephoneJson -Path ([string]$dashPathsNow.line_sources)).value
+                if ($srcDoc -is [Collections.IDictionary]) {
+                    if ($srcDoc.Contains('updated_at_utc')) { $sourceUpdatedAt = [string]$srcDoc['updated_at_utc'] }
+                    if ($srcDoc.Contains('last_success_at_utc')) { $lastSuccessAt = [string]$srcDoc['last_success_at_utc'] }
+                    if ($srcDoc.Contains('last_read_error_at_utc')) { $lastReadErrorAt = [string]$srcDoc['last_read_error_at_utc'] }
+                }
+            } catch { }
+        }
+        $seenRoots = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+        foreach ($existing in $descriptors) {
+            $er = ''
+            if ($existing -is [Collections.IDictionary] -and $existing.Contains('state_root')) { $er = [string]$existing['state_root'] }
+            elseif ($null -ne $existing.PSObject.Properties['state_root']) { $er = [string]$existing.state_root }
+            if (-not [string]::IsNullOrWhiteSpace($er)) { [void]$seenRoots.Add($er) }
+        }
+        foreach ($row in $registered) {
+            if ($null -eq $row) { continue }
+            $srcRoot = ''
+            $srcProject = 'line-source'
+            $srcSession = ''
+            $srcRun = ''
+            $srcJob = ''
+            $srcRoute = ''
+            if ($row -is [Collections.IDictionary]) {
+                if ($row.Contains('state_root')) { $srcRoot = [string]$row['state_root'] }
+                if ($row.Contains('project') -and -not [string]::IsNullOrWhiteSpace([string]$row['project'])) { $srcProject = [string]$row['project'] }
+                if ($row.Contains('lead_session_id')) { $srcSession = [string]$row['lead_session_id'] }
+                if ($row.Contains('lead_run_id')) { $srcRun = [string]$row['lead_run_id'] }
+                if ($row.Contains('line_job_id')) { $srcJob = [string]$row['line_job_id'] }
+                if ($row.Contains('route')) { $srcRoute = [string]$row['route'] }
+            }
+            if ([string]::IsNullOrWhiteSpace($srcRoot)) { continue }
+            $probe = Test-TelephoneDashboardConfiguredDirectory -Path $srcRoot -Label 'Registered line state root'
+            if (-not [bool]$probe.ok) { continue }
+            if (-not $seenRoots.Add([string]$probe.path)) { continue }
+            $desc = [ordered]@{
+                protocol_version = 'telephone-line-dashboard-project-descriptor-v1'
+                project = $srcProject
+                state_root = [string]$probe.path
+                terminal_state = 'active'
+            }
+            if (-not [string]::IsNullOrWhiteSpace($srcSession)) { $desc['lead_session_id'] = $srcSession }
+            if (-not [string]::IsNullOrWhiteSpace($srcRun)) { $desc['lead_run_id'] = $srcRun }
+            if (-not [string]::IsNullOrWhiteSpace($srcJob)) { $desc['current_line_job_id'] = $srcJob }
+            if (-not [string]::IsNullOrWhiteSpace($srcRoute)) { $desc['route'] = $srcRoute }
+            [void]$descriptors.Add([ordered]@{
+                valid = $true
+                descriptor = $desc
+                findings = @()
+                state_root = [string]$probe.path
+            })
+        }
+    } catch { }
+
     foreach ($entry in $descriptors) {
         if (-not [bool]$entry.valid) {
             [void]$groups.Add((New-TelephoneDashboardObservedGroup `
@@ -2261,7 +2358,7 @@ function Get-TelephoneDashboardProjection {
                 if ($runKeys.Count -eq 0) { [void]$runKeys.Add('') }
             }
             foreach ($runId in @($runKeys)) {
-                $key = Get-TelephoneDashboardGroupKey -Project ([string]$descriptor.project) -SessionId $session -RunId $runId
+                $key = Get-TelephoneDashboardGroupKey -Project ([string]$descriptor.project) -SessionId $session -RunId $runId -LineJobId ([string]$job.job_id)
                 if (-not $bucket.Contains($key)) {
                     $bucket[$key] = [ordered]@{ project = [string]$descriptor.project; session = $session; run = $runId; jobs = [Collections.Generic.List[object]]::new(); runs = [Collections.Generic.List[object]]::new(); events = [Collections.Generic.List[object]]::new() }
                 }
@@ -2419,13 +2516,28 @@ function Get-TelephoneDashboardProjection {
         [void]$visibleGroups.Add($group)
     }
 
-    return [ordered]@{
+    $updated = [DateTimeOffset]::UtcNow.ToString('o')
+    $stale = $false
+    if (-not [string]::IsNullOrWhiteSpace($lastReadErrorAt) -and [string]::IsNullOrWhiteSpace($lastSuccessAt)) { $stale = $true }
+    if (-not [string]::IsNullOrWhiteSpace($sourceUpdatedAt)) {
+        try {
+            $age = ([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse($sourceUpdatedAt).ToUniversalTime()).TotalSeconds
+            if ($age -gt 120) { $sourceStale = $true }
+        } catch { }
+    }
+    $projection = [ordered]@{
         protocol_version = 'telephone-line-dashboard-projection-v1'
         observational = $true
-        updated_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+        updated_at_utc = $updated
         config_present = [bool]$configPresent
+        stale = [bool]$stale
+        source_stale = [bool]$sourceStale
         groups = @($visibleGroups)
     }
+    if (-not [string]::IsNullOrWhiteSpace($sourceUpdatedAt)) { $projection['source_updated_at_utc'] = [string]$sourceUpdatedAt }
+    $projection['last_success_at_utc'] = $(if ([string]::IsNullOrWhiteSpace($lastSuccessAt)) { $updated } else { [string]$lastSuccessAt })
+    if (-not [string]::IsNullOrWhiteSpace($lastReadErrorAt)) { $projection['last_read_error_at_utc'] = [string]$lastReadErrorAt }
+    return $projection
 }
 
 function Format-TelephoneDashboardSummary {
@@ -2436,6 +2548,14 @@ function Format-TelephoneDashboardSummary {
     [void]$lines.Add('Telephone Dashboard (read-only observer)')
     [void]$lines.Add('Colors: green=evidence matches; yellow=fail-closed gap; hidden=exact terminal retirement.')
     [void]$lines.Add('This observer never dispatches, retries, advances, judges PASS, or edits a registry.')
+    $staleFlag = $false
+    if ($Projection.Contains('stale')) { $staleFlag = [bool]$Projection['stale'] }
+    if ($Projection.Contains('source_stale') -and [bool]$Projection['source_stale']) { $staleFlag = $true }
+    $sourceAt = Get-TelephoneDashboardMapText -Map $Projection -Name 'source_updated_at_utc'
+    $successAt = Get-TelephoneDashboardMapText -Map $Projection -Name 'last_success_at_utc'
+    $errorAt = Get-TelephoneDashboardMapText -Map $Projection -Name 'last_read_error_at_utc'
+    $staleLabel = $(if ($staleFlag) { 'STALE' } else { 'current' })
+    [void]$lines.Add(('Truth: stale={0} source={1} last_success={2} last_read_error={3}' -f $staleLabel, $(if ([string]::IsNullOrWhiteSpace($sourceAt)) { 'none' } else { $sourceAt }), $(if ([string]::IsNullOrWhiteSpace($successAt)) { 'none' } else { $successAt }), $(if ([string]::IsNullOrWhiteSpace($errorAt)) { 'none' } else { $errorAt })))
     if (@($Projection.groups).Count -eq 0) {
         [void]$lines.Add('No visible projects. Configure descriptors or TELEPHONE_LINE_STATE_ROOT.')
     }

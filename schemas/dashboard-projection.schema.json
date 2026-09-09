@@ -28,6 +28,21 @@
     "stale": {
       "type": "boolean"
     },
+    "source_updated_at_utc": {
+      "$ref": "#/$defs/utc_timestamp"
+    },
+    "last_success_at_utc": {
+      "$ref": "#/$defs/utc_timestamp"
+    },
+    "last_read_error_at_utc": {
+      "oneOf": [
+        { "type": "string", "maxLength": 0 },
+        { "$ref": "#/$defs/utc_timestamp" }
+      ]
+    },
+    "source_stale": {
+      "type": "boolean"
+    },
     "groups": {
       "type": "array",
       "items": {

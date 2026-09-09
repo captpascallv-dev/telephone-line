@@ -6,7 +6,7 @@ Codex stays the Lead. Other harnesses do the heavy work. Codex sleeps while they
 
 Telephone Line is a CLI/script-based transport layer that connects Agents and Harnesses you already use. Installation means wiring those existing tools together on your machine; it does not require building a new Agent, chat product, or desktop application.
 
-**Recommended: ask your own Agent to read the usage and protocol documentation, then adapt and debug the setup for your local environment.** A successful installation alone does not prove that your local dispatch and callback paths work. Follow the [Agent setup prompt](#let-an-agent-install-and-debug-it) and verify one small task before relying on the connection.
+**Recommended: ask your own Agent to read the usage and protocol documentation, then adapt and debug the setup for your local environment.** Follow the guaranteed public path in [Quick start](docs/quick-start.md): install → independent background supervisor → normal `Start-TelephoneLineJob.ps1` dispatch → original-session callback → observer. Expert lower-level entries (`Start-TelephoneWiredRun.ps1`, `Resume-TelephoneLines.ps1`, adapter recover) are distinguished there. A successful installation alone does not prove that your local dispatch and callback paths work. Verify one small task before relying on the connection.
 
 The primary purpose is operational, not publication: in the original deployment, substantive implementation and independent review default to Telephone so every available Harness and subscription quota pool can be used. Direct in-task execution is the explicit opt-out. Open-source distribution is a secondary benefit for reuse, external feedback, and compatibility contributions.
 

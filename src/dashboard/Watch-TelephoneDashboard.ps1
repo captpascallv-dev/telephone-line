@@ -49,6 +49,8 @@ function New-TelephoneDashboardFailClosedProjection {
         updated_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
         config_present = $false
         stale = $true
+        source_stale = $true
+        last_read_error_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
         groups = @(
             [ordered]@{
                 project = 'dashboard'
@@ -81,6 +83,7 @@ function Publish-TelephoneDashboardWatchOnce {
     param([switch]$Recover)
     $projection = $null
     $code = 'PROJECTION_FAILED'
+    $projectionFailed = $false
     try {
         $injected = [string][Environment]::GetEnvironmentVariable('TELEPHONE_TEST_DASHBOARD_FAIL_AT')
         if (-not [string]::IsNullOrWhiteSpace($injected) -and -not $Recover) {
@@ -90,6 +93,7 @@ function Publish-TelephoneDashboardWatchOnce {
         $jsonText = (($projection | ConvertTo-Json -Depth 32).Replace("`r`n", "`n") + "`n")
         Assert-TelephoneJsonSchema -JsonText $jsonText -SchemaName 'dashboard-projection' -Label 'dashboard projection'
     } catch {
+        $projectionFailed = $true
         $message = [string]$_.Exception.Message
         if ($message -match 'schema|SCHEMA') { $code = 'SCHEMA_INVALID' }
         elseif ($message -match 'config|CONFIG') { $code = 'CONFIG_INVALID' }
@@ -105,6 +109,21 @@ function Publish-TelephoneDashboardWatchOnce {
         $null = Write-TelephoneJsonReplace -Path $paths.projection -Value $projection
         $summary = Format-TelephoneDashboardSummary -Projection $projection
         $null = Write-TelephoneBytesReplace -Path $paths.summary -Bytes ([Text.UTF8Encoding]::new($false).GetBytes($summary))
+        try {
+            if ([IO.File]::Exists([string]$paths.line_sources)) {
+                $srcDoc = (Read-TelephoneJson -Path ([string]$paths.line_sources)).value
+                if ($srcDoc -is [Collections.IDictionary]) {
+                    $now = [DateTimeOffset]::UtcNow.ToString('o')
+                    if ($projectionFailed) {
+                        $srcDoc['last_read_error_at_utc'] = $now
+                    } else {
+                        $srcDoc['last_success_at_utc'] = $now
+                        $srcDoc['last_read_error_at_utc'] = ''
+                    }
+                    $null = Write-TelephoneJsonReplace -Path ([string]$paths.line_sources) -Value $srcDoc
+                }
+            }
+        } catch { }
         if (-not $Headless) {
             Clear-Host
             Write-Output $summary.TrimEnd()

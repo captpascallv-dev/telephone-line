@@ -126,7 +126,7 @@ function Get-TelephoneDashboardPaths {
         watcher = Join-Path $root 'watcher.json'
         projection = Join-Path $root 'projection.json'
         summary = Join-Path $root 'summary.txt'
-        config = Get-TelephoneDashboardConfigPath
+        line_sources = Join-Path $root 'line-sources.json'
     }
 }
 
@@ -414,6 +414,25 @@ function Stop-TelephoneDashboardExactWatcher {
 
     $refused.Add([ordered]@{ pid = 0; reason = 'durable-identity-missing' })
     return [ordered]@{ stopped = @($stopped); refused = @($refused) }
+}
+
+function Read-TelephoneDashboardLineSources {
+    [CmdletBinding()]
+    param([string]$DashboardStateRoot = '')
+    $root = $DashboardStateRoot
+    if ([string]::IsNullOrWhiteSpace($root)) {
+        try { $root = Get-TelephoneDashboardStateRoot } catch { return @() }
+    }
+    $paths = Get-TelephoneDashboardPaths -StateRoot $root
+    $path = [string]$paths.line_sources
+    if ([string]::IsNullOrWhiteSpace($path) -or -not [IO.File]::Exists($path)) { return @() }
+    try {
+        $doc = (Read-TelephoneJson -Path $path).value
+        if ($doc -isnot [Collections.IDictionary] -or -not $doc.Contains('sources') -or $null -eq $doc['sources']) { return @() }
+        return @($doc['sources'])
+    } catch {
+        return @()
+    }
 }
 
 function Invoke-TelephoneBundledDashboardEnsure {

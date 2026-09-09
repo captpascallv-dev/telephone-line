@@ -8,9 +8,12 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'TelephoneLine.Common.ps1')
-$null = Invoke-TelephoneDashboardEnsure
 
 $state = Assert-TelephoneDirectoryPath -Path $StateRoot -Label 'State root'
+$null = Invoke-TelephoneDashboardEnsure
+try {
+    $null = Register-TelephoneDashboardLineSource -LineStateRoot $state
+} catch { }
 $jobsRoot = Join-Path $state 'jobs'
 $summary = [ordered]@{ scanned = 0; relays_started = 0; interrupted_receipts_created = 0; command_start_ambiguous_receipts_created = 0; command_start_pending = 0; already_delivered = 0 }
 if (-not [IO.Directory]::Exists($jobsRoot)) { $summary | ConvertTo-Json -Compress; exit 0 }

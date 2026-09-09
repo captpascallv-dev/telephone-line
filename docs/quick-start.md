@@ -4,7 +4,17 @@ This is the shortest honest path from a clean Windows machine to one completed r
 
 Windows is the only v0.1 production target. The frozen denominator is exactly eight routes; no ninth is planned.
 
-For new work, wired is the recommended first-use route. Create a valid `telephone-line-wired-supervisor-request-v1` and publish it with `Start-TelephoneWiredRun.ps1` as shown in [Wired supervisor and Pascal control](#wired-supervisor-and-pascal-control). The App Server binding in [codex-app-server-lead.md](codex-app-server-lead.md) remains a supported wireless alternative after its first turn is accepted. Do not switch an already accepted wireless thread to wired transport; recover the same exact App Server thread instead. If the original Lead turn is still active when the receipt returns, Telephone keeps one pending callback and delivers it after that same thread is idle.
+## Recommended public path
+
+Use this sequence as the guaranteed normal entry. Expert lower-level scripts (`Start-TelephoneWiredRun.ps1`, `Resume-TelephoneLines.ps1`, adapter `-Operation recover`, and caller-supplied launchers) remain valid; they are not the first-use path.
+
+1. **Install** the public tree with `src/install/Install-TelephoneLine.ps1`. Point the Lead CLI at an explicit independent executable (`TELEPHONE_LINE_STABLE_CLI` or `stable-cli-policy.json`). Do not glob App version directories, download a runtime, or switch account/model.
+2. **Independent background**: the per-user wired supervisor task owns later activation. `Start-TelephoneLineJob.ps1` publishes durable intent, registers the resolved StateRoot plus line/route/Lead/project/run identity for new and reused dashboard watchers, and returns. The Lead exits immediately (`lead_should_exit_now=true`).
+3. **Normal dispatch**: write a `telephone-line-dispatch-v1` request and start it with `Start-TelephoneLineJob.ps1 -RequestFile ... -StateRoot ...`. The command host and relay run as detached Windows processes under that StateRoot.
+4. **Original callback**: when `receipt.json` exists, the collector wakes the exact frozen Lead session at most once. A verified pre-native-turn active-writer conflict stays eligible; after that writer releases, the same receipt/session/wake key may retry without rerunning the executor. Ambiguous acceptance does not auto-resend. Trusted manual consumption of an already-read receipt is a distinct, idempotent closeout and is never recorded as automatic callback success.
+5. **Observer**: `Ensure-TelephoneDashboard.ps1` starts or reuses one watcher. New and reused watchers consume the durable source registry. The read-only dashboard does not dispatch, retry, or judge PASS.
+
+For new work, wired is the recommended first-use route after install. Create a valid `telephone-line-wired-supervisor-request-v1` and publish it with `Start-TelephoneWiredRun.ps1` as shown in [Wired supervisor and Pascal control](#wired-supervisor-and-pascal-control) when you need the supervisor-owned inbox. The App Server binding in [codex-app-server-lead.md](codex-app-server-lead.md) remains a supported wireless alternative after its first turn is accepted. Do not switch an already accepted wireless thread to wired transport; recover the same exact App Server thread instead. If the original Lead turn is still active when the receipt returns, Telephone keeps one pending callback and delivers it after that same thread is idle.
 
 ## Prerequisites and the route you pick
 

@@ -8,9 +8,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'TelephoneLine.Common.ps1')
-$dashboardEnsure = Invoke-TelephoneDashboardEnsure
 
 $state = Assert-TelephoneDirectoryPath -Path $StateRoot -Label 'State root'
+$dashboardEnsure = Invoke-TelephoneDashboardEnsure
 $requestRead = Read-TelephoneJson -Path $RequestFile
 Assert-TelephoneDispatchRequestText -JsonText ([string]$requestRead.text)
 $request = $requestRead.value
@@ -94,6 +94,9 @@ if ($request -is [Collections.IDictionary] -and $request.Contains('control_plane
 }
 $dispatchIdentity = Write-TelephoneJsonCreateNew -Path $paths.dispatch -Value $dispatch
 $null = Read-TelephoneJson -Path $paths.dispatch -SchemaName 'dispatch'
+try {
+    $null = Register-TelephoneDashboardLineSource -LineStateRoot $state -LineJobId ([string]$request.line_job_id) -Project ([string]$request.project) -LeadSessionId $leadSessionId -LeadRunId ('telephone-' + [string]$request.line_job_id) -Route ([string]$request.route)
+} catch { }
 if (-not [string]::IsNullOrWhiteSpace([string]$env:TELEPHONE_LINE_SUPERVISOR_RUN_ID)) {
     $lineage = [ordered]@{
         protocol_version = 'telephone-line-supervisor-lineage-v1'

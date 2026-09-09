@@ -20,6 +20,7 @@ $ErrorActionPreference = 'Stop'
 
 function Write-GenericLeadFailure {
     param([Parameter(Mandatory = $true)][string]$Message, [int]$Code = 1)
+    [Console]::Error.WriteLine(('language_mode=' + [string]$ExecutionContext.SessionState.LanguageMode))
     [Console]::Error.WriteLine($Message)
     exit $Code
 }
