@@ -3778,7 +3778,8 @@ function Test-TelephoneTrustedConsumingRun {
     if (-not [IO.File]::Exists($eventsPath)) {
         return [ordered]@{ ok = $false; reason = 'consuming_run_event_missing'; session_id = $session; run_id = $run; root = $root }
     }
-    $nativeEvent = $false
+    $nativeTurn = $false
+    $allocationOnly = $false
     $eventRunIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $foreignRun = $false
     try {
@@ -3793,15 +3794,16 @@ function Test-TelephoneTrustedConsumingRun {
             $etype = ''
             if ($evt.Contains('type')) { $etype = [string]$evt['type'] }
             elseif ($evt.Contains('event')) { $etype = [string]$evt['event'] }
-            if ($etype -ceq 'thread.started' -or $etype -ceq 'turn.started' -or $etype -ceq 'session.created' -or $etype -ceq 'turn.completed') {
-                $nativeEvent = $true
+            if ($etype -ceq 'turn.started' -or $etype -ceq 'turn.completed') {
+                $nativeTurn = $true
+            } elseif ($etype -ceq 'thread.started' -or $etype -ceq 'session.created') {
+                $allocationOnly = $true
             }
             $evtRun = ''
             if ($evt.Contains('run_id')) { $evtRun = [string]$evt['run_id'] }
             if (-not [string]::IsNullOrWhiteSpace($evtRun)) {
                 [void]$eventRunIds.Add($evtRun)
                 if (-not [string]::IsNullOrWhiteSpace($ForbiddenRunId) -and $evtRun -ceq $ForbiddenRunId) { $foreignRun = $true }
-                if (-not [string]::IsNullOrWhiteSpace($run) -and $evtRun -cne $run -and $evtRun -cne $ForbiddenRunId) { }
             }
             $threadId = ''
             if ($evt.Contains('thread_id')) { $threadId = [string]$evt['thread_id'] }
@@ -3812,7 +3814,22 @@ function Test-TelephoneTrustedConsumingRun {
     } catch {
         return [ordered]@{ ok = $false; reason = 'consuming_run_event_unreadable'; session_id = $session; run_id = $run; root = $root }
     }
-    if (-not $nativeEvent) {
+    $preTurnExit = $false
+    if ([IO.File]::Exists($hostTerminal)) {
+        try {
+            $term = (Read-TelephoneJson -Path $hostTerminal).value
+            $exitCode = 0
+            if ($term -is [Collections.IDictionary] -and $term.Contains('exit_code')) { $exitCode = [int]$term['exit_code'] }
+            if ($exitCode -ne 0) { $preTurnExit = $true }
+        } catch { }
+    }
+    if (-not $nativeTurn) {
+        if ($preTurnExit) {
+            return [ordered]@{ ok = $false; reason = 'consuming_run_rejected_pre_turn'; session_id = $session; run_id = $run; root = $root }
+        }
+        if ($allocationOnly) {
+            return [ordered]@{ ok = $false; reason = 'consuming_run_allocation_only'; session_id = $session; run_id = $run; root = $root }
+        }
         return [ordered]@{ ok = $false; reason = 'consuming_run_event_missing'; session_id = $session; run_id = $run; root = $root }
     }
     if ($foreignRun -and ($eventRunIds.Count -eq 1 -or [string]::IsNullOrWhiteSpace($run) -or -not $eventRunIds.Contains($run))) {
@@ -3820,20 +3837,6 @@ function Test-TelephoneTrustedConsumingRun {
     }
     if ($eventRunIds.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($run) -and -not $eventRunIds.Contains($run)) {
         return [ordered]@{ ok = $false; reason = 'consuming_run_event_foreign'; session_id = $session; run_id = $run; root = $root }
-    }
-    if ([IO.File]::Exists($hostTerminal)) {
-        try {
-            $term = (Read-TelephoneJson -Path $hostTerminal).value
-            $exitCode = 0
-            if ($term -is [Collections.IDictionary] -and $term.Contains('exit_code')) { $exitCode = [int]$term['exit_code'] }
-            $eventsEmpty = $true
-            if ([IO.File]::Exists($eventsPath)) {
-                try { $eventsEmpty = ([IO.File]::ReadAllBytes($eventsPath).Length -eq 0) } catch { $eventsEmpty = $false }
-            }
-            if ($exitCode -ne 0 -and $eventsEmpty) {
-                return [ordered]@{ ok = $false; reason = 'consuming_run_rejected_pre_turn'; session_id = $session; run_id = $run; root = $root }
-            }
-        } catch { }
     }
     if ($meta -is [Collections.IDictionary] -and (-not [string]::IsNullOrWhiteSpace($ExpectedReceiptSha256) -or -not [string]::IsNullOrWhiteSpace($ExpectedWakeKey))) {
         try {
@@ -4317,6 +4320,41 @@ function Complete-TelephoneTrustedManualConsumption {
             if ($itemDoc -isnot [Collections.IDictionary] -or -not [bool]$itemDoc['trusted_manual_closeout']) { return $false }
             if ([string]$itemDoc['trusted_evidence_sha256'] -cne [string]$evidenceIdentity.sha256) { return $false }
             if ([string]$itemDoc['trusted_receipt_sha256'] -cne $actualSha) { return $false }
+            $closeoutDoc = (Read-TelephoneJson -Path $closeoutPath).value
+            if ($closeoutDoc -isnot [Collections.IDictionary]) { return $false }
+            $closeReceipt = ''
+            $closeEvidence = ''
+            $closeJob = ''
+            if ($closeoutDoc.Contains('receipt_sha256')) { $closeReceipt = [string]$closeoutDoc['receipt_sha256'] }
+            if ($closeoutDoc.Contains('evidence_sha256')) { $closeEvidence = [string]$closeoutDoc['evidence_sha256'] }
+            if ($closeoutDoc.Contains('line_job_id')) { $closeJob = [string]$closeoutDoc['line_job_id'] }
+            if ([string]::IsNullOrWhiteSpace($closeReceipt) -or $closeReceipt -cne $actualSha) { return $false }
+            if ([string]::IsNullOrWhiteSpace($closeEvidence) -or $closeEvidence -cne [string]$evidenceIdentity.sha256) { return $false }
+            if ([string]::IsNullOrWhiteSpace($closeJob) -or $closeJob -cne [string]$dispatch.line_job_id) { return $false }
+            $consDoc = (Read-TelephoneJson -Path $paths.trusted_consumption).value
+            if ($consDoc -isnot [Collections.IDictionary]) { return $false }
+            $consReceipt = ''
+            $consEvidence = ''
+            $consJob = ''
+            $consWake = ''
+            if ($consDoc.Contains('receipt_sha256')) { $consReceipt = [string]$consDoc['receipt_sha256'] }
+            if ($consDoc.Contains('line_job_id')) { $consJob = [string]$consDoc['line_job_id'] }
+            if ($consDoc.Contains('wake_key')) { $consWake = [string]$consDoc['wake_key'] }
+            if ($consDoc.Contains('consumption_evidence') -and $consDoc['consumption_evidence'] -is [Collections.IDictionary] -and $consDoc['consumption_evidence'].Contains('sha256')) {
+                $consEvidence = [string]$consDoc['consumption_evidence']['sha256']
+            }
+            if ([string]::IsNullOrWhiteSpace($consReceipt) -or $consReceipt -cne $actualSha) { return $false }
+            if ([string]::IsNullOrWhiteSpace($consEvidence) -or $consEvidence -cne [string]$evidenceIdentity.sha256) { return $false }
+            if ([string]::IsNullOrWhiteSpace($consJob) -or $consJob -cne [string]$dispatch.line_job_id) { return $false }
+            if ([string]::IsNullOrWhiteSpace($consWake) -or $consWake -cne [string]$wakeIdentity.wake_key) { return $false }
+            $lifeDoc = (Read-TelephoneJson -Path $paths.lifecycle_status).value
+            if ($lifeDoc -isnot [Collections.IDictionary]) { return $false }
+            $lifeJob = ''
+            $lifePhase = ''
+            if ($lifeDoc.Contains('line_job_id')) { $lifeJob = [string]$lifeDoc['line_job_id'] }
+            if ($lifeDoc.Contains('phase')) { $lifePhase = [string]$lifeDoc['phase'] }
+            if ([string]::IsNullOrWhiteSpace($lifeJob) -or $lifeJob -cne [string]$dispatch.line_job_id) { return $false }
+            if ($lifePhase -cne 'delivered') { return $false }
             if (-not [IO.File]::Exists([string]$box.truth)) { return $false }
             $truthDoc = (Read-TelephoneJson -Path ([string]$box.truth)).value
             $found = $false
@@ -4337,7 +4375,9 @@ function Complete-TelephoneTrustedManualConsumption {
             if ($colDoc.Contains('acceptance_eligible') -and [bool]$colDoc['acceptance_eligible']) { return $false }
             $colState = [string]$colDoc.state
             if ($colState -cne 'lead_consumed' -and $colState -cne 'lead_consumed_pending_siblings') { return $false }
-            if ($colDoc.Contains('lead_consumed_receipt_sha256') -and [string]$colDoc['lead_consumed_receipt_sha256'] -cne $actualSha) { return $false }
+            if (-not $colDoc.Contains('lead_consumed_receipt_sha256') -or [string]$colDoc['lead_consumed_receipt_sha256'] -cne $actualSha) { return $false }
+            if (-not $colDoc.Contains('lead_consumed_evidence_sha256') -or [string]$colDoc['lead_consumed_evidence_sha256'] -cne [string]$evidenceIdentity.sha256) { return $false }
+            if (-not $colDoc.Contains('lead_consumed_line_job_id') -or [string]$colDoc['lead_consumed_line_job_id'] -cne [string]$dispatch.line_job_id) { return $false }
             if (-not [IO.File]::Exists($paths.trusted_consumption)) { return $false }
             try {
                 Assert-TelephoneTrustedMailboxCloseoutIdentity -JobPaths $paths -Dispatch $dispatch -LeadSessionId $leadSessionId -ReceiptSha256 $actualSha -Item $itemDoc -LeadKey $key -BatchId $batch -ItemId $itemId | Out-Null

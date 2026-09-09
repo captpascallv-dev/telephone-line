@@ -2260,6 +2260,51 @@ function Reconcile-TelephoneSupervisorClaimed {
     return @($reconciled)
 }
 
+function Reconcile-TelephoneSupervisorOwnedLeadDrain {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$RunRoot,
+        [Parameter(Mandatory = $true)][string]$ExpectedSessionId,
+        [Parameter(Mandatory = $true)][string]$ExpectedRunId
+    )
+    $root = [IO.Path]::GetFullPath($RunRoot).TrimEnd('\')
+    $result = [ordered]@{
+        protocol_version = 'telephone-line-supervisor-owned-drain-reconcile-v1'
+        run_root = $root
+        session_id = $ExpectedSessionId
+        run_id = $ExpectedRunId
+        recovered = $false
+        duplicate_start = $false
+        refused = ''
+        recovery = $null
+        drain = $null
+        lifecycle = $null
+        recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+    }
+    if (-not [IO.Directory]::Exists($root)) {
+        $result.refused = 'run_root_missing'
+        return $result
+    }
+    $life = Get-TelephoneLeadRunLifecycle -RunRoot $root -ExpectedSessionId $ExpectedSessionId -ExpectedRunId $ExpectedRunId
+    $result.lifecycle = $life
+    if (-not [bool]$life.binding_ok) {
+        $result.refused = $(if ([string]::IsNullOrWhiteSpace([string]$life.rejected)) { 'binding_not_ok' } else { [string]$life.rejected })
+        return $result
+    }
+    if ([bool]$life.owner_alive -and [bool]$life.native_turn_complete -and -not [bool]$life.cli_child_alive) {
+        $recovery = Stop-TelephoneLeadCompletedOwnProcess -Lifecycle $life -ExpectedSessionId $ExpectedSessionId -ExpectedRunId $ExpectedRunId
+        $result.recovery = $recovery
+        if ([bool]$recovery.recovered) { $result.recovered = $true }
+        elseif (-not [string]::IsNullOrWhiteSpace([string]$recovery.refused)) { $result.refused = [string]$recovery.refused }
+        $life = Get-TelephoneLeadRunLifecycle -RunRoot $root -ExpectedSessionId $ExpectedSessionId -ExpectedRunId $ExpectedRunId
+        $result.lifecycle = $life
+    } elseif (-not [bool]$life.native_turn_complete) {
+        $result.refused = 'native_turn_not_complete'
+    }
+    $result.drain = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $root -WaitMilliseconds 1500
+    return $result
+}
+
 function Get-TelephoneSupervisorPinnedVersionIds {
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][string]$StateRoot)
