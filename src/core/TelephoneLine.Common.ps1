@@ -3794,21 +3794,41 @@ function Test-TelephoneTrustedConsumingRun {
             $etype = ''
             if ($evt.Contains('type')) { $etype = [string]$evt['type'] }
             elseif ($evt.Contains('event')) { $etype = [string]$evt['event'] }
-            if ($etype -ceq 'turn.started' -or $etype -ceq 'turn.completed') {
-                $nativeTurn = $true
-            } elseif ($etype -ceq 'thread.started' -or $etype -ceq 'session.created') {
-                $allocationOnly = $true
-            }
+            $evtSession = ''
+            if ($evt.Contains('session_id')) { $evtSession = [string]$evt['session_id'] }
             $evtRun = ''
             if ($evt.Contains('run_id')) { $evtRun = [string]$evt['run_id'] }
-            if (-not [string]::IsNullOrWhiteSpace($evtRun)) {
-                [void]$eventRunIds.Add($evtRun)
-                if (-not [string]::IsNullOrWhiteSpace($ForbiddenRunId) -and $evtRun -ceq $ForbiddenRunId) { $foreignRun = $true }
-            }
             $threadId = ''
             if ($evt.Contains('thread_id')) { $threadId = [string]$evt['thread_id'] }
-            if (-not [string]::IsNullOrWhiteSpace($threadId) -and $threadId -cne $ExpectedSessionId) {
-                return [ordered]@{ ok = $false; reason = 'consuming_run_wrong_session'; session_id = $session; run_id = $run; root = $root }
+            if ($etype -ceq 'thread.started' -or $etype -ceq 'session.created') {
+                $allocationOnly = $true
+                if (-not [string]::IsNullOrWhiteSpace($threadId) -and $threadId -cne $ExpectedSessionId) {
+                    return [ordered]@{ ok = $false; reason = 'consuming_run_wrong_session'; session_id = $session; run_id = $run; root = $root }
+                }
+                if (-not [string]::IsNullOrWhiteSpace($evtSession) -and $evtSession -cne $ExpectedSessionId) {
+                    return [ordered]@{ ok = $false; reason = 'consuming_run_wrong_session'; session_id = $session; run_id = $run; root = $root }
+                }
+                if (-not [string]::IsNullOrWhiteSpace($evtRun)) {
+                    [void]$eventRunIds.Add($evtRun)
+                    if (-not [string]::IsNullOrWhiteSpace($ForbiddenRunId) -and $evtRun -ceq $ForbiddenRunId) { $foreignRun = $true }
+                }
+                continue
+            }
+            if ($etype -ceq 'turn.started' -or $etype -ceq 'turn.completed') {
+                if (-not [string]::IsNullOrWhiteSpace($evtSession) -and $evtSession -cne $ExpectedSessionId) {
+                    return [ordered]@{ ok = $false; reason = 'consuming_run_wrong_session'; session_id = $session; run_id = $run; root = $root }
+                }
+                if (-not [string]::IsNullOrWhiteSpace($threadId) -and $threadId -cne $ExpectedSessionId) {
+                    return [ordered]@{ ok = $false; reason = 'consuming_run_wrong_session'; session_id = $session; run_id = $run; root = $root }
+                }
+                if (-not [string]::IsNullOrWhiteSpace($evtRun) -and -not [string]::IsNullOrWhiteSpace($run) -and $evtRun -cne $run) {
+                    return [ordered]@{ ok = $false; reason = 'consuming_run_event_foreign'; session_id = $session; run_id = $run; root = $root }
+                }
+                if (-not [string]::IsNullOrWhiteSpace($evtRun)) {
+                    [void]$eventRunIds.Add($evtRun)
+                    if (-not [string]::IsNullOrWhiteSpace($ForbiddenRunId) -and $evtRun -ceq $ForbiddenRunId) { $foreignRun = $true }
+                }
+                $nativeTurn = $true
             }
         }
     } catch {

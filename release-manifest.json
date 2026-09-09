@@ -19,14 +19,14 @@
     {
       "name": "telephone-line-0.1.2-source.zip",
       "contains": "src/, schemas/, docs/, .github/, tests/, and root README.md, LICENSE, CONTRIBUTING.md, SECURITY.md, THIRD-PARTY-NOTICES.md, .gitattributes",
-      "bytes": 953192,
-      "sha256": "3de7176788d56b1a5c73d1a7625a22a864cfdbde7b942a948f9dfc40ac4e3812"
+      "bytes": 957565,
+      "sha256": "fe4a370fb30048c834411e763535bd6013fdd54570fe000f80f3df2a9e1ccb69"
     },
     {
       "name": "telephone-line-0.1.2-windows.zip",
       "contains": "src/, schemas/, docs/, and root README.md, LICENSE, CONTRIBUTING.md, SECURITY.md, THIRD-PARTY-NOTICES.md, .gitattributes; excludes tests/ and .github/",
-      "bytes": 528396,
-      "sha256": "5d1017aaeb001075441fe97b2b634e99c0ff3378d163fd364ad33144d9be397a"
+      "bytes": 530483,
+      "sha256": "6efba06e77c648101448250c23061b1a125cc8a798b1fe5b29969200d9e535d4"
     }
   ],
   "files": [
@@ -762,13 +762,13 @@
     },
     {
       "path": "src/core/TelephoneLeadRuntime.Common.ps1",
-      "bytes": 103488,
-      "sha256": "8e3cf3ab5ed6029816ddbff089f3f199764c66b195b5fce5e1dd75116b40e8bc"
+      "bytes": 112658,
+      "sha256": "7c4a04b98d7147b73557335fde86a88750c327585bb74ad872f6f6849475a6ba"
     },
     {
       "path": "src/core/TelephoneLine.Common.ps1",
-      "bytes": 275385,
-      "sha256": "bf2262520491f91dcb90105a3ad38118f78c57f25e4894ece19f5b7c7f13703c"
+      "bytes": 276950,
+      "sha256": "017693d66b8ea0bbf9c08c92ddf02d22332890ee40c69e1f8da39fec86dbbac6"
     },
     {
       "path": "src/dashboard/Ensure-TelephoneDashboard.ps1",
@@ -962,8 +962,8 @@
     },
     {
       "path": "src/supervisor/TelephoneSupervisor.Common.ps1",
-      "bytes": 130853,
-      "sha256": "b21d57a0a8d4cd8563c0c7d6710d0dc979edfe4d6c7f708fb964c3807411c2c4"
+      "bytes": 136006,
+      "sha256": "1a0b6171af119099e354453f3bb3247eca1019bd0b3f4c559d52379219775501"
     },
     {
       "path": "tests/Invoke-OfflineTests.ps1",
@@ -1422,8 +1422,8 @@
     },
     {
       "path": "tests/core/test_audit_repair.ps1",
-      "bytes": 149279,
-      "sha256": "2150fcd5d179380d147105c740213221083920829fa24bb4613ca254aaa8fc01"
+      "bytes": 161149,
+      "sha256": "60ce118b73a4a568e4a910f78308554c28c0179b5a485df0027cf8f5dd52359e"
     },
     {
       "path": "tests/core/test_autonomous_event_chain.ps1",
@@ -1518,7 +1518,7 @@
   ],
   "counts": {
     "files": 297,
-    "bytes": 4376001
+    "bytes": 4403759
   },
   "excluded": [
     ".control/**",

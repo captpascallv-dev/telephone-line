@@ -847,6 +847,83 @@ function Test-TelephoneLeadCliChildAbsenceProven {
     return [bool]$proven
 }
 
+function Get-TelephoneLeadDurableLastOutput {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$RunRoot)
+    $path = Join-Path ([IO.Path]::GetFullPath($RunRoot).TrimEnd('\')) 'native-output.txt'
+    if (-not [IO.File]::Exists($path)) { return $null }
+    try {
+        $bytes = [IO.File]::ReadAllBytes($path)
+        return [ordered]@{
+            path = [IO.Path]::GetFullPath($path)
+            bytes = [int64]$bytes.Length
+            sha256 = ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))).ToLowerInvariant()
+        }
+    } catch {
+        return $null
+    }
+}
+
+function Get-TelephoneLeadOwnedStreamObservation {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$RunRoot,
+        [Parameter(Mandatory = $true)][object]$Identity,
+        [string]$Role = 'host',
+        [string]$SessionId = '',
+        [string]$RunId = ''
+    )
+    $result = [ordered]@{
+        stdout_eof = $false
+        stderr_eof = $false
+        observation = 'reader_unrecoverable'
+        exit_code = $null
+        last_output = $null
+    }
+    $ownedPid = 0
+    try {
+        if ($Identity -is [Collections.IDictionary] -and $Identity.Contains('pid')) { $ownedPid = [int]$Identity['pid'] }
+        elseif ($Identity -is [Collections.IDictionary] -and $Identity.Contains('target_pid')) { $ownedPid = [int]$Identity['target_pid'] }
+    } catch { $ownedPid = 0 }
+    if ($ownedPid -gt 0) {
+        $complete = Complete-TelephoneLeadOpenDrain -ProcessId $ownedPid -Wait -WaitMilliseconds 1500
+        if ([bool]$complete.found) {
+            $result.stdout_eof = [bool]$complete.stdout_eof
+            $result.stderr_eof = [bool]$complete.stderr_eof
+            $result.observation = $(if ([bool]$complete.pending) { 'open_drain_pending' } else { 'open_drain_readers' })
+            if ($complete.Contains('exit_code')) { $result.exit_code = $complete.exit_code }
+            $result.last_output = Get-TelephoneLeadDurableLastOutput -RunRoot $RunRoot
+            return $result
+        }
+    }
+    $root = [IO.Path]::GetFullPath($RunRoot).TrimEnd('\')
+    $handoffName = if ([string]$Role -ceq 'cli' -or [string]$Role -ceq 'child') { 'cli-drain-handoff.json' } else { 'host-drain-handoff.json' }
+    $handoffPath = Join-Path $root $handoffName
+    if ([IO.File]::Exists($handoffPath)) {
+        $doc = Read-TelephoneLeadDrainRecord -Path $handoffPath
+        if ($null -ne $doc -and $doc -is [Collections.IDictionary] -and -not ($doc.Contains('unreadable') -and [bool]$doc['unreadable']) -and (Test-TelephoneLeadDrainIdentityComplete -Doc $doc -SessionId $SessionId -RunId $RunId)) {
+            $pending = $true
+            if ($doc.Contains('pending')) { $pending = [bool]$doc['pending'] }
+            if (-not $pending) {
+                if ($doc.Contains('stdout_eof')) { $result.stdout_eof = [bool]$doc['stdout_eof'] }
+                if ($doc.Contains('stderr_eof')) { $result.stderr_eof = [bool]$doc['stderr_eof'] }
+                $result.observation = 'handoff_complete'
+                if ($doc.Contains('exit_code')) { $result.exit_code = $doc['exit_code'] }
+            } else {
+                $result.observation = 'handoff_pending'
+                $result.stdout_eof = $false
+                $result.stderr_eof = $false
+            }
+        }
+    }
+    $result.last_output = Get-TelephoneLeadDurableLastOutput -RunRoot $RunRoot
+    if ([string]$result.observation -ceq 'reader_unrecoverable' -or [string]$result.observation -ceq 'handoff_pending') {
+        $result.stdout_eof = $false
+        $result.stderr_eof = $false
+    }
+    return $result
+}
+
 function Write-TelephoneLeadOwnedRecoveredDrainLifecycle {
     [CmdletBinding()]
     param(
@@ -862,13 +939,21 @@ function Write-TelephoneLeadOwnedRecoveredDrainLifecycle {
     $root = [IO.Path]::GetFullPath($RunRoot).TrimEnd('\')
     $name = if ([string]$Role -ceq 'cli' -or [string]$Role -ceq 'child') { 'cli-drain-lifecycle.json' } else { 'host-drain-lifecycle.json' }
     $path = Join-Path $root $name
-    Write-TelephoneLeadDrainLifecycleFile -Path $path -Identity $Identity -ProcessExited $true -ExitCode $ExitCode -StdoutEof $true -StderrEof $true -NativeTurnComplete $NativeTurnComplete -Role $Role -SessionId $SessionId -RunId $RunId
+    $stream = Get-TelephoneLeadOwnedStreamObservation -RunRoot $root -Identity $Identity -Role $Role -SessionId $SessionId -RunId $RunId
+    $resolvedExit = $ExitCode
+    if ($null -eq $resolvedExit -and $null -ne $stream.exit_code) { $resolvedExit = $stream.exit_code }
+    Write-TelephoneLeadDrainLifecycleFile -Path $path -Identity $Identity -ProcessExited $true -ExitCode $resolvedExit -StdoutEof ([bool]$stream.stdout_eof) -StderrEof ([bool]$stream.stderr_eof) -NativeTurnComplete $NativeTurnComplete -Role $Role -SessionId $SessionId -RunId $RunId
     try {
         $doc = (Read-TelephoneJson -Path $path).value
         if ($doc -is [Collections.IDictionary]) {
             $doc['process_exit_observation'] = 'exact_identity_not_found_after_owned_stop'
-            $doc['stream_eof_observation'] = 'owned_process_exited_no_live_handles'
+            $doc['stream_eof_observation'] = [string]$stream.observation
             $doc['recovery_source'] = 'owned_native_complete_reconcile'
+            if ($null -ne $stream.last_output -and $stream.last_output -is [Collections.IDictionary]) {
+                $doc['last_output_path'] = [string]$stream.last_output.path
+                $doc['last_output_bytes'] = [int64]$stream.last_output.bytes
+                $doc['last_output_sha256'] = [string]$stream.last_output.sha256
+            }
             $null = Write-TelephoneJsonReplace -Path $path -Value $doc
         }
     } catch { }
@@ -1187,7 +1272,7 @@ function Invoke-TelephoneLeadDrainedProcess {
             if ($null -ne $stderrFile) { try { $stderrFile.Flush($true) } catch { } }
             if (-not [string]::IsNullOrWhiteSpace($EventsPath) -and -not [string]::IsNullOrWhiteSpace($SessionId)) {
                 try {
-                    $native = Get-TelephoneLeadEventNativeTurn -EventsPath $EventsPath -ExpectedSessionId $SessionId
+                    $native = Get-TelephoneLeadEventNativeTurn -EventsPath $EventsPath -ExpectedSessionId $SessionId -ExpectedRunId $RunId
                     $nativeComplete = [bool]$native.native_turn_complete
                 } catch { $nativeComplete = $false }
             }
@@ -1255,7 +1340,7 @@ function Invoke-TelephoneLeadDrainedProcess {
         if ($processExited) { $exitCode = [int]$process.ExitCode }
         if (-not [string]::IsNullOrWhiteSpace($EventsPath) -and -not [string]::IsNullOrWhiteSpace($SessionId)) {
             try {
-                $native = Get-TelephoneLeadEventNativeTurn -EventsPath $EventsPath -ExpectedSessionId $SessionId
+                $native = Get-TelephoneLeadEventNativeTurn -EventsPath $EventsPath -ExpectedSessionId $SessionId -ExpectedRunId $RunId
                 $nativeComplete = [bool]$native.native_turn_complete
             } catch { }
         }
@@ -1295,6 +1380,7 @@ function Get-TelephoneLeadEventNativeTurn {
     param(
         [Parameter(Mandatory = $true)][string]$EventsPath,
         [Parameter(Mandatory = $true)][string]$ExpectedSessionId,
+        [string]$ExpectedRunId = '',
         [AllowNull()][string]$NotBeforeUtc = ''
     )
     $result = [ordered]@{
@@ -1344,6 +1430,18 @@ function Get-TelephoneLeadEventNativeTurn {
             $result.thread_started = $true
         } elseif ($type -ceq 'turn.started') {
             if (-not [bool]$result.thread_started) { continue }
+            $sess = Get-TelephoneDictString -Dict $record -Key 'session_id'
+            if ([string]::IsNullOrWhiteSpace($sess) -and $null -ne $payload) { $sess = Get-TelephoneDictString -Dict $payload -Key 'session_id' }
+            if (-not [string]::IsNullOrWhiteSpace($sess) -and $sess -cne $ExpectedSessionId) {
+                $result.rejected = 'wrong_session'
+                continue
+            }
+            $evtRun = Get-TelephoneDictString -Dict $record -Key 'run_id'
+            if ([string]::IsNullOrWhiteSpace($evtRun) -and $null -ne $payload) { $evtRun = Get-TelephoneDictString -Dict $payload -Key 'run_id' }
+            if (-not [string]::IsNullOrWhiteSpace($evtRun) -and -not [string]::IsNullOrWhiteSpace($ExpectedRunId) -and $evtRun -cne $ExpectedRunId) {
+                $result.rejected = 'wrong_run'
+                continue
+            }
             $turnId = Get-TelephoneDictString -Dict $record -Key 'turn_id'
             if ([string]::IsNullOrWhiteSpace($turnId) -and $null -ne $payload) { $turnId = Get-TelephoneDictString -Dict $payload -Key 'turn_id' }
             $result.turn_started = $true
@@ -1363,6 +1461,12 @@ function Get-TelephoneLeadEventNativeTurn {
             if ([string]::IsNullOrWhiteSpace($sess) -and $null -ne $payload) { $sess = Get-TelephoneDictString -Dict $payload -Key 'session_id' }
             if (-not [string]::IsNullOrWhiteSpace($sess) -and $sess -cne $ExpectedSessionId) {
                 $result.rejected = 'wrong_session'
+                continue
+            }
+            $evtRun = Get-TelephoneDictString -Dict $record -Key 'run_id'
+            if ([string]::IsNullOrWhiteSpace($evtRun) -and $null -ne $payload) { $evtRun = Get-TelephoneDictString -Dict $payload -Key 'run_id' }
+            if (-not [string]::IsNullOrWhiteSpace($evtRun) -and -not [string]::IsNullOrWhiteSpace($ExpectedRunId) -and $evtRun -cne $ExpectedRunId) {
+                $result.rejected = 'wrong_run'
                 continue
             }
             $result.native_turn_complete = $true
@@ -1463,7 +1567,7 @@ function Get-TelephoneLeadRunLifecycle {
         } catch { }
     }
     $life.lead_final_present = [IO.File]::Exists($finalPath)
-    $native = Get-TelephoneLeadEventNativeTurn -EventsPath $eventsPath -ExpectedSessionId $ExpectedSessionId -NotBeforeUtc ([string]$life.created_at_utc)
+    $native = Get-TelephoneLeadEventNativeTurn -EventsPath $eventsPath -ExpectedSessionId $ExpectedSessionId -ExpectedRunId $ExpectedRunId -NotBeforeUtc ([string]$life.created_at_utc)
     if (-not [string]::IsNullOrWhiteSpace([string]$native.rejected)) { $life.rejected = [string]$native.rejected }
     $life.native_turn_complete = [bool]$native.native_turn_complete
     $life.current_turn_id = [string]$native.current_turn_id
@@ -1509,6 +1613,72 @@ function Get-TelephoneLeadRunLifecycle {
     return $life
 }
 
+function Stop-TelephoneLeadExactOwnedIdentity {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][object]$Identity,
+        [int]$WaitGoneMilliseconds = 2000
+    )
+    $record = [ordered]@{
+        attempted = $false
+        stopped = $false
+        refused = ''
+        observation = $null
+        target = $null
+    }
+    $obs = Get-TelephoneLeadOwnerIdentityObservation -Owner $Identity
+    $record.observation = $obs
+    if ([string]$obs.status -ceq 'query_error') {
+        $record.refused = 'owner_query_error'
+        return $record
+    }
+    if ([string]$obs.status -cne 'alive' -or $null -eq $obs.snapshot) {
+        $record.refused = $(if ([string]$obs.status -ceq 'mismatch') { 'pid_reuse_or_exe_mismatch' } else { 'owner_not_alive' })
+        return $record
+    }
+    $expected = [ordered]@{
+        pid = $(if ($Identity -is [Collections.IDictionary] -and $Identity.Contains('pid')) { [int]$Identity.pid } elseif ($Identity -is [Collections.IDictionary] -and $Identity.Contains('target_pid')) { [int]$Identity.target_pid } else { 0 })
+        start_time_utc_ticks = $(if ($Identity -is [Collections.IDictionary] -and $Identity.Contains('start_time_utc_ticks')) { [int64]$Identity.start_time_utc_ticks } else { [int64]0 })
+        executable_path = $(if ($Identity -is [Collections.IDictionary] -and $Identity.Contains('executable_path')) { [string]$Identity.executable_path } else { '' })
+    }
+    $record.attempted = $true
+    $record.target = $obs.snapshot
+    try {
+        $againObs = Get-TelephoneLeadOwnerIdentityObservation -Owner $Identity
+        if ([string]$againObs.status -ceq 'query_error') {
+            $record.refused = 'owner_query_error'
+            return $record
+        }
+        if ([string]$againObs.status -cne 'alive' -or $null -eq $againObs.snapshot -or -not (Test-TelephoneLeadProcessIdentityMatch -Expected $expected -Actual $againObs.snapshot)) {
+            $record.refused = 'identity_changed_before_stop'
+            return $record
+        }
+        Stop-Process -Id ([int]$againObs.snapshot.pid) -Force -ErrorAction Stop
+        $goneDeadline = [DateTimeOffset]::UtcNow.AddMilliseconds([Math]::Max(1, [int]$WaitGoneMilliseconds))
+        $gone = $false
+        do {
+            $after = Get-TelephoneLeadOwnerIdentityObservation -Owner $Identity
+            if ([string]$after.status -ceq 'query_error') {
+                $record.refused = 'owner_query_error_after_stop'
+                return $record
+            }
+            if ([string]$after.status -ceq 'not_found' -or [string]$after.status -ceq 'mismatch') {
+                $gone = $true
+                break
+            }
+            Start-Sleep -Milliseconds 50
+        } while ([DateTimeOffset]::UtcNow -lt $goneDeadline)
+        if (-not $gone) {
+            $record.refused = 'owner_still_alive_after_stop'
+            return $record
+        }
+        $record.stopped = $true
+    } catch {
+        $record.refused = 'stop_failed'
+    }
+    return $record
+}
+
 function Stop-TelephoneLeadCompletedOwnProcess {
     [CmdletBinding()]
     param(
@@ -1522,6 +1692,8 @@ function Stop-TelephoneLeadCompletedOwnProcess {
         recovered = $false
         refused = ''
         target = $null
+        child_stop = $null
+        host_stop = $null
         recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
     }
     if ($Lifecycle -isnot [Collections.IDictionary]) {
@@ -1544,13 +1716,40 @@ function Stop-TelephoneLeadCompletedOwnProcess {
         $record.refused = 'final_only'
         return $record
     }
-    if (-not [string]::IsNullOrWhiteSpace([string]$Lifecycle.rejected) -and [string]$Lifecycle.rejected -cin @('wrong_session', 'wrong_turn', 'complete_without_current_turn')) {
+    if (-not [string]::IsNullOrWhiteSpace([string]$Lifecycle.rejected) -and [string]$Lifecycle.rejected -cin @('wrong_session', 'wrong_turn', 'wrong_run', 'complete_without_current_turn')) {
         $record.refused = [string]$Lifecycle.rejected
         return $record
     }
-    if ([bool]$Lifecycle.cli_child_alive) {
-        $record.refused = 'cli_child_still_alive'
-        return $record
+    $runRoot = ''
+    if ($Lifecycle.Contains('run_root')) { $runRoot = [string]$Lifecycle['run_root'] }
+    $child = $null
+    if ($Lifecycle.Contains('cli_child')) { $child = $Lifecycle.cli_child }
+    if ($null -ne $child) {
+        $childObs = Get-TelephoneLeadOwnerIdentityObservation -Owner $child
+        if ([string]$childObs.status -ceq 'query_error') {
+            $record.refused = 'owner_query_error'
+            return $record
+        }
+        if ([string]$childObs.status -ceq 'mismatch') {
+            $record.refused = 'pid_reuse_or_exe_mismatch'
+            return $record
+        }
+        if ([string]$childObs.status -ceq 'alive') {
+            $childStop = Stop-TelephoneLeadExactOwnedIdentity -Identity $child
+            $record.child_stop = $childStop
+            if ([bool]$childStop.attempted) { $record.attempted = $true }
+            if (-not [string]::IsNullOrWhiteSpace([string]$childStop.refused) -and -not [bool]$childStop.stopped) {
+                $record.refused = [string]$childStop.refused
+                return $record
+            }
+            if ([bool]$childStop.stopped) {
+                $record.target = $childStop.target
+                if (-not [string]::IsNullOrWhiteSpace($runRoot)) {
+                    $null = Write-TelephoneLeadOwnedRecoveredDrainLifecycle -RunRoot $runRoot -Identity $child -SessionId $ExpectedSessionId -RunId $ExpectedRunId -Role 'cli' -NativeTurnComplete ([bool]$Lifecycle.native_turn_complete)
+                }
+                $record.recovered = $true
+            }
+        }
     }
     $owner = $Lifecycle.owner
     $ownerObs = Get-TelephoneLeadOwnerIdentityObservation -Owner $owner
@@ -1558,55 +1757,28 @@ function Stop-TelephoneLeadCompletedOwnProcess {
         $record.refused = 'owner_query_error'
         return $record
     }
+    if ([string]$ownerObs.status -ceq 'mismatch') {
+        $record.refused = 'pid_reuse_or_exe_mismatch'
+        return $record
+    }
     if ($null -eq $owner -or [string]$ownerObs.status -cne 'alive') {
+        if ([bool]$record.recovered) { return $record }
         $record.refused = 'owner_not_alive'
         return $record
     }
-    $live = $ownerObs.snapshot
-    $expected = [ordered]@{
-        pid = [int]$owner.pid
-        start_time_utc_ticks = [int64]$owner.start_time_utc_ticks
-        executable_path = $(if ($owner -is [Collections.IDictionary] -and $owner.Contains('executable_path')) { [string]$owner.executable_path } else { '' })
+    $hostStop = Stop-TelephoneLeadExactOwnedIdentity -Identity $owner
+    $record.host_stop = $hostStop
+    if ([bool]$hostStop.attempted) { $record.attempted = $true }
+    if ($null -ne $hostStop.target) { $record.target = $hostStop.target }
+    if (-not [string]::IsNullOrWhiteSpace([string]$hostStop.refused) -and -not [bool]$hostStop.stopped) {
+        $record.refused = [string]$hostStop.refused
+        return $record
     }
-    $record.attempted = $true
-    $record.target = $live
-    try {
-        $againObs = Get-TelephoneLeadOwnerIdentityObservation -Owner $owner
-        if ([string]$againObs.status -ceq 'query_error') {
-            $record.refused = 'owner_query_error'
-            return $record
-        }
-        if ([string]$againObs.status -cne 'alive' -or $null -eq $againObs.snapshot -or -not (Test-TelephoneLeadProcessIdentityMatch -Expected $expected -Actual $againObs.snapshot)) {
-            $record.refused = 'identity_changed_before_stop'
-            return $record
-        }
-        Stop-Process -Id ([int]$againObs.snapshot.pid) -Force -ErrorAction Stop
-        $goneDeadline = [DateTimeOffset]::UtcNow.AddMilliseconds(2000)
-        $gone = $false
-        do {
-            $after = Get-TelephoneLeadOwnerIdentityObservation -Owner $owner
-            if ([string]$after.status -ceq 'query_error') {
-                $record.refused = 'owner_query_error_after_stop'
-                return $record
-            }
-            if ([string]$after.status -ceq 'not_found' -or [string]$after.status -ceq 'mismatch') {
-                $gone = $true
-                break
-            }
-            Start-Sleep -Milliseconds 50
-        } while ([DateTimeOffset]::UtcNow -lt $goneDeadline)
-        if (-not $gone) {
-            $record.refused = 'owner_still_alive_after_stop'
-            return $record
-        }
-        $runRoot = ''
-        if ($Lifecycle.Contains('run_root')) { $runRoot = [string]$Lifecycle['run_root'] }
+    if ([bool]$hostStop.stopped) {
         if (-not [string]::IsNullOrWhiteSpace($runRoot)) {
             $null = Write-TelephoneLeadOwnedRecoveredDrainLifecycle -RunRoot $runRoot -Identity $owner -SessionId $ExpectedSessionId -RunId $ExpectedRunId -Role 'host' -NativeTurnComplete ([bool]$Lifecycle.native_turn_complete)
         }
         $record.recovered = $true
-    } catch {
-        $record.refused = 'stop_failed'
     }
     return $record
 }
@@ -1678,7 +1850,7 @@ function Invoke-TelephoneLeadWakeReconcile {
         return $result
     }
     if ([bool]$life.owner_alive) {
-        if ([bool]$life.native_turn_complete -and -not [bool]$life.cli_child_alive) {
+        if ([bool]$life.native_turn_complete -and ([bool]$life.owner_alive -or [bool]$life.cli_child_alive)) {
             $recovery = Stop-TelephoneLeadCompletedOwnProcess -Lifecycle $life -ExpectedSessionId $SessionId -ExpectedRunId $RunId
             $result.recovery = $recovery
             $life = Get-TelephoneLeadRunLifecycle -RunRoot $runRoot -ExpectedSessionId $SessionId -ExpectedRunId $RunId
@@ -1696,7 +1868,7 @@ function Invoke-TelephoneLeadWakeReconcile {
             Start-Sleep -Milliseconds 200
             $life = Get-TelephoneLeadRunLifecycle -RunRoot $runRoot -ExpectedSessionId $SessionId -ExpectedRunId $RunId
             $result.lifecycle = $life
-            if ([bool]$life.native_turn_complete -and -not [bool]$life.cli_child_alive -and [bool]$life.owner_alive) {
+            if ([bool]$life.native_turn_complete -and ([bool]$life.owner_alive -or [bool]$life.cli_child_alive)) {
                 $recovery = Stop-TelephoneLeadCompletedOwnProcess -Lifecycle $life -ExpectedSessionId $SessionId -ExpectedRunId $RunId
                 $result.recovery = $recovery
                 if ([bool]$recovery.recovered) { break }

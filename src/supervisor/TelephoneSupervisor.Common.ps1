@@ -2191,6 +2191,54 @@ function Get-TelephoneSupervisorStatus {
     return $status
 }
 
+function Resolve-TelephoneSupervisorNestedLeadRun {
+    [CmdletBinding()]
+    param([AllowNull()][object]$Request)
+    if ($null -eq $Request -or $Request -isnot [Collections.IDictionary]) { return $null }
+    $session = ''
+    if ($Request.Contains('lead_session_id')) { $session = [string]$Request['lead_session_id'] }
+    if ([string]::IsNullOrWhiteSpace($session)) { return $null }
+    $leadRunId = ''
+    if ($Request.Contains('lead_run_id')) { $leadRunId = [string]$Request['lead_run_id'] }
+    $candidates = [Collections.Generic.List[string]]::new()
+    foreach ($raw in @(
+        $(if ($Request.Contains('command') -and $Request.command -is [Collections.IDictionary] -and $Request.command.Contains('working_directory')) { [string]$Request.command.working_directory } else { '' }),
+        $(if ($Request.Contains('worktree')) { [string]$Request.worktree } else { '' }),
+        $(if (-not [string]::IsNullOrWhiteSpace($leadRunId) -and -not [string]::IsNullOrWhiteSpace([string]$env:TELEPHONE_LINE_LEAD_STATE_ROOT)) { Join-Path ([string]$env:TELEPHONE_LINE_LEAD_STATE_ROOT) $leadRunId } else { '' })
+    )) {
+        if ([string]::IsNullOrWhiteSpace([string]$raw)) { continue }
+        try {
+            $full = [IO.Path]::GetFullPath([string]$raw).TrimEnd('\')
+            if ([string]::IsNullOrWhiteSpace($full)) { continue }
+            if (-not $candidates.Contains($full)) { [void]$candidates.Add($full) }
+        } catch { }
+    }
+    foreach ($root in $candidates) {
+        $metaPath = Join-Path $root 'lead-run.json'
+        if (-not [IO.File]::Exists($metaPath)) { continue }
+        try {
+            $meta = (Read-TelephoneJson -Path $metaPath).value
+            if ($meta -isnot [Collections.IDictionary]) { continue }
+            $metaSession = ''
+            if ($meta.Contains('session_id')) { $metaSession = [string]$meta['session_id'] }
+            if ([string]::IsNullOrWhiteSpace($metaSession) -and $meta.Contains('resume_session_id')) { $metaSession = [string]$meta['resume_session_id'] }
+            if ($metaSession -cne $session) { continue }
+            $metaRun = ''
+            if ($meta.Contains('run_id')) { $metaRun = [string]$meta['run_id'] }
+            if (-not [string]::IsNullOrWhiteSpace($leadRunId) -and $metaRun -cne $leadRunId) { continue }
+            $resolvedRun = $leadRunId
+            if ([string]::IsNullOrWhiteSpace($resolvedRun)) { $resolvedRun = $metaRun }
+            if ([string]::IsNullOrWhiteSpace($resolvedRun)) { continue }
+            return [ordered]@{
+                run_root = $root
+                session_id = $session
+                run_id = $resolvedRun
+            }
+        } catch { }
+    }
+    return $null
+}
+
 function Reconcile-TelephoneSupervisorClaimed {
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][string]$StateRoot)
@@ -2242,6 +2290,30 @@ function Reconcile-TelephoneSupervisorClaimed {
             [void]$reconciled.Add([ordered]@{ run_id = $runId; terminal = ''; decision = $decision })
             continue
         }
+        $pause = Get-TelephoneSupervisorPause -StateRoot $StateRoot
+        $nested = Resolve-TelephoneSupervisorNestedLeadRun -Request $claimed.value
+        $drain = $null
+        if ($null -ne $nested -and -not [bool]$pause.paused_by_pascal) {
+            try {
+                $drain = Reconcile-TelephoneSupervisorOwnedLeadDrain -RunRoot ([string]$nested.run_root) -ExpectedSessionId ([string]$nested.session_id) -ExpectedRunId ([string]$nested.run_id)
+            } catch {
+                $drain = [ordered]@{ recovered = $false; refused = 'nested_drain_reconcile_failed' }
+            }
+            $nestedPath = Join-Path $runDir 'owned-nested-drain-reconcile.json'
+            try {
+                $nestedRecord = [ordered]@{
+                    protocol_version = 'telephone-line-supervisor-nested-drain-reconcile-v1'
+                    run_id = $runId
+                    nested_run_root = [string]$nested.run_root
+                    nested_session_id = [string]$nested.session_id
+                    nested_run_id = [string]$nested.run_id
+                    recovered = $(if ($null -ne $drain -and $drain -is [Collections.IDictionary] -and $drain.Contains('recovered')) { [bool]$drain.recovered } else { $false })
+                    refused = $(if ($null -ne $drain -and $drain -is [Collections.IDictionary] -and $drain.Contains('refused')) { [string]$drain.refused } else { '' })
+                    recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+                }
+                $null = Write-TelephoneJsonReplace -Path $nestedPath -Value $nestedRecord
+            } catch { }
+        }
         if (Test-TelephoneSupervisorExactOwner -Owner $ownerRead.value) { continue }
         $memberRead = Read-TelephoneSupervisorJobMembers -StateRoot $StateRoot -RunId $runId
         $job = Open-TelephoneSupervisorRunJob -RunId $runId -WaitMilliseconds 0
@@ -2253,6 +2325,23 @@ function Reconcile-TelephoneSupervisorClaimed {
             }
         } finally {
             Close-TelephoneSupervisorRunJob -Job $job
+        }
+        if ($null -ne $nested) {
+            $reconcilePath = Join-Path $runDir 'claimed-reconcile.json'
+            $record = [ordered]@{
+                protocol_version = 'telephone-line-supervisor-claimed-reconcile-v1'
+                run_id = $runId
+                decision = 'owned_nested_drain'
+                error_code = ''
+                replay = $false
+                silent_skip = $false
+                launch_intent_present = [bool]$hasIntent
+                nested_run_root = [string]$nested.run_root
+                recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+            }
+            try { $null = Write-TelephoneJsonReplace -Path $reconcilePath -Value $record } catch { }
+            [void]$reconciled.Add([ordered]@{ run_id = $runId; terminal = ''; decision = 'owned_nested_drain' })
+            continue
         }
         $null = Write-TelephoneSupervisorOutbox -StateRoot $StateRoot -RunId $runId -Terminal 'failed' -Request $claimed.value -ErrorCode 'SUPERVISOR_OWNER_DEAD_NO_RERUN'
         [void]$reconciled.Add([ordered]@{ run_id = $runId; terminal = 'failed' })
@@ -2291,7 +2380,7 @@ function Reconcile-TelephoneSupervisorOwnedLeadDrain {
         $result.refused = $(if ([string]::IsNullOrWhiteSpace([string]$life.rejected)) { 'binding_not_ok' } else { [string]$life.rejected })
         return $result
     }
-    if ([bool]$life.owner_alive -and [bool]$life.native_turn_complete -and -not [bool]$life.cli_child_alive) {
+    if ([bool]$life.native_turn_complete -and ([bool]$life.owner_alive -or [bool]$life.cli_child_alive)) {
         $recovery = Stop-TelephoneLeadCompletedOwnProcess -Lifecycle $life -ExpectedSessionId $ExpectedSessionId -ExpectedRunId $ExpectedRunId
         $result.recovery = $recovery
         if ([bool]$recovery.recovered) { $result.recovered = $true }
