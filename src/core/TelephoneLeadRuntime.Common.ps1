@@ -34,12 +34,30 @@ public static class TelephoneLeadOwnedReaderCompletion {
         string ownerExe) {
         if (process == null || stdoutTask == null || stderrTask == null) return;
         if (string.IsNullOrWhiteSpace(handoffPath)) return;
-        Task.WhenAll(stdoutTask, stderrTask).ContinueWith(delegate(Task antecedent) {
+        Task exited = ProcessExited(process);
+        Task.WhenAll(stdoutTask, stderrTask, exited).ContinueWith(delegate(Task antecedent) {
             try {
+                if (antecedent.IsFaulted || antecedent.IsCanceled) return;
                 Publish(process, stdoutTask, stderrTask, handoffPath, lifecyclePath, pid, ticks, startedAt, exe, sessionId, runId, role, ownerPid, ownerTicks, ownerExe);
             } catch {
             }
         });
+    }
+
+    static Task ProcessExited(System.Diagnostics.Process process) {
+        var done = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (process.HasExited) {
+            done.TrySetResult(true);
+            return done.Task;
+        }
+        process.EnableRaisingEvents = true;
+        process.Exited += delegate {
+            done.TrySetResult(true);
+        };
+        if (process.HasExited) {
+            done.TrySetResult(true);
+        }
+        return done.Task;
     }
 
     static void Publish(

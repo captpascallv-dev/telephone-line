@@ -19,14 +19,14 @@
     {
       "name": "telephone-line-0.1.2-source.zip",
       "contains": "src/, schemas/, docs/, .github/, tests/, and root README.md, LICENSE, CONTRIBUTING.md, SECURITY.md, THIRD-PARTY-NOTICES.md, .gitattributes",
-      "bytes": 961730,
-      "sha256": "a5019eb665122a6bb3c27323396a8c62fc7827186abac7641cb25d305988c28a"
+      "bytes": 961903,
+      "sha256": "0c31efd94d587b75bd593893b0876f1d4ea3ba369e76b5b2bfabdec93e9c1206"
     },
     {
       "name": "telephone-line-0.1.2-windows.zip",
       "contains": "src/, schemas/, docs/, and root README.md, LICENSE, CONTRIBUTING.md, SECURITY.md, THIRD-PARTY-NOTICES.md, .gitattributes; excludes tests/ and .github/",
-      "bytes": 533041,
-      "sha256": "1a0601b8e59ebe31354700c5e90e76cc0be281558cc6195201af435c28e569f9"
+      "bytes": 533214,
+      "sha256": "0ae02b19499373b87dc94906ef719adb0d5823c14909f84dc69b2314d4bf676d"
     }
   ],
   "files": [
@@ -762,8 +762,8 @@
     },
     {
       "path": "src/core/TelephoneLeadRuntime.Common.ps1",
-      "bytes": 124152,
-      "sha256": "f9e5fbc0233210295871eca3b2331b564ce3a54d70c6a235aa35746947bce9ec"
+      "bytes": 124822,
+      "sha256": "b4ad5da29974f5572fa4ba0558d3cc2a66d068e72fe773a029dd60f58d1826cc"
     },
     {
       "path": "src/core/TelephoneLine.Common.ps1",
@@ -1518,7 +1518,7 @@
   ],
   "counts": {
     "files": 297,
-    "bytes": 4430100
+    "bytes": 4430770
   },
   "excluded": [
     ".control/**",
