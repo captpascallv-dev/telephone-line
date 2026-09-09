@@ -266,7 +266,7 @@ function Write-AdapterResult {
         if ($null -ne $prompt) { $result.prompt = $prompt }
         $promptSha256 = [string](Get-DirectNoteValue -Object $cursorResult -Name 'prompt_sha256')
         if (-not [string]::IsNullOrWhiteSpace($promptSha256)) { $result.prompt_sha256 = $promptSha256 }
-        foreach ($field in @('failure_kind', 'failure_code', 'failure_stage', 'exception_type', 'stdout_bytes', 'stderr_bytes', 'native_exit_code')) {
+        foreach ($field in @('failure_kind', 'failure_code', 'failure_stage', 'exception_type', 'stdout_bytes', 'stderr_bytes', 'native_exit_code', 'violating_paths', 'policy_violation')) {
             $fieldValue = Get-DirectNoteValue -Object $cursorResult -Name $field
             if ($null -ne $fieldValue -and -not [string]::IsNullOrWhiteSpace([string]$fieldValue)) { $result[$field] = $fieldValue }
         }

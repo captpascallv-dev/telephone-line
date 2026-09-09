@@ -776,6 +776,40 @@ function Get-TelephoneSupervisorTaskMapText {
     return [string]$prop.Value
 }
 
+function Get-TelephoneSupervisorCompiledWrapperTargets {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][byte[]]$Bytes)
+    $names = @('Start-TelephoneSupervisorHostVisible.ps1', 'Invoke-TelephoneSupervisor.ps1')
+    $pattern = '(?i)(?:[A-Z]:\\|\\\\)[^\x00\r\n"<>|]{0,480}(?:Start-TelephoneSupervisorHostVisible\.ps1|Invoke-TelephoneSupervisor\.ps1)'
+    $found = [Collections.Generic.List[string]]::new()
+    $texts = [Collections.Generic.List[string]]::new()
+    [void]$texts.Add([Text.Encoding]::UTF8.GetString($Bytes))
+    [void]$texts.Add([Text.Encoding]::Unicode.GetString($Bytes))
+    foreach ($hay in @($texts)) {
+        foreach ($blob in @([regex]::Matches($hay, '[A-Za-z0-9+/]{32,}={0,2}'))) {
+            try {
+                $raw = [Convert]::FromBase64String([string]$blob.Value)
+                [void]$texts.Add([Text.Encoding]::UTF8.GetString($raw))
+                [void]$texts.Add([Text.Encoding]::Unicode.GetString($raw))
+            } catch { }
+        }
+    }
+    foreach ($hay in @($texts)) {
+        foreach ($match in @([regex]::Matches($hay, $pattern))) {
+            $candidate = Convert-TelephoneSupervisorNormalizedInstallRoot -Path ([string]$match.Value.Trim())
+            if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+            $leaf = [IO.Path]::GetFileName($candidate)
+            if ($leaf -cnotin $names) { continue }
+            $dup = $false
+            foreach ($kept in $found) {
+                if ($kept.Equals($candidate, [StringComparison]::OrdinalIgnoreCase)) { $dup = $true; break }
+            }
+            if (-not $dup) { [void]$found.Add($candidate) }
+        }
+    }
+    return @($found)
+}
+
 function Get-TelephoneSupervisorInstallRootFromWrapperIdentity {
     [CmdletBinding()]
     param([AllowNull()][string]$ActionScript)
@@ -787,6 +821,11 @@ function Get-TelephoneSupervisorInstallRootFromWrapperIdentity {
     if ($null -eq $item -or $item.PSIsContainer -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) { return '' }
     $bytes = [IO.File]::ReadAllBytes($full)
     $sha = ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))).ToLowerInvariant()
+    $compiledTargets = @(Get-TelephoneSupervisorCompiledWrapperTargets -Bytes $bytes)
+    if ($compiledTargets.Count -ne 1) { return '' }
+    $compiledTarget = Convert-TelephoneSupervisorNormalizedInstallRoot -Path ([string]$compiledTargets[0])
+    if ([string]::IsNullOrWhiteSpace($compiledTarget)) { return '' }
+    $compiledRoot = Convert-TelephoneSupervisorNormalizedInstallRoot -Path (Join-Path ([IO.Path]::GetDirectoryName($compiledTarget)) '..\..')
     $sidecars = @(
         ($full + '.identity.json'),
         (Join-Path ([IO.Path]::GetDirectoryName($full)) 'wrapper-identity.json')
@@ -822,34 +861,8 @@ function Get-TelephoneSupervisorInstallRootFromWrapperIdentity {
             $working = ''
             if ($doc.Contains('working_directory')) { $working = Convert-TelephoneSupervisorNormalizedInstallRoot -Path ([string]$doc['working_directory']) }
             if (-not [string]::IsNullOrWhiteSpace($working) -and -not $working.Equals($installRoot, [StringComparison]::OrdinalIgnoreCase)) { continue }
-            $utf8 = [Text.Encoding]::UTF8.GetString($bytes)
-            $utf16 = [Text.Encoding]::Unicode.GetString($bytes)
-            $needle = [IO.Path]::GetFileName($targetScript)
-            $targetPresent = ($utf8.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0) -or ($utf16.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0)
-            if (-not $targetPresent) {
-                foreach ($hay in @($utf8, $utf16)) {
-                    foreach ($blob in @([regex]::Matches($hay, '[A-Za-z0-9+/]{32,}={0,2}'))) {
-                        try {
-                            $raw = [Convert]::FromBase64String([string]$blob.Value)
-                            foreach ($decoded in @([Text.Encoding]::UTF8.GetString($raw), [Text.Encoding]::Unicode.GetString($raw))) {
-                                if (
-                                    $decoded.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-                                    $decoded.IndexOf($targetScript, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-                                    $decoded.IndexOf($installRoot, [StringComparison]::OrdinalIgnoreCase) -ge 0
-                                ) {
-                                    if ($decoded.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or $decoded.IndexOf($targetScript, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
-                                        $targetPresent = $true
-                                        break
-                                    }
-                                }
-                            }
-                        } catch { }
-                        if ($targetPresent) { break }
-                    }
-                    if ($targetPresent) { break }
-                }
-            }
-            if (-not $targetPresent) { continue }
+            if (-not $targetScript.Equals($compiledTarget, [StringComparison]::OrdinalIgnoreCase)) { continue }
+            if (-not $installRoot.Equals($compiledRoot, [StringComparison]::OrdinalIgnoreCase)) { continue }
             return $installRoot
         } catch { }
     }

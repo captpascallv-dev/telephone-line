@@ -507,11 +507,26 @@ function Register-TelephoneDashboardLineSource {
                 if ($existing.Contains('sources') -and $null -ne $existing['sources']) { $doc.sources = @($existing['sources']) }
                 if ($existing.Contains('updated_at_utc')) { $doc['prior_updated_at_utc'] = [string]$existing['updated_at_utc'] }
             } catch {
-                $malformed = Join-Path $dashRoot 'line-sources.malformed.json'
-                try { [IO.File]::Copy($sourcePath, $malformed, $false) } catch [IO.IOException] { }
+                $malformed = [string]$paths.line_sources_malformed
+                if ([string]::IsNullOrWhiteSpace($malformed)) { $malformed = Join-Path $dashRoot 'line-sources.malformed.json' }
+                try { [IO.File]::Copy($sourcePath, $malformed, $true) } catch [IO.IOException] { }
                 $doc.last_read_error_at_utc = $now
-                $null = Write-TelephoneJsonReplace -Path $sourcePath -Value $doc
-                return [ordered]@{ registered = $false; reason = 'source_malformed'; path = $sourcePath; dashboard_state_root = $dashRoot }
+                $lastValidPath = [string]$paths.line_sources_last_valid
+                if ([string]::IsNullOrWhiteSpace($lastValidPath)) { $lastValidPath = Join-Path $dashRoot 'line-sources.last-valid.json' }
+                if ([IO.File]::Exists($lastValidPath)) {
+                    try {
+                        $valid = (Read-TelephoneJson -Path $lastValidPath).value
+                        if ($valid -is [Collections.IDictionary]) {
+                            if ($valid.Contains('sources') -and $null -ne $valid['sources']) { $doc.sources = @($valid['sources']) }
+                            if ($valid.Contains('last_success_at_utc')) { $doc.last_success_at_utc = [string]$valid['last_success_at_utc'] }
+                            $doc.updated_at_utc = $now
+                            $doc['source_discovery_error'] = 'malformed'
+                            $null = Write-TelephoneJsonReplace -Path $sourcePath -Value $doc
+                            return [ordered]@{ registered = $false; reason = 'source_malformed'; path = $sourcePath; dashboard_state_root = $dashRoot; last_valid_restored = $true }
+                        }
+                    } catch { }
+                }
+                return [ordered]@{ registered = $false; reason = 'source_malformed'; path = $sourcePath; dashboard_state_root = $dashRoot; last_valid_restored = $false }
             }
         }
         $kept = [Collections.Generic.List[object]]::new()
@@ -541,7 +556,12 @@ function Register-TelephoneDashboardLineSource {
         })
         $doc.sources = @($kept)
         $doc.updated_at_utc = $now
+        $doc.last_read_error_at_utc = ''
+        if ($doc.Contains('source_discovery_error')) { $doc.Remove('source_discovery_error') }
         $null = Write-TelephoneJsonReplace -Path $sourcePath -Value $doc
+        $lastValidPath = [string]$paths.line_sources_last_valid
+        if ([string]::IsNullOrWhiteSpace($lastValidPath)) { $lastValidPath = Join-Path $dashRoot 'line-sources.last-valid.json' }
+        try { $null = Write-TelephoneJsonReplace -Path $lastValidPath -Value $doc } catch { }
         return [ordered]@{ registered = $true; replaced = [bool]$replaced; path = $sourcePath; dashboard_state_root = $dashRoot }
     } finally {
         $gate.Dispose()
@@ -1412,7 +1432,8 @@ function Write-TelephoneCanonicalWakeAck {
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][string]$SessionId,
         [string]$RunId = '',
-        [string]$WakeKey = ''
+        [string]$WakeKey = '',
+        [string]$ReceiptSha256 = ''
     )
     $ack = [ordered]@{
         protocol_version = 'telephone-line-lead-wake-ack-v1'
@@ -1422,6 +1443,7 @@ function Write-TelephoneCanonicalWakeAck {
     }
     if (-not [string]::IsNullOrWhiteSpace($RunId)) { $ack['run_id'] = [string]$RunId }
     if (-not [string]::IsNullOrWhiteSpace($WakeKey)) { $ack['wake_key'] = [string]$WakeKey }
+    if (-not [string]::IsNullOrWhiteSpace($ReceiptSha256)) { $ack['receipt_sha256'] = [string]$ReceiptSha256 }
     try {
         $null = Write-TelephoneJsonCreateNew -Path $Path -Value $ack
     } catch [IO.IOException] {
@@ -1440,6 +1462,12 @@ function Write-TelephoneCanonicalWakeAck {
         if (-not [string]::IsNullOrWhiteSpace($RunId) -and $existing.Contains('run_id') -and -not [string]::IsNullOrWhiteSpace([string]$existing['run_id']) -and [string]$existing['run_id'] -cne $RunId) {
             throw 'Lead wake acknowledgment binds a different wake run.'
         }
+        if (-not [string]::IsNullOrWhiteSpace($WakeKey) -and $existing.Contains('wake_key') -and -not [string]::IsNullOrWhiteSpace([string]$existing['wake_key']) -and [string]$existing['wake_key'] -cne $WakeKey) {
+            throw 'Lead wake acknowledgment binds a different receipt wake key.'
+        }
+        if (-not [string]::IsNullOrWhiteSpace($ReceiptSha256) -and $existing.Contains('receipt_sha256') -and -not [string]::IsNullOrWhiteSpace([string]$existing['receipt_sha256']) -and [string]$existing['receipt_sha256'] -cne $ReceiptSha256) {
+            throw 'Lead wake acknowledgment binds a different receipt.'
+        }
     }
 }
 
@@ -1455,6 +1483,8 @@ function Wait-TelephoneLeadWakeAcknowledged {
         [Parameter(Mandatory = $true)][string]$RunRoot,
         [Parameter(Mandatory = $true)][string]$ExpectedSessionId,
         [string]$ExpectedRunId = '',
+        [string]$ExpectedWakeKey = '',
+        [string]$ExpectedReceiptSha256 = '',
         [ValidateRange(1, 600)][int]$StartupTimeoutSeconds = 120
     )
 
@@ -1483,6 +1513,22 @@ function Wait-TelephoneLeadWakeAcknowledged {
                 }
                 if ($ack.Contains('run_id') -and -not [string]::IsNullOrWhiteSpace([string]$ack['run_id']) -and [string]$ack['run_id'] -cne $expectedRun) {
                     throw 'Lead wake acknowledgment binds a different wake run.'
+                }
+                if (-not [string]::IsNullOrWhiteSpace($ExpectedWakeKey)) {
+                    if (-not $ack.Contains('wake_key') -or [string]::IsNullOrWhiteSpace([string]$ack['wake_key'])) {
+                        throw [IO.IOException]::new('Lead wake acknowledgment is missing the intended receipt wake key.')
+                    }
+                    if ([string]$ack['wake_key'] -cne $ExpectedWakeKey) {
+                        throw 'Lead wake acknowledgment binds a different receipt wake key.'
+                    }
+                }
+                if (-not [string]::IsNullOrWhiteSpace($ExpectedReceiptSha256)) {
+                    if (-not $ack.Contains('receipt_sha256') -or [string]::IsNullOrWhiteSpace([string]$ack['receipt_sha256'])) {
+                        throw [IO.IOException]::new('Lead wake acknowledgment is missing the intended receipt.')
+                    }
+                    if ([string]$ack['receipt_sha256'] -cne $ExpectedReceiptSha256) {
+                        throw 'Lead wake acknowledgment binds a different receipt.'
+                    }
                 }
                 if (-not $ack.Contains('run_id') -or [string]::IsNullOrWhiteSpace([string]$ack['run_id'])) {
                     if (-not [IO.File]::Exists($runMetaPath)) {
@@ -1524,12 +1570,14 @@ function Wait-TelephoneLeadWakeAcknowledged {
                 $null = Test-TelephoneNativeLeadRunBinding -Run $runMeta -ExpectedSessionId $ExpectedSessionId -ExpectedRunId $expectedRun -EventsPath $eventsPath
                 if ([IO.File]::Exists($eventsPath)) {
                     if (Test-TelephoneNativeWakeEventStream -Path $eventsPath -ExpectedSessionId $ExpectedSessionId) {
-                        Write-TelephoneCanonicalWakeAck -Path $ackPath -SessionId $ExpectedSessionId -RunId $expectedRun
+                        Write-TelephoneCanonicalWakeAck -Path $ackPath -SessionId $ExpectedSessionId -RunId $expectedRun -WakeKey $ExpectedWakeKey -ReceiptSha256 $ExpectedReceiptSha256
                         return [ordered]@{
                             run_root = $root
                             lead_session_id = $ExpectedSessionId
                             event = 'turn.started'
                             run_id = $expectedRun
+                            wake_key = [string]$ExpectedWakeKey
+                            receipt_sha256 = [string]$ExpectedReceiptSha256
                             acknowledged_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
                         }
                     }
@@ -2710,33 +2758,50 @@ function Invoke-TelephoneFrozenLeadLauncher {
         $runRootHint = [IO.Path]::GetFullPath((Join-Path $stateHint $RunId)).TrimEnd('\')
     }
     $lifecyclePath = ''
+    $ownerPath = ''
+    $eventsPath = ''
     if (-not [string]::IsNullOrWhiteSpace($runRootHint)) {
-        $lifecyclePath = Join-Path $runRootHint 'drain-lifecycle.json'
+        $lifecyclePath = Join-Path $runRootHint 'host-drain-lifecycle.json'
+        $ownerPath = Join-Path $runRootHint 'owner.json'
+        $eventsPath = Join-Path $runRootHint 'codex-events.jsonl'
+        [IO.Directory]::CreateDirectory($runRootHint) | Out-Null
     }
     $captured = $null
     try {
-        $captured = Invoke-TelephoneLeadDrainedProcess -FileName $fileName -Arguments @($drainArgs) -WorkingDirectory $workdir -LifecyclePath $lifecyclePath
+        $captured = Invoke-TelephoneLeadDrainedProcess -FileName $fileName -Arguments @($drainArgs) -WorkingDirectory $workdir -LifecyclePath $lifecyclePath -OwnerPath $ownerPath -EventsPath $eventsPath -SessionId $SessionId -RunId $RunId -Role 'host' -ReturnOnNativeComplete
     } catch {
         $diag = New-TelephoneLeadLaunchDiagnostic -Code 'LEAD_CLI_UNLAUNCHABLE' -Executable $fileName -WorkingDirectory $workdir -CreateProcessError ([string]$_.Exception.Message) -RunId $RunId -SessionId $SessionId
         Set-TelephoneLastLeadLaunchDiagnostic -Diagnostic $diag
         throw 'LEAD_CLI_UNLAUNCHABLE'
     }
-    if (-not [bool]$captured.process_exited) {
+    if (-not [bool]$captured.process_exited -and -not [bool]$captured.native_turn_complete) {
         $diag = New-TelephoneLeadLaunchDiagnostic -Code 'LEAD_WAKE_INCOMPLETE_HOST' -Executable $fileName -WorkingDirectory $workdir -Captured $captured -RunId $RunId -SessionId $SessionId -RunRoot $runRootHint
         Set-TelephoneLastLeadLaunchDiagnostic -Diagnostic $diag
         throw 'LEAD_WAKE_INCOMPLETE_HOST'
     }
-    $conflict = Test-TelephoneLeadPreTurnActiveWriterConflict -RunRoot $runRootHint -StderrText ([string]$captured.stderr) -ExitCode ([int]$captured.exit_code) -ExpectedSessionId $SessionId -ExpectedRunId $RunId
+    $conflict = Test-TelephoneLeadPreTurnActiveWriterConflict -RunRoot $runRootHint -StderrText ([string]$captured.stderr) -ExitCode $(if ([bool]$captured.process_exited) { [int]$captured.exit_code } else { $null }) -ExpectedSessionId $SessionId -ExpectedRunId $RunId
     if ([bool]$conflict.matched) {
         if ($null -ne $conflict.writer -and [string]$conflict.writer_identity_status -ceq 'bound' -and -not [string]::IsNullOrWhiteSpace($runRootHint)) {
-            $writerPath = Join-Path $runRootHint 'writer-owner.json'
-            if (-not [IO.File]::Exists($writerPath)) {
-                try { $null = Write-TelephoneJsonCreateNew -Path $writerPath -Value $conflict.writer } catch [IO.IOException] { }
+            $priorPath = Join-Path $runRootHint 'prior-writer.json'
+            if (-not [IO.File]::Exists($priorPath)) {
+                try { $null = Write-TelephoneJsonCreateNew -Path $priorPath -Value $conflict.writer } catch [IO.IOException] { }
             }
         }
         $diag = New-TelephoneLeadLaunchDiagnostic -Code 'LEAD_WAKE_PRE_TURN_CONFLICT' -Executable $fileName -WorkingDirectory $workdir -Captured $captured -RunId $RunId -SessionId $SessionId -RunRoot $(if (-not [string]::IsNullOrWhiteSpace([string]$conflict.run_root)) { [string]$conflict.run_root } else { $runRootHint })
         Set-TelephoneLastLeadLaunchDiagnostic -Diagnostic $diag
         throw 'LEAD_WAKE_PRE_TURN_CONFLICT'
+    }
+    if ([bool]$captured.native_turn_complete -and -not [bool]$captured.process_exited -and -not [string]::IsNullOrWhiteSpace($runRootHint)) {
+        Set-TelephoneLastLeadLaunchDiagnostic -Diagnostic $null
+        return [ordered]@{
+            run_root = $runRootHint
+            state = 'native_complete_host_lingering'
+            wake_run_id = [string]$RunId
+            process_exited = $false
+            native_turn_complete = $true
+            pid = [int]$captured.pid
+            executable_path = [string]$captured.executable_path
+        }
     }
     if ([int]$captured.exit_code -ne 0 -or [string]::IsNullOrWhiteSpace([string]$captured.stdout)) {
         $code = 'LEAD_WAKE_FAILED'
@@ -2860,27 +2925,21 @@ function Invoke-TelephoneNamedWakeAttach {
     function Test-TelephoneWakeAttemptAccepted {
         param([string]$AttemptRunId, [string]$AttemptRoot)
         if ([string]::IsNullOrWhiteSpace($AttemptRoot) -or -not [IO.Directory]::Exists($AttemptRoot)) { return $false }
-        $metaPath = Join-Path $AttemptRoot 'lead-run.json'
-        $eventsPath = Join-Path $AttemptRoot 'codex-events.jsonl'
         $ackPath = Join-Path $AttemptRoot 'lead-wake-ack.json'
-        if ([IO.File]::Exists($metaPath)) {
-            try {
-                $meta = (Read-TelephoneJson -Path $metaPath).value
-                $null = Test-TelephoneNativeLeadRunBinding -Run $meta -ExpectedSessionId $SessionId -ExpectedRunId $AttemptRunId -EventsPath $eventsPath
-                return $true
-            } catch { }
+        if (-not [IO.File]::Exists($ackPath)) { return $false }
+        try {
+            $ack = (Read-TelephoneJson -Path $ackPath).value
+            if ([string]$ack.protocol_version -cne 'telephone-line-lead-wake-ack-v1') { return $false }
+            if ([string]$ack.session_id -cne $SessionId) { return $false }
+            if ($ack.Contains('run_id') -and -not [string]::IsNullOrWhiteSpace([string]$ack['run_id']) -and [string]$ack['run_id'] -cne $AttemptRunId) { return $false }
+            if (-not $ack.Contains('run_id') -or [string]::IsNullOrWhiteSpace([string]$ack['run_id'])) { return $false }
+            if (-not [string]::IsNullOrWhiteSpace([string]$WakeKey)) {
+                if (-not $ack.Contains('wake_key') -or [string]$ack['wake_key'] -cne [string]$WakeKey) { return $false }
+            }
+            return $true
+        } catch {
+            return $false
         }
-        if ([IO.File]::Exists($ackPath)) {
-            try {
-                $ack = (Read-TelephoneJson -Path $ackPath).value
-                if ([string]$ack.protocol_version -cne 'telephone-line-lead-wake-ack-v1') { return $false }
-                if ([string]$ack.session_id -cne $SessionId) { return $false }
-                if ($ack.Contains('run_id') -and -not [string]::IsNullOrWhiteSpace([string]$ack['run_id']) -and [string]$ack['run_id'] -cne $AttemptRunId) { return $false }
-                if (-not $ack.Contains('run_id') -or [string]::IsNullOrWhiteSpace([string]$ack['run_id'])) { return $false }
-                return $true
-            } catch { }
-        }
-        return $false
     }
 
     $index = Read-TelephoneWakeRetryIndex -Path $retryPath
@@ -3577,6 +3636,165 @@ function Write-TelephoneLeadRetryingRelayError {
     }
 }
 
+function Test-TelephoneTrustedConsumingRun {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$ConsumingRoot,
+        [Parameter(Mandatory = $true)][string]$ExpectedSessionId,
+        [string]$ForbiddenRunId = ''
+    )
+    try {
+        $root = [IO.Path]::GetFullPath($ConsumingRoot).TrimEnd('\')
+    } catch {
+        return [ordered]@{ ok = $false; reason = 'consuming_run_invalid' }
+    }
+    if (-not [IO.Directory]::Exists($root)) {
+        return [ordered]@{ ok = $false; reason = 'consuming_run_missing' }
+    }
+    $metaPath = Join-Path $root 'lead-run.json'
+    $ownerPath = Join-Path $root 'owner.json'
+    $session = ''
+    $run = ''
+    if ([IO.File]::Exists($metaPath)) {
+        try {
+            $meta = (Read-TelephoneJson -Path $metaPath).value
+            if ($meta -is [Collections.IDictionary]) {
+                if ($meta.Contains('resume_session_id')) { $session = [string]$meta['resume_session_id'] }
+                if ([string]::IsNullOrWhiteSpace($session) -and $meta.Contains('session_id')) { $session = [string]$meta['session_id'] }
+                if ($meta.Contains('run_id')) { $run = [string]$meta['run_id'] }
+            }
+        } catch {
+            return [ordered]@{ ok = $false; reason = 'consuming_run_unreadable' }
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($session) -and [IO.File]::Exists($ownerPath)) {
+        try {
+            $owner = (Read-TelephoneJson -Path $ownerPath).value
+            if ($owner -is [Collections.IDictionary]) {
+                if ($owner.Contains('session_id')) { $session = [string]$owner['session_id'] }
+                if ([string]::IsNullOrWhiteSpace($run) -and $owner.Contains('run_id')) { $run = [string]$owner['run_id'] }
+            }
+        } catch { }
+    }
+    if ([string]::IsNullOrWhiteSpace($session)) {
+        return [ordered]@{ ok = $false; reason = 'consuming_run_unbound' }
+    }
+    if ($session -cne $ExpectedSessionId) {
+        return [ordered]@{ ok = $false; reason = 'consuming_run_wrong_session' }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ForbiddenRunId) -and $run -ceq $ForbiddenRunId) {
+        return [ordered]@{ ok = $false; reason = 'consuming_run_is_failed_original' }
+    }
+    return [ordered]@{ ok = $true; reason = ''; session_id = $session; run_id = $run; root = $root }
+}
+
+function Complete-TelephoneTrustedMailboxCloseout {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][object]$JobPaths,
+        [Parameter(Mandatory = $true)][object]$Dispatch,
+        [Parameter(Mandatory = $true)][string]$LeadSessionId,
+        [Parameter(Mandatory = $true)][object]$WakeIdentity,
+        [Parameter(Mandatory = $true)][string]$ReceiptSha256,
+        [Parameter(Mandatory = $true)][string]$EvidenceSha256
+    )
+    $mailboxCloseout = $false
+    $mailboxItemUpdated = $false
+    $mailboxTruthMerged = $false
+    if (-not [IO.File]::Exists($JobPaths.mailbox_ref)) {
+        return [ordered]@{ mailbox_closeout = $false; mailbox_item_updated = $false; mailbox_truth_merged = $false }
+    }
+    try {
+        $ref = (Read-TelephoneJson -Path $JobPaths.mailbox_ref).value
+        $closeout = [ordered]@{
+            protocol_version = 'telephone-line-mailbox-closeout-v1'
+            line_job_id = [string]$Dispatch.line_job_id
+            lead_session_id = $LeadSessionId
+            wake_key = [string]$WakeIdentity.wake_key
+            wake_run_id = [string]$WakeIdentity.wake_run_id
+            receipt_sha256 = $ReceiptSha256
+            evidence_sha256 = $EvidenceSha256
+            batch_id = $(if ($ref -is [Collections.IDictionary] -and $ref.Contains('batch_id')) { [string]$ref['batch_id'] } else { '' })
+            recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+        }
+        $closeoutPath = Join-Path ([string]$JobPaths.root) 'mailbox-closeout.json'
+        if (-not [IO.File]::Exists($closeoutPath)) {
+            try { $null = Write-TelephoneJsonCreateNew -Path $closeoutPath -Value $closeout } catch [IO.IOException] { }
+        }
+        $mailboxCloseout = [IO.File]::Exists($closeoutPath)
+        if ($ref -is [Collections.IDictionary] -and $ref.Contains('item_path') -and -not [string]::IsNullOrWhiteSpace([string]$ref['item_path']) -and [IO.File]::Exists([string]$ref['item_path'])) {
+            try {
+                $item = (Read-TelephoneJson -Path ([string]$ref['item_path'])).value
+                if ($item -is [Collections.IDictionary]) {
+                    $existingKind = ''
+                    if ($item.Contains('delivery_kind')) { $existingKind = [string]$item['delivery_kind'] }
+                    if ($existingKind -ceq 'AUTOMATIC_WAKE_ACK') {
+                        throw 'automatic_mailbox_item'
+                    }
+                    $item['trusted_manual_closeout'] = $true
+                    $item['trusted_receipt_sha256'] = $ReceiptSha256
+                    $item['trusted_evidence_sha256'] = $EvidenceSha256
+                    $item['trusted_closed_at_utc'] = [DateTimeOffset]::UtcNow.ToString('o')
+                    $null = Write-TelephoneJsonReplace -Path ([string]$ref['item_path']) -Value $item
+                    $mailboxItemUpdated = $true
+                }
+            } catch {
+                if ([string]$_.Exception.Message -ceq 'automatic_mailbox_item') { throw }
+            }
+        }
+        $leadKey = ''
+        $batchId = ''
+        if ($ref -is [Collections.IDictionary]) {
+            if ($ref.Contains('lead_identity_sha256')) { $leadKey = [string]$ref['lead_identity_sha256'] }
+            if ($ref.Contains('batch_id')) { $batchId = [string]$ref['batch_id'] }
+        }
+        if ($leadKey -cmatch '^[0-9a-f]{64}$' -and -not [string]::IsNullOrWhiteSpace($batchId)) {
+            try {
+                $stateRoot = Get-TelephoneStateRootFromJobRoot -JobRoot ([string]$JobPaths.root)
+                $mailbox = Get-TelephoneLeadMailboxPaths -StateRoot $stateRoot -LeadKey $leadKey
+                $row = [ordered]@{
+                    protocol_version = 'telephone-line-mailbox-truth-batch-v1'
+                    batch_id = $batchId
+                    closed = $true
+                    trusted_manual_consumed = $true
+                    receipt_sha256 = $ReceiptSha256
+                    evidence_sha256 = $EvidenceSha256
+                    line_job_id = [string]$Dispatch.line_job_id
+                    recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+                }
+                Merge-TelephoneMailboxTruthBatch -MailboxPaths $mailbox -BatchRow $row
+                $mailboxTruthMerged = $true
+            } catch { }
+        }
+    } catch {
+        if ([string]$_.Exception.Message -ceq 'automatic_mailbox_item') { throw }
+    }
+    return [ordered]@{
+        mailbox_closeout = [bool]$mailboxCloseout
+        mailbox_item_updated = [bool]$mailboxItemUpdated
+        mailbox_truth_merged = [bool]$mailboxTruthMerged
+    }
+}
+
+function Complete-TelephoneTrustedCloseoutResidue {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][object]$JobPaths,
+        [Parameter(Mandatory = $true)][object]$Dispatch,
+        [Parameter(Mandatory = $true)][string]$LeadSessionId,
+        [Parameter(Mandatory = $true)][object]$WakeIdentity,
+        [Parameter(Mandatory = $true)][string]$ReceiptSha256,
+        [Parameter(Mandatory = $true)][object]$EvidenceIdentity,
+        [Parameter(Mandatory = $true)][object]$Record
+    )
+    $mailbox = Complete-TelephoneTrustedMailboxCloseout -JobPaths $JobPaths -Dispatch $Dispatch -LeadSessionId $LeadSessionId -WakeIdentity $WakeIdentity -ReceiptSha256 $ReceiptSha256 -EvidenceSha256 ([string]$EvidenceIdentity.sha256)
+    if (-not [IO.File]::Exists($JobPaths.trusted_consumption)) {
+        $null = Write-TelephoneJsonReplace -Path $JobPaths.trusted_consumption -Value $Record
+    }
+    $null = Write-TelephoneLifecycleStatus -Paths $JobPaths -Phase 'delivered' -Idle $true
+    return $mailbox
+}
+
 function Test-TelephoneRelayErrorBlocksWait {
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][object]$JobPaths)
@@ -3657,24 +3875,24 @@ function Complete-TelephoneTrustedManualConsumption {
     if ($evidenceSession -cne $leadSessionId -or $evidenceWake -cne [string]$wakeIdentity.wake_key -or $evidenceReceipt -cne $actualSha) {
         return [ordered]@{ ok = $false; code = 'TRUSTED_CONSUMPTION_REJECTED'; reason = 'evidence_binding_mismatch'; delivery_present = [IO.File]::Exists($paths.delivery); automatic = $false }
     }
-    if (-not [string]::IsNullOrWhiteSpace($evidenceOriginalRun) -and $evidenceOriginalRun -cne [string]$wakeIdentity.wake_run_id) {
-        return [ordered]@{ ok = $false; code = 'TRUSTED_CONSUMPTION_REJECTED'; reason = 'original_run_mismatch'; delivery_present = [IO.File]::Exists($paths.delivery); automatic = $false }
+    if ([string]::IsNullOrWhiteSpace($evidenceOriginalRun) -or $evidenceOriginalRun -cne [string]$wakeIdentity.wake_run_id) {
+        return [ordered]@{ ok = $false; code = 'TRUSTED_CONSUMPTION_REJECTED'; reason = $(if ([string]::IsNullOrWhiteSpace($evidenceOriginalRun)) { 'original_run_missing' } else { 'original_run_mismatch' }); delivery_present = [IO.File]::Exists($paths.delivery); automatic = $false }
     }
-    if (-not [string]::IsNullOrWhiteSpace($evidenceConsumingRoot)) {
-        try {
-            $consumeRoot = [IO.Path]::GetFullPath($evidenceConsumingRoot).TrimEnd('\')
-            if (-not [IO.Directory]::Exists($consumeRoot)) {
-                return [ordered]@{ ok = $false; code = 'TRUSTED_CONSUMPTION_REJECTED'; reason = 'consuming_run_missing'; delivery_present = [IO.File]::Exists($paths.delivery); automatic = $false }
-            }
-        } catch {
-            return [ordered]@{ ok = $false; code = 'TRUSTED_CONSUMPTION_REJECTED'; reason = 'consuming_run_invalid'; delivery_present = [IO.File]::Exists($paths.delivery); automatic = $false }
-        }
+    if ([string]::IsNullOrWhiteSpace($evidenceConsumingRoot)) {
+        return [ordered]@{ ok = $false; code = 'TRUSTED_CONSUMPTION_REJECTED'; reason = 'consuming_run_missing'; delivery_present = [IO.File]::Exists($paths.delivery); automatic = $false }
+    }
+    $consumeCheck = Test-TelephoneTrustedConsumingRun -ConsumingRoot $evidenceConsumingRoot -ExpectedSessionId $leadSessionId
+    if (-not [bool]$consumeCheck.ok) {
+        return [ordered]@{ ok = $false; code = 'TRUSTED_CONSUMPTION_REJECTED'; reason = [string]$consumeCheck.reason; delivery_present = [IO.File]::Exists($paths.delivery); automatic = $false }
     }
     function Test-TelephoneTrustedDeliveryRecord {
         param([AllowNull()][object]$Existing)
         if ($null -eq $Existing -or $Existing -isnot [Collections.IDictionary]) { return $false }
         $existingKind = ''
         if ($Existing.Contains('delivery_kind')) { $existingKind = [string]$Existing['delivery_kind'] }
+        if ($existingKind -ceq 'AUTOMATIC_WAKE_ACK' -or [bool]$(if ($Existing.Contains('automatic_callback_success')) { $Existing['automatic_callback_success'] } else { $false })) {
+            return $false
+        }
         if ($existingKind -cne 'MANUAL_TRUSTED_CONSUMPTION') { return $false }
         $existingSession = ''
         $existingWake = ''
@@ -3688,23 +3906,13 @@ function Complete-TelephoneTrustedManualConsumption {
         }
         if ($existingSession -cne $leadSessionId) { return $false }
         if ($existingWake -cne [string]$wakeIdentity.wake_key) { return $false }
-        if (-not [string]::IsNullOrWhiteSpace($existingReceipt) -and $existingReceipt -cne $actualSha) { return $false }
-        if (-not [string]::IsNullOrWhiteSpace($existingEvidence) -and $existingEvidence -cne [string]$evidenceIdentity.sha256) { return $false }
+        if ([string]::IsNullOrWhiteSpace($existingReceipt) -or $existingReceipt -cne $actualSha) { return $false }
+        if ([string]::IsNullOrWhiteSpace($existingEvidence) -or $existingEvidence -cne [string]$evidenceIdentity.sha256) { return $false }
         return $true
     }
-    if ([IO.File]::Exists($paths.delivery)) {
-        $existing = (Read-TelephoneJson -Path $paths.delivery).value
-        if (Test-TelephoneTrustedDeliveryRecord -Existing $existing) {
-            return [ordered]@{
-                ok = $true
-                code = 'ALREADY_CLOSED'
-                reason = 'idempotent'
-                delivery_present = $true
-                automatic = $false
-                delivery_kind = 'MANUAL_TRUSTED_CONSUMPTION'
-            }
-        }
-        return [ordered]@{ ok = $false; code = 'TRUSTED_CONSUMPTION_REJECTED'; reason = 'delivery_already_present_non_manual'; delivery_present = $true; automatic = $false }
+    function Test-TelephoneTrustedCloseoutComplete {
+        $closeoutPath = Join-Path ([string]$paths.root) 'mailbox-closeout.json'
+        return ([IO.File]::Exists($paths.trusted_consumption) -and [IO.File]::Exists($paths.lifecycle_status) -and ($(-not [IO.File]::Exists($paths.mailbox_ref)) -or [IO.File]::Exists($closeoutPath)))
     }
     $record = [ordered]@{
         protocol_version = 'telephone-line-trusted-consumption-v1'
@@ -3714,12 +3922,67 @@ function Complete-TelephoneTrustedManualConsumption {
         wake_run_id = [string]$wakeIdentity.wake_run_id
         receipt_sha256 = $actualSha
         consumption_evidence = $evidenceIdentity
+        original_wake_run_id = $evidenceOriginalRun
+        actual_consuming_run_root = [string]$consumeCheck.root
         kind = 'MANUAL_TRUSTED_CONSUMPTION'
         automatic_callback_success = $false
         native_wake_ack_created = $false
         old_failure_preserved = [IO.File]::Exists($paths.relay_error)
         executed = [bool]$Execute
         recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+    }
+    if ([IO.File]::Exists($paths.delivery)) {
+        $existing = (Read-TelephoneJson -Path $paths.delivery).value
+        if (-not (Test-TelephoneTrustedDeliveryRecord -Existing $existing)) {
+            $existingKind = ''
+            if ($existing -is [Collections.IDictionary] -and $existing.Contains('delivery_kind')) { $existingKind = [string]$existing['delivery_kind'] }
+            $reason = 'delivery_already_present_non_manual'
+            if ($existingKind -ceq 'AUTOMATIC_WAKE_ACK') { $reason = 'automatic_delivery_present' }
+            elseif ($existing -is [Collections.IDictionary] -and $existingKind -ceq 'MANUAL_TRUSTED_CONSUMPTION') { $reason = 'delivery_identity_incomplete' }
+            return [ordered]@{ ok = $false; code = 'TRUSTED_CONSUMPTION_REJECTED'; reason = $reason; delivery_present = $true; automatic = $false }
+        }
+        if (Test-TelephoneTrustedCloseoutComplete) {
+            return [ordered]@{
+                ok = $true
+                code = 'ALREADY_CLOSED'
+                reason = 'idempotent'
+                delivery_present = $true
+                automatic = $false
+                delivery_kind = 'MANUAL_TRUSTED_CONSUMPTION'
+            }
+        }
+        if (-not $Execute) {
+            return [ordered]@{
+                ok = $true
+                code = 'DRY_RUN'
+                reason = 'validated_unexecuted_closeout_repair'
+                delivery_present = $true
+                automatic = $false
+                record = $record
+            }
+        }
+        $gateRepair = Open-TelephoneExclusiveGate -Path $paths.delivery_lock -WaitMilliseconds 5000
+        if ($null -eq $gateRepair) {
+            return [ordered]@{ ok = $false; code = 'TRUSTED_CONSUMPTION_REJECTED'; reason = 'delivery_lock'; delivery_present = $true; automatic = $false }
+        }
+        try {
+            $mailboxRepair = Complete-TelephoneTrustedCloseoutResidue -JobPaths $paths -Dispatch $dispatch -LeadSessionId $leadSessionId -WakeIdentity $wakeIdentity -ReceiptSha256 $actualSha -EvidenceIdentity $evidenceIdentity -Record $record
+            return [ordered]@{
+                ok = $true
+                code = 'MANUAL_CLOSED'
+                reason = 'trusted_closeout_repaired'
+                delivery_present = $true
+                automatic = $false
+                delivery_kind = 'MANUAL_TRUSTED_CONSUMPTION'
+                old_failure_preserved = [IO.File]::Exists($paths.relay_error)
+                native_wake_ack_created = $false
+                mailbox_closeout = [bool]$mailboxRepair.mailbox_closeout
+                mailbox_item_updated = [bool]$mailboxRepair.mailbox_item_updated
+                mailbox_truth_merged = [bool]$mailboxRepair.mailbox_truth_merged
+            }
+        } finally {
+            $gateRepair.Dispose()
+        }
     }
     if (-not $Execute) {
         return [ordered]@{
@@ -3738,7 +4001,7 @@ function Complete-TelephoneTrustedManualConsumption {
         wake_run_id = [string]$wakeIdentity.wake_run_id
         wake_key = [string]$wakeIdentity.wake_key
         receipt_sha256 = $actualSha
-        lead_run_root = ''
+        lead_run_root = [string]$consumeCheck.root
         launcher_state = 'manual_trusted_consumption'
         delivery_kind = 'MANUAL_TRUSTED_CONSUMPTION'
         automatic_callback_success = $false
@@ -3751,40 +4014,39 @@ function Complete-TelephoneTrustedManualConsumption {
     if ($null -eq $gate) {
         return [ordered]@{ ok = $false; code = 'TRUSTED_CONSUMPTION_REJECTED'; reason = 'delivery_lock'; delivery_present = [IO.File]::Exists($paths.delivery); automatic = $false }
     }
+    $mailboxCloseout = $false
+    $mailboxItemUpdated = $false
+    $mailboxTruthMerged = $false
     try {
         if ([IO.File]::Exists($paths.delivery)) {
             $existing = (Read-TelephoneJson -Path $paths.delivery).value
-            if (Test-TelephoneTrustedDeliveryRecord -Existing $existing) {
+            if (-not (Test-TelephoneTrustedDeliveryRecord -Existing $existing)) {
+                return [ordered]@{ ok = $false; code = 'TRUSTED_CONSUMPTION_REJECTED'; reason = 'delivery_already_present_non_manual'; delivery_present = $true; automatic = $false }
+            }
+            if (Test-TelephoneTrustedCloseoutComplete) {
                 return [ordered]@{ ok = $true; code = 'ALREADY_CLOSED'; reason = 'idempotent'; delivery_present = $true; automatic = $false; delivery_kind = 'MANUAL_TRUSTED_CONSUMPTION' }
             }
-            return [ordered]@{ ok = $false; code = 'TRUSTED_CONSUMPTION_REJECTED'; reason = 'delivery_already_present_non_manual'; delivery_present = $true; automatic = $false }
+            $mailboxRepair = Complete-TelephoneTrustedCloseoutResidue -JobPaths $paths -Dispatch $dispatch -LeadSessionId $leadSessionId -WakeIdentity $wakeIdentity -ReceiptSha256 $actualSha -EvidenceIdentity $evidenceIdentity -Record $record
+            return [ordered]@{
+                ok = $true
+                code = 'MANUAL_CLOSED'
+                reason = 'trusted_closeout_repaired'
+                delivery_present = $true
+                automatic = $false
+                delivery_kind = 'MANUAL_TRUSTED_CONSUMPTION'
+                old_failure_preserved = [IO.File]::Exists($paths.relay_error)
+                native_wake_ack_created = $false
+                mailbox_closeout = [bool]$mailboxRepair.mailbox_closeout
+            }
         }
         try { $null = Write-TelephoneJsonCreateNew -Path $paths.delivery -Value $delivery } catch [IO.IOException] { }
         if (-not [IO.File]::Exists($paths.delivery)) {
             return [ordered]@{ ok = $false; code = 'TRUSTED_CONSUMPTION_REJECTED'; reason = 'delivery_write_failed'; delivery_present = $false; automatic = $false }
         }
-        $mailboxCloseout = $false
-        if ([IO.File]::Exists($paths.mailbox_ref)) {
-            try {
-                $ref = (Read-TelephoneJson -Path $paths.mailbox_ref).value
-                $closeout = [ordered]@{
-                    protocol_version = 'telephone-line-mailbox-closeout-v1'
-                    line_job_id = [string]$dispatch.line_job_id
-                    lead_session_id = $leadSessionId
-                    wake_key = [string]$wakeIdentity.wake_key
-                    wake_run_id = [string]$wakeIdentity.wake_run_id
-                    receipt_sha256 = $actualSha
-                    evidence_sha256 = [string]$evidenceIdentity.sha256
-                    batch_id = $(if ($ref -is [Collections.IDictionary] -and $ref.Contains('batch_id')) { [string]$ref['batch_id'] } else { '' })
-                    recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
-                }
-                $closeoutPath = Join-Path ([string]$paths.root) 'mailbox-closeout.json'
-                try { $null = Write-TelephoneJsonCreateNew -Path $closeoutPath -Value $closeout } catch [IO.IOException] { }
-                $mailboxCloseout = [IO.File]::Exists($closeoutPath)
-            } catch { }
-        }
-        $null = Write-TelephoneJsonReplace -Path $paths.trusted_consumption -Value $record
-        $null = Write-TelephoneLifecycleStatus -Paths $paths -Phase 'delivered' -Idle $true
+        $mailbox = Complete-TelephoneTrustedCloseoutResidue -JobPaths $paths -Dispatch $dispatch -LeadSessionId $leadSessionId -WakeIdentity $wakeIdentity -ReceiptSha256 $actualSha -EvidenceIdentity $evidenceIdentity -Record $record
+        $mailboxCloseout = [bool]$mailbox.mailbox_closeout
+        $mailboxItemUpdated = [bool]$mailbox.mailbox_item_updated
+        $mailboxTruthMerged = [bool]$mailbox.mailbox_truth_merged
     } finally {
         $gate.Dispose()
     }
@@ -3798,6 +4060,8 @@ function Complete-TelephoneTrustedManualConsumption {
         old_failure_preserved = [IO.File]::Exists($paths.relay_error)
         native_wake_ack_created = $false
         mailbox_closeout = [bool]$mailboxCloseout
+        mailbox_item_updated = [bool]$mailboxItemUpdated
+        mailbox_truth_merged = [bool]$mailboxTruthMerged
     }
 }
 
@@ -3819,7 +4083,7 @@ function Complete-TelephoneOwnerJobDelivery {
     if ([string]::IsNullOrWhiteSpace($attemptRunId) -and -not [string]::IsNullOrWhiteSpace([string]$Launch.run_root)) {
         $attemptRunId = [IO.Path]::GetFileName([IO.Path]::GetFullPath([string]$Launch.run_root).TrimEnd('\'))
     }
-    $wakeAcknowledgment = Wait-TelephoneLeadWakeAcknowledged -RunRoot ([string]$Launch.run_root) -ExpectedSessionId $LeadSessionId -ExpectedRunId $attemptRunId
+    $wakeAcknowledgment = Wait-TelephoneLeadWakeAcknowledged -RunRoot ([string]$Launch.run_root) -ExpectedSessionId $LeadSessionId -ExpectedRunId $attemptRunId -ExpectedWakeKey ([string]$WakeIdentity.wake_key) -ExpectedReceiptSha256 $(if ([IO.File]::Exists($JobPaths.receipt)) { [string](Get-TelephoneFileIdentity -Path $JobPaths.receipt).sha256 } else { '' })
     $delivery = [ordered]@{
         protocol_version = 'telephone-line-delivery-v1'
         line_job_id = [string]$Dispatch.line_job_id

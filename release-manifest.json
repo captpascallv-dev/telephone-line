@@ -19,14 +19,14 @@
     {
       "name": "telephone-line-0.1.2-source.zip",
       "contains": "src/, schemas/, docs/, .github/, tests/, and root README.md, LICENSE, CONTRIBUTING.md, SECURITY.md, THIRD-PARTY-NOTICES.md, .gitattributes",
-      "bytes": 926301,
-      "sha256": "69c7749b019256db03d49b4bbe795f25c11f906683f3c4136ccfecfe399027da"
+      "bytes": 934272,
+      "sha256": "060334034c1178a2027fed04514b07efae9ef7fb2fef5e46355262f847b0b7cd"
     },
     {
       "name": "telephone-line-0.1.2-windows.zip",
       "contains": "src/, schemas/, docs/, and root README.md, LICENSE, CONTRIBUTING.md, SECURITY.md, THIRD-PARTY-NOTICES.md, .gitattributes; excludes tests/ and .github/",
-      "bytes": 514143,
-      "sha256": "f42576f7cc8f8e0a0e2f35d25b2d4a29222a6bc956d3edf3fd19192c484f3db5"
+      "bytes": 518381,
+      "sha256": "23eaca73856fc8fc3a50180a96ebb22a4654b9d428345670d784b99a595a068e"
     }
   ],
   "files": [
@@ -612,13 +612,13 @@
     },
     {
       "path": "src/adapters/direct-cursor/DirectCursor.Common.ps1",
-      "bytes": 80556,
-      "sha256": "ef5955e1aeecae8d56526db28259f35da69163c26067c4fe64d6467147d472b9"
+      "bytes": 81226,
+      "sha256": "407a73dd4e2dfc98023e5b1255dcfa689e836853ebd5195d9c654e5d67787a58"
     },
     {
       "path": "src/adapters/direct-cursor/Invoke-DirectCursorRoute.ps1",
-      "bytes": 28432,
-      "sha256": "da10996b8d40731791d3df6020397462c90b4d1673852a8ccdbd9256d7f7a4f8"
+      "bytes": 28471,
+      "sha256": "c21584b0d76ba156e5331f2a332d29398fe9d7403738c7173e3eebb459722eec"
     },
     {
       "path": "src/adapters/direct-cursor/adapter.json",
@@ -632,8 +632,8 @@
     },
     {
       "path": "src/adapters/direct-cursor/invoke_cursor_agent.ps1",
-      "bytes": 42872,
-      "sha256": "1f1ade5625ddc1437c703fd29fd597d7f94f0854e550945ea5cd7e0f1ff38d93"
+      "bytes": 45477,
+      "sha256": "a6399c3c6b746ae43b3c568c9d502a1eb21a01e551e82c40ba94b57087f94376"
     },
     {
       "path": "src/adapters/direct-cursor/invoke_cursor_request.ps1",
@@ -762,13 +762,13 @@
     },
     {
       "path": "src/core/TelephoneLeadRuntime.Common.ps1",
-      "bytes": 53005,
-      "sha256": "e745f51099b0c680a28d9d91dd1f80714bc9f1dce3ef26ee43aa49d74f33f7c0"
+      "bytes": 64357,
+      "sha256": "39111c24b73bb03d7a07f42492264d8adca6ecb544afdb6f7da124c40da09514"
     },
     {
       "path": "src/core/TelephoneLine.Common.ps1",
-      "bytes": 228975,
-      "sha256": "e871cb04e7a9d9e9e0ad7189df9bc35ade82f7a808e6a6ed00812787d92c5d14"
+      "bytes": 244632,
+      "sha256": "b9070312399b4303651efe3b07d568688b6851d600f2a6e5090a674969dc132c"
     },
     {
       "path": "src/dashboard/Ensure-TelephoneDashboard.ps1",
@@ -782,13 +782,13 @@
     },
     {
       "path": "src/dashboard/TelephoneDashboard.Common.ps1",
-      "bytes": 28679,
-      "sha256": "2b3f091dacf3e732f032e099a3f95093fe28642509ceca9ea1356cab4acaff6e"
+      "bytes": 28791,
+      "sha256": "77ce6bd4a1c9a88597a7f7d495d13fe6c24be2331a9b87ec47881042dbc6396b"
     },
     {
       "path": "src/dashboard/TelephoneDashboard.Projection.ps1",
-      "bytes": 143822,
-      "sha256": "2594fdc709e90cbdd60e650c95b78979e4432f0b08a8888815177c6606529114"
+      "bytes": 143912,
+      "sha256": "fe940b96f5133b5a372e7eb95c05cc07a6cdfc0ffafbeb9fed1498f61f1045a1"
     },
     {
       "path": "src/dashboard/TelephoneDashboard.Reducer.ps1",
@@ -812,8 +812,8 @@
     },
     {
       "path": "src/install/TelephoneLineInstall.Common.ps1",
-      "bytes": 69104,
-      "sha256": "ffc05455daf1e770d9bf7214b7a6924bf7ec1f79add66501aaa294680c111337"
+      "bytes": 69661,
+      "sha256": "a63e8e1a5deccb0fb910f8a5bc1b49aac63041151153fd3e65c2a71159696671"
     },
     {
       "path": "src/install/Uninstall-TelephoneLine.ps1",
@@ -962,8 +962,8 @@
     },
     {
       "path": "src/supervisor/TelephoneSupervisor.Common.ps1",
-      "bytes": 128234,
-      "sha256": "9fe8c531ec3ffb625828bdf86f5e89abeece98460dfb0c09d6ae62eea910733b"
+      "bytes": 128727,
+      "sha256": "b337f3c7e5397dfd9e9bc8cc12421daaa566d6f01f6748037bfffaccf02ca6c2"
     },
     {
       "path": "tests/Invoke-OfflineTests.ps1",
@@ -1422,8 +1422,8 @@
     },
     {
       "path": "tests/core/test_audit_repair.ps1",
-      "bytes": 71323,
-      "sha256": "c5b7939df3b2e8076e9df60ae63ba90dd31ff7777fda7949c38aaef4674ba89e"
+      "bytes": 94474,
+      "sha256": "e2ef428fc23e44d0335bb21d95f28648b0929b26ea8b0fad69e7514b2e592f13"
     },
     {
       "path": "tests/core/test_autonomous_event_chain.ps1",
@@ -1518,7 +1518,7 @@
   ],
   "counts": {
     "files": 297,
-    "bytes": 4194460
+    "bytes": 4249186
   },
   "excluded": [
     ".control/**",

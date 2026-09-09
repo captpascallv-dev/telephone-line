@@ -2066,6 +2066,7 @@ function Get-TelephoneDashboardProjection {
             if ([string]::IsNullOrWhiteSpace($lastReadErrorAt)) { $lastReadErrorAt = [DateTimeOffset]::UtcNow.ToString('o') }
             $sourceStale = $true
         }
+        if (-not [string]::IsNullOrWhiteSpace($lastReadErrorAt)) { $sourceStale = $true }
         $dashPathsNow = Get-TelephoneDashboardPaths -StateRoot $dashRootForSources
         $seenRoots = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
         foreach ($existing in $descriptors) {

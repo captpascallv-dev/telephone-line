@@ -628,22 +628,32 @@ try {
             -PromptSha256 $promptSha256 `
             -ExpectedModelDisplay $expectedModelDisplay `
             -ResumeSessionId $ResumeSessionId
-        if ($completed.outcome -ceq 'cursor_failure') {
-            $failureEvidence = $completed.evidence
-            if ([string]$completed.error_message -cmatch '(?i)Cursor CLI exited|Cursor CLI wrote to stderr') { $failureStage = 'cursor_execution' }
-            $failEx = [InvalidOperationException]::new([string]$completed.error_message)
-            if ($null -ne $run -and $null -ne $run.Diagnostic) {
-                $failEx.Data['telephone_direct_cursor_diagnostic_path'] = [string]$run.Diagnostic.path
-                $failEx.Data['telephone_direct_cursor_stdout_bytes'] = [int64]$run.StdoutBytes
-                $failEx.Data['telephone_direct_cursor_stderr_bytes'] = [int64]$run.StderrBytes
-                if ($null -ne $run.ExitCode) { $failEx.Data['telephone_direct_cursor_native_exit_code'] = [int]$run.ExitCode }
+        if ([string](Get-DirectNoteValue -Object $completed -Name 'outcome') -ceq 'cursor_failure') {
+            $failureEvidence = Get-DirectNoteValue -Object $completed -Name 'evidence'
+            $errorMessage = [string](Get-DirectNoteValue -Object $completed -Name 'error_message')
+            if ($errorMessage -cmatch '(?i)Cursor CLI exited|Cursor CLI wrote to stderr') { $failureStage = 'cursor_execution' }
+            $failEx = [InvalidOperationException]::new($errorMessage)
+            $runDiag = Get-DirectNoteValue -Object $run -Name 'Diagnostic'
+            $runDiagPath = [string](Get-DirectNoteValue -Object $runDiag -Name 'path')
+            if (-not [string]::IsNullOrWhiteSpace($runDiagPath)) {
+                $failEx.Data['telephone_direct_cursor_diagnostic_path'] = $runDiagPath
+            }
+            $runStdoutBytes = Get-DirectNoteValue -Object $run -Name 'StdoutBytes'
+            $runStderrBytes = Get-DirectNoteValue -Object $run -Name 'StderrBytes'
+            $runExit = Get-DirectNoteValue -Object $run -Name 'ExitCode'
+            if ($null -ne $runStdoutBytes) { $failEx.Data['telephone_direct_cursor_stdout_bytes'] = [int64]$runStdoutBytes }
+            if ($null -ne $runStderrBytes) { $failEx.Data['telephone_direct_cursor_stderr_bytes'] = [int64]$runStderrBytes }
+            if ($null -ne $runExit -and [string]$runExit -ne '') { $failEx.Data['telephone_direct_cursor_native_exit_code'] = [int]$runExit }
+            $completedViolating = @(Get-DirectNoteValue -Object $completed -Name 'violating_paths')
+            if ($completedViolating.Count -gt 0) {
+                $failEx.Data['telephone_direct_cursor_violating_paths'] = @($completedViolating)
             }
             throw $failEx
         }
 
-        if ($true -eq $completed.register_session) {
+        if ($true -eq (Get-DirectNoteValue -Object $completed -Name 'register_session')) {
             $failureStage = 'session_registry'
-            $sessionId = [string]$completed.result.session_id
+            $sessionId = [string](Get-DirectNoteValue -Object (Get-DirectNoteValue -Object $completed -Name 'result') -Name 'session_id')
             $now = [DateTimeOffset]::UtcNow.ToString('o')
             $registryMutex = [Threading.Mutex]::new($false, 'Global\TelephoneLineCursorSessionRegistry')
             if (-not $registryMutex.WaitOne(30000)) { throw 'Cursor session registry is busy.' }
@@ -680,7 +690,7 @@ try {
         }
 
         $failureStage = 'result_projection'
-        $summary = $completed.result
+        $summary = Get-DirectNoteValue -Object $completed -Name 'result'
         if ($null -eq $summary) { throw 'Cursor result is missing.' }
         $summary.volatile_snapshot_exclusions = @($volatileSnapshotExclusions)
         $summary.prompt = [ordered]@{ path = [string]$promptIdentity.FullName; bytes = [int64]$promptBytes.Length; sha256 = $promptSha256 }
@@ -724,11 +734,26 @@ try {
     if ($null -ne $_.Exception.Data -and $null -ne $_.Exception.Data['telephone_direct_cursor_native_exit_code']) {
         $nativeExit = [int]$_.Exception.Data['telephone_direct_cursor_native_exit_code']
     }
+    if ($null -eq $nativeExit -and -not [string]::IsNullOrWhiteSpace($diagPath) -and [IO.File]::Exists($diagPath)) {
+        try {
+            $diagDoc = (Read-DirectJson -Path $diagPath).value
+            $fromDiagExit = Get-DirectNoteValue -Object $diagDoc -Name 'native_exit_code'
+            if ($null -ne $fromDiagExit -and [string]$fromDiagExit -ne '') { $nativeExit = [int]$fromDiagExit }
+        } catch { }
+    }
     if ([string]::IsNullOrWhiteSpace($diagPath)) {
-        $diagRoot = Join-Path $stateRoot 'diagnostics'
-        if ([IO.Directory]::Exists($diagRoot)) {
-            $latest = @(Get-ChildItem -LiteralPath $diagRoot -Recurse -Filter 'process-diagnostic.json' -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending)
-            if ($latest.Count -gt 0) { $diagPath = [string]$latest[0].FullName }
+        $ownDir = Join-Path $stateRoot ('diagnostics\' + [string]$dispatchId)
+        $ownDiag = Join-Path $ownDir 'process-diagnostic.json'
+        if ([IO.File]::Exists($ownDiag)) {
+            $diagPath = $ownDiag
+        } elseif ([IO.Directory]::Exists($ownDir)) {
+            $ownLatest = @(Get-ChildItem -LiteralPath $ownDir -Recurse -Filter 'process-diagnostic.json' -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending)
+            if ($ownLatest.Count -gt 0) { $diagPath = [string]$ownLatest[0].FullName }
+        }
+        if ([string]::IsNullOrWhiteSpace($diagPath)) {
+            [IO.Directory]::CreateDirectory($ownDir) | Out-Null
+            $stageDiag = Write-DirectCursorProcessDiagnostic -Directory $ownDir -Stage $failureStage -ExceptionType $_.Exception.GetType().FullName -ExceptionMessage $_.Exception.Message -Classification $classification -RequestedSessionId ([string]$ResumeSessionId)
+            $diagPath = [string]$stageDiag.path
         }
     }
     if (-not [string]::IsNullOrWhiteSpace($diagPath) -and [IO.File]::Exists($diagPath)) {
@@ -744,6 +769,12 @@ try {
             $failureEvidence.stderr_spool = Get-DirectFileIdentity -Path $ep
             $stderrBytes = [int64]$failureEvidence.stderr_spool.bytes
         }
+    }
+    $violatingPaths = @()
+    if ($null -ne $_.Exception.Data -and $null -ne $_.Exception.Data['telephone_direct_cursor_violating_paths']) {
+        $violatingPaths = @($_.Exception.Data['telephone_direct_cursor_violating_paths'])
+    } elseif ($null -ne $failureEvidence -and $failureEvidence -is [Collections.IDictionary] -and $failureEvidence.Contains('violating_paths')) {
+        $violatingPaths = @($failureEvidence['violating_paths'])
     }
     [ordered]@{
         success = $false
@@ -766,6 +797,8 @@ try {
         native_exit_code = $nativeExit
         stdout_bytes = $stdoutBytes
         stderr_bytes = $stderrBytes
+        violating_paths = @($violatingPaths)
+        policy_violation = ($violatingPaths.Count -gt 0)
         fast_disabled = $true
         changed_files = @($changes)
         volatile_snapshot_exclusions = @($volatileSnapshotExclusions)

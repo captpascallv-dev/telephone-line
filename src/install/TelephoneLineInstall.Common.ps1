@@ -934,6 +934,14 @@ function Invoke-TelephoneLineUninstall {
         if (-not (Test-TelephoneInstallManifestProduct -Manifest $manifest)) {
             return (New-TelephoneInstallResult -Ok $false -Action 'uninstall' -Code 'MANIFEST_NOT_THIS_PRODUCT')
         }
+        $wrapperExe = Join-Path $dest 'src\supervisor\SupervisorNoConsoleHost.exe'
+        if ([IO.File]::Exists($wrapperExe)) {
+            Import-TelephoneSupervisorCommon
+            $wrapperRoot = Get-TelephoneSupervisorInstallRootFromWrapperIdentity -ActionScript $wrapperExe
+            if ([string]::IsNullOrWhiteSpace($wrapperRoot) -or -not $wrapperRoot.Equals($dest, [StringComparison]::OrdinalIgnoreCase)) {
+                return (New-TelephoneInstallResult -Ok $false -Action 'uninstall' -Code 'WRAPPER_TARGET_MISMATCH')
+            }
+        }
 
         $stateRoot = Resolve-TelephoneStateRootValue
         if ($RemoveState) {

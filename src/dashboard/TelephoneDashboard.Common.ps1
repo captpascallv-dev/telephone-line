@@ -128,6 +128,8 @@ function Get-TelephoneDashboardPaths {
         summary = Join-Path $root 'summary.txt'
         config = if ([string]::IsNullOrWhiteSpace($StateRoot)) { Get-TelephoneDashboardConfigPath } else { Join-Path $root 'config.json' }
         line_sources = Join-Path $root 'line-sources.json'
+        line_sources_last_valid = Join-Path $root 'line-sources.last-valid.json'
+        line_sources_malformed = Join-Path $root 'line-sources.malformed.json'
     }
 }
 
@@ -484,7 +486,6 @@ function Update-TelephoneDashboardLineSourceObservation {
             $doc['last_read_error_at_utc'] = $now
         } elseif ($Success) {
             $doc['last_success_at_utc'] = $now
-            $doc['last_read_error_at_utc'] = ''
         }
         $null = Write-TelephoneJsonReplace -Path $sourcePath -Value $doc
     } finally {

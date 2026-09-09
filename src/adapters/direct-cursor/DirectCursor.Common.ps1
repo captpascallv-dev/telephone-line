@@ -1120,16 +1120,31 @@ function Complete-DirectCursorAgentRun {
     $evidence.stderr = $(if ([string]::IsNullOrEmpty([string]$Run.Stderr)) { 'empty' } else { 'available' })
     $evidence.exit_status = 'available'
 
+    $violations = @(Get-DirectCursorPolicyViolations -Mode $Mode -Workspace $Workspace -AllowedWriteRelative $allowedRelative -Changes $normalizedChanges)
+    $violatingPaths = @($violations | ForEach-Object { [string]$_.path } | Sort-Object -Unique)
+
     $cursorFailure = {
         param([string]$Message)
-        return [ordered]@{
+        $payload = [ordered]@{
             outcome = 'cursor_failure'
             register_session = $false
             result = $null
             error_message = $Message
             changed_files = @($normalizedChanges)
             evidence = $evidence
+            violating_paths = @($violatingPaths)
+            policy_violation = ($violations.Count -gt 0)
         }
+        if ($violations.Count -gt 0) {
+            $payload['policy_violations'] = @($violations)
+            $payload.evidence = $evidence
+            if ($payload.evidence -is [Collections.IDictionary]) {
+                $payload.evidence['policy_violations'] = @($violations)
+                $payload.evidence['violating_paths'] = @($violatingPaths)
+                $payload.evidence['policy_violation'] = $true
+            }
+        }
+        return $payload
     }
 
     if ([int]$Run.ExitCode -ne 0) {
@@ -1143,7 +1158,6 @@ function Complete-DirectCursorAgentRun {
         return (& $cursorFailure ([string]$validation.error_message))
     }
 
-    $violations = @(Get-DirectCursorPolicyViolations -Mode $Mode -Workspace $Workspace -AllowedWriteRelative $allowedRelative -Changes $normalizedChanges)
     if ($violations.Count -gt 0) {
         $code = if ($Mode -ceq 'Verify') { 'verify_workspace_mutated' } else { 'write_scope_violation' }
         $violatingPaths = @($violations | ForEach-Object { [string]$_.path } | Sort-Object -Unique)
