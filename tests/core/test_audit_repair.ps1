@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
-# Correction-6 focused proofs. Isolated fixtures only; no live install, Task
+# Correction-7 focused proofs. Isolated fixtures only; no live install, Task
 # Scheduler, App, paid PI, or live mailbox mutation. Does not replay the unsafe
 # 315730a2 mailbox-ref Execute, Collect-Probe-2dbc8dd, or unchanged D3/D5 suites.
-# Does not rerun the prior 290/full-suite classification for its own sake.
+# Does not rerun the prior 310/290/full-suite classification for its own sake.
 [CmdletBinding()]
 param([Parameter(Mandatory = $true)][string]$TestRoot)
 
@@ -37,6 +37,29 @@ function Get-RepairSha256 {
     param([Parameter(Mandatory = $true)][string]$Path)
     $bytes = [IO.File]::ReadAllBytes($Path)
     return ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))).ToLowerInvariant()
+}
+
+function Invoke-RepairSupervisor {
+    param([Parameter(Mandatory = $true)][string]$StateRoot)
+    $info = [Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = $pwsh
+    $info.UseShellExecute = $false
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $info.CreateNoWindow = $true
+    foreach ($arg in @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $repoRoot 'src\supervisor\Invoke-TelephoneSupervisor.ps1'), '-InstallRoot', $repoRoot, '-StateRoot', $StateRoot)) {
+        [void]$info.ArgumentList.Add([string]$arg)
+    }
+    $proc = [Diagnostics.Process]::Start($info)
+    $stdout = $proc.StandardOutput.ReadToEnd()
+    $stderr = $proc.StandardError.ReadToEnd()
+    if (-not $proc.WaitForExit(120000)) {
+        try { $proc.Kill() } catch { }
+        throw 'Supervisor process did not exit within 120s.'
+    }
+    $code = [int]$proc.ExitCode
+    $proc.Dispose()
+    return [ordered]@{ exit_code = $code; stdout = [string]$stdout; stderr = [string]$stderr }
 }
 
 function Wait-RepairPath {
@@ -729,7 +752,7 @@ exit 0
     }
     Assert-Repair (Test-TelephoneDashboardJobMustRemainVisible -Job $unknownJob) 'UNKNOWN job without a live process was hidden.'
 
-    $showPath = Join-Path $repoRoot '_audit_correction6_artifacts_20260909\private-candidate\cockpit\Show-PascalGlobalAutopilotStatus.ps1'
+    $showPath = Join-Path $repoRoot '_audit_correction7_artifacts_20260909\private-candidate\cockpit\Show-PascalGlobalAutopilotStatus.ps1'
     $showText = [IO.File]::ReadAllText($showPath)
     $cut = $showText.IndexOf('if ($LibraryOnly) { return }')
     $start = $showText.IndexOf('$script:ThreadIdCache')
@@ -1584,9 +1607,85 @@ Invoke-TelephoneLeadDrainedProcess -FileName '$($pwsh.Replace('''', ''''''))' -A
     Assert-Repair (-not [bool]$foreignTurnRun.ok) 'A foreign-run qualifying turn was accepted as the consuming run.'
     Assert-Repair ([string]$foreignTurnRun.reason -ceq 'consuming_run_event_foreign') ('Foreign-run turn reason drifted: ' + [string]$foreignTurnRun.reason)
 
+    $streamSelf = Get-Process -Id $PID
+    try {
+        $streamExe = ''
+        try { $streamExe = [string]$streamSelf.MainModule.FileName } catch { $streamExe = [string]$streamSelf.Path }
+        $streamTicks = [int64]$streamSelf.StartTime.ToUniversalTime().Ticks
+        $streamIdentity = [ordered]@{
+            pid = [int]$PID
+            start_time_utc_ticks = $streamTicks
+            executable_path = $streamExe
+            session_id = $session
+            run_id = 'same-run'
+        }
+        $foreignStreamRoot = Join-Path $testRoot 'stream-foreign-producer'
+        [IO.Directory]::CreateDirectory($foreignStreamRoot) | Out-Null
+        $foreignHandoff = [ordered]@{
+            pid = 2147483646
+            target_pid = 2147483646
+            start_time_utc_ticks = [int64]1
+            executable_path = $streamExe
+            session_id = $session
+            run_id = 'same-run'
+            pending = $false
+            process_exited = $true
+            stdout_eof = $true
+            stderr_eof = $true
+        }
+        [IO.File]::WriteAllText((Join-Path $foreignStreamRoot 'host-drain-handoff.json'), (($foreignHandoff | ConvertTo-Json -Compress) + "`n"), [Text.UTF8Encoding]::new($false))
+        $foreignStream = Get-TelephoneLeadOwnedStreamObservation -RunRoot $foreignStreamRoot -Identity $streamIdentity -Role host -SessionId $session -RunId 'same-run'
+        Assert-Repair ([string]$foreignStream.observation -ceq 'handoff_foreign_producer') ('Foreign producer handoff was accepted: ' + [string]$foreignStream.observation)
+        Assert-Repair (-not [bool]$foreignStream.stdout_eof) 'Foreign producer handoff fabricated stdout EOF.'
+        Assert-Repair (-not [bool]$foreignStream.stderr_eof) 'Foreign producer handoff fabricated stderr EOF.'
+        $exactStreamRoot = Join-Path $testRoot 'stream-exact-producer'
+        [IO.Directory]::CreateDirectory($exactStreamRoot) | Out-Null
+        $exactHandoff = [ordered]@{
+            pid = [int]$streamIdentity.pid
+            target_pid = [int]$streamIdentity.pid
+            start_time_utc_ticks = [int64]$streamIdentity.start_time_utc_ticks
+            executable_path = $streamExe
+            session_id = $session
+            run_id = 'same-run'
+            pending = $false
+            process_exited = $true
+            stdout_eof = $true
+            stderr_eof = $true
+        }
+        [IO.File]::WriteAllText((Join-Path $exactStreamRoot 'host-drain-handoff.json'), (($exactHandoff | ConvertTo-Json -Compress) + "`n"), [Text.UTF8Encoding]::new($false))
+        $exactStream = Get-TelephoneLeadOwnedStreamObservation -RunRoot $exactStreamRoot -Identity $streamIdentity -Role host -SessionId $session -RunId 'same-run'
+        Assert-Repair ([string]$exactStream.observation -ceq 'handoff_complete') ('Exact producer handoff was not accepted: ' + [string]$exactStream.observation)
+        Assert-Repair ([bool]$exactStream.stdout_eof) 'Exact producer handoff lost stdout EOF.'
+        Assert-Repair ([bool]$exactStream.stderr_eof) 'Exact producer handoff lost stderr EOF.'
+        $lostReaderRoot = Join-Path $testRoot 'stream-lost-reader'
+        [IO.Directory]::CreateDirectory($lostReaderRoot) | Out-Null
+        $lostHandoff = [ordered]@{
+            pid = [int]$streamIdentity.pid
+            target_pid = [int]$streamIdentity.pid
+            start_time_utc_ticks = $streamTicks
+            executable_path = $streamExe
+            session_id = $session
+            run_id = 'same-run'
+            owner_pid = 999999
+            owner_start_time_utc_ticks = [int64]1
+            owner_executable_path = $streamExe
+            pending = $true
+            process_exited = $false
+            stdout_eof = $false
+            stderr_eof = $false
+        }
+        [IO.File]::WriteAllText((Join-Path $lostReaderRoot 'host-drain-handoff.json'), (($lostHandoff | ConvertTo-Json -Compress) + "`n"), [Text.UTF8Encoding]::new($false))
+        $lostStream = Get-TelephoneLeadOwnedStreamObservation -RunRoot $lostReaderRoot -Identity $streamIdentity -Role host -SessionId $session -RunId 'same-run'
+        Assert-Repair ([string]$lostStream.observation -ceq 'handoff_pending') ('Lost-reader handoff was treated as complete: ' + [string]$lostStream.observation)
+        Assert-Repair (-not [bool]$lostStream.stdout_eof) 'Lost-reader handoff fabricated stdout EOF.'
+        Assert-Repair (-not (Test-TelephoneLeadDrainCoordinatorAlive -RunRoot $lostReaderRoot)) 'Dead coordinator was treated as recoverable.'
+    } finally {
+        $streamSelf.Dispose()
+    }
+
     # D5 isolated adapter follow_up is an unchanged proof class; not rerun here.
-    $v23Launcher = Join-Path $repoRoot '_audit_correction6_artifacts_20260909\private-candidate\launchers\Invoke-V23_11WiredLead.ps1'
-    $v23Helper = Join-Path $repoRoot '_audit_correction6_artifacts_20260909\private-candidate\launchers\DirectCursor.Common.ps1'
+    $v23Launcher = Join-Path $repoRoot '_audit_correction7_artifacts_20260909\private-candidate\launchers\Invoke-V23_11WiredLead.ps1'
+    $v23Helper = Join-Path $repoRoot '_audit_correction7_artifacts_20260909\private-candidate\launchers\DirectCursor.Common.ps1'
     Assert-Repair ([IO.File]::Exists($v23Launcher)) 'Candidate V23 launcher copy was missing.'
     Assert-Repair ([IO.File]::Exists($v23Helper)) 'Candidate DirectCursor helper copy was missing.'
     $env:TELEPHONE_LINE_DIRECTCURSOR_COMMON = $v23Helper
@@ -1941,32 +2040,32 @@ exit 0
         Assert-Repair (([int64]$entryChildLive.start_time_utc_ticks) -eq $entryChildTicks) 'Normal-entry child ticks drifted before supervisor entry.'
         Assert-Repair ([string]::Equals([string]$entryHostLive.executable_path, $entryHostExe, [StringComparison]::OrdinalIgnoreCase) -or [string]::IsNullOrWhiteSpace([string]$entryHostLive.executable_path)) 'Normal-entry host executable drifted before supervisor entry.'
         Assert-Repair ([string]::Equals([string]$entryChildLive.executable_path, $entryChildExe, [StringComparison]::OrdinalIgnoreCase) -or [string]::IsNullOrWhiteSpace([string]$entryChildLive.executable_path)) 'Normal-entry child executable drifted before supervisor entry.'
-        $null = Write-TelephoneJsonCreateNew -Path $entryAck -Value ([ordered]@{
-            protocol_version = 'telephone-line-lead-wake-ack-v1'
-            wake_key = [string]$wake.wake_key
-            receipt_sha256 = [string]$receiptRead.identity.sha256
-            run_id = $entryRun
-            session_id = $session
-        })
-        $null = Write-TelephoneJsonCreateNew -Path $entryDelivery -Value ([ordered]@{
-            protocol_version = 'telephone-line-delivery-v1'
-            delivery_kind = 'AUTOMATIC_WAKE_ACK'
-            receipt_sha256 = [string]$receiptRead.identity.sha256
-            wake_key = [string]$wake.wake_key
-            owned_drain_pending = $true
-        })
+        $entryAckRecord = Wait-TelephoneLeadWakeAcknowledged -RunRoot $entryRoot -ExpectedSessionId $session -ExpectedRunId $entryRun -StartupTimeoutSeconds 15
+        Assert-Repair ([string]$entryAckRecord.event -ceq 'turn.started') 'Production wake ack did not bind the launcher turn.started.'
         $ackBefore = Get-RepairSha256 -Path $entryAck
-        $deliveryBefore = Get-RepairSha256 -Path $entryDelivery
         $turnsBefore = @([regex]::Matches([IO.File]::ReadAllText($turnLog), [regex]::Escape($entryRun))).Count
         Assert-Repair ($turnsBefore -eq 1) ('Normal-entry launcher duplicate model-start before recovery: ' + [string]$turnsBefore)
-        $script:TelephoneLeadOpenDrains = [ordered]@{}
+        $entryLineState = Join-Path $testRoot 'entry-line-state'
+        $entryJob = Join-Path $entryLineState ('jobs\cccccccc-bbbb-cccc-dddd-eeeeeeeeeee6')
+        [IO.Directory]::CreateDirectory($entryJob) | Out-Null
+        $entrySupRunId = 'cccccccc-bbbb-cccc-dddd-eeeeeeeeeee6'
+        $null = Save-TelephoneNamedLaunchResult -Path (Join-Path $entryJob 'wake-launch-result.json') -Launch $entryLaunch -RunId $entryRun -WakeKey 'entry-native-wake' -LineJobId $entrySupRunId
+        $null = Write-TelephoneJsonCreateNew -Path (Join-Path $entryJob 'supervisor-lineage.json') -Value ([ordered]@{
+            protocol_version = 'telephone-line-supervisor-lineage-v1'
+            supervisor_run_id = $entrySupRunId
+            line_job_id = $entrySupRunId
+            lead_session_id = $session
+            lead_identity_sha256 = ('e' * 64)
+            batch_id = 'entry-native-batch'
+            package_id = 'entry-native-package'
+        })
         $entrySup = Join-Path $testRoot 'entry-supervisor-iso'
         $null = Initialize-TelephoneSupervisorLayout -StateRoot $entrySup
-        $entrySupRunId = 'cccccccc-bbbb-cccc-dddd-eeeeeeeeeee6'
+        $entryCore = Join-Path $repoRoot 'src\core\Start-TelephoneLineJob.ps1'
         $entryReq = [ordered]@{
             protocol_version = 'telephone-line-wired-supervisor-request-v1'
             run_id = $entrySupRunId
-            project = 'correction6-entry'
+            project = 'correction7-entry'
             stage = 'focused'
             lead_session_id = $session
             lead_run_id = $entryRun
@@ -1974,8 +2073,12 @@ exit 0
             worktree = $work
             command = [ordered]@{
                 executable = $pwsh
-                working_directory = $entryRoot
-                arguments = @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 1')
+                working_directory = $work
+                arguments = @(
+                    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+                    '-File', $entryCore, '-RequestFile', (Join-Path $entryJob 'dispatch.json'),
+                    '-StateRoot', $entryLineState
+                )
             }
             installed_version = [ordered]@{
                 version_id = ('d' * 64)
@@ -1984,6 +2087,8 @@ exit 0
             }
             created_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
         }
+        Assert-Repair (-not [string]::Equals([IO.Path]::GetFullPath([string]$entryReq.command.working_directory).TrimEnd('\'), $entryRoot, [StringComparison]::OrdinalIgnoreCase)) 'Entry request substituted nested run root as cwd.'
+        Assert-Repair (-not [string]::Equals([IO.Path]::GetFullPath([string]$entryReq.worktree).TrimEnd('\'), $entryRoot, [StringComparison]::OrdinalIgnoreCase)) 'Entry request substituted nested run root as worktree.'
         $entryReq['request_sha256'] = Get-TelephoneSupervisorRequestHash -Request $entryReq
         $null = Assert-TelephoneSupervisorRequestValue -Request $entryReq
         $claimedPath = Get-TelephoneSupervisorRecordPath -StateRoot $entrySup -Kind claimed -RunId $entrySupRunId
@@ -2000,33 +2105,21 @@ exit 0
             lead_session_id = $session
             lead_run_id = $entryRun
         })
-        $previousEntrySup = $env:TELEPHONE_LINE_SUPERVISOR_STATE_ROOT
-        $env:TELEPHONE_LINE_SUPERVISOR_STATE_ROOT = $entrySup
+        $leadDecoy = Join-Path $testRoot 'lead-state-decoy'
+        [IO.Directory]::CreateDirectory($leadDecoy) | Out-Null
+        $previousEntryLead = $env:TELEPHONE_LINE_LEAD_STATE_ROOT
+        $previousEntryLine = $env:TELEPHONE_LINE_STATE_ROOT
+        $env:TELEPHONE_LINE_LEAD_STATE_ROOT = $leadDecoy
+        $env:TELEPHONE_LINE_STATE_ROOT = $leadDecoy
         $env:TELEPHONE_LINE_INSTALL_ROOT = $repoRoot
-        $entrySupInfo = [Diagnostics.ProcessStartInfo]::new()
-        $entrySupInfo.FileName = $pwsh
-        $entrySupInfo.UseShellExecute = $false
-        $entrySupInfo.RedirectStandardOutput = $true
-        $entrySupInfo.RedirectStandardError = $true
-        $entrySupInfo.CreateNoWindow = $true
-        foreach ($arg in @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $repoRoot 'src\supervisor\Invoke-TelephoneSupervisor.ps1'), '-InstallRoot', $repoRoot, '-StateRoot', $entrySup)) {
-            [void]$entrySupInfo.ArgumentList.Add([string]$arg)
-        }
-        $entrySupProc = [Diagnostics.Process]::Start($entrySupInfo)
-        $entrySupOut = $entrySupProc.StandardOutput.ReadToEnd()
-        $entrySupErr = $entrySupProc.StandardError.ReadToEnd()
-        if (-not $entrySupProc.WaitForExit(120000)) {
-            try { $entrySupProc.Kill() } catch { }
-            throw 'Normal-entry supervisor process did not exit within 120s.'
-        }
-        $entrySupProc.Dispose()
-        $env:TELEPHONE_LINE_SUPERVISOR_STATE_ROOT = $previousEntrySup
-        $null = $entrySupOut
-        $null = $entrySupErr
+        $entrySupResult = Invoke-RepairSupervisor -StateRoot $entrySup
+        $null = $entrySupResult
         $nestedProof = Join-Path $entrySup ('runs\' + $entrySupRunId + '\owned-nested-drain-reconcile.json')
         Assert-Repair ([IO.File]::Exists($nestedProof)) 'Normal-entry supervisor did not persist nested drain reconcile proof.'
         $nestedDoc = (Read-TelephoneJson -Path $nestedProof).value
+        Assert-Repair ([string]$nestedDoc.nested_run_root -ceq $entryRoot) ('Normal-entry resolved the wrong nested root: ' + [string]$nestedDoc.nested_run_root)
         Assert-Repair ([bool]$nestedDoc.recovered) ('Normal-entry supervisor nested drain did not recover: ' + [string]$nestedDoc.refused)
+        Assert-Repair ([string]$nestedDoc.decision -ceq 'owned_nested_drain_incomplete') ('Recoverable drain was treated as finished before reader EOF: ' + [string]$nestedDoc.decision)
         $hostAfter = $null
         try { $hostAfter = Get-Process -Id $entryHostPid -ErrorAction SilentlyContinue } catch { $hostAfter = $null }
         Assert-Repair ($null -eq $hostAfter) 'Normal-entry supervisor left the owned lingering host running.'
@@ -2037,26 +2130,31 @@ exit 0
         try { $foreignAfter = Get-Process -Id ([int]$entryForeign.Id) -ErrorAction SilentlyContinue } catch { $foreignAfter = $null }
         Assert-Repair ($null -ne $foreignAfter) 'Normal-entry supervisor touched a foreign process.'
         if ($null -ne $foreignAfter) { $foreignAfter.Dispose() }
-        $afterDrain = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $entryRoot -WaitMilliseconds 800
-        Assert-Repair ([bool]$afterDrain.pending) 'Reader-loss recovery fabricated a terminal drain.'
-        Assert-Repair (-not [bool]$afterDrain.host_terminal) 'Reader-loss recovery fabricated host_terminal.'
-        Assert-Repair (-not [bool]$afterDrain.stdout_eof) 'Reader-loss recovery fabricated stdout EOF.'
-        Assert-Repair (-not [bool]$afterDrain.stderr_eof) 'Reader-loss recovery fabricated stderr EOF.'
-        Assert-Repair (-not [bool]$afterDrain.host_alive) 'Owned host was still observed alive after supervisor recovery.'
-        Assert-Repair (-not [bool]$afterDrain.child_alive) 'Owned CLI child was still observed alive after supervisor recovery.'
-        $hostLife = (Read-TelephoneJson -Path (Join-Path $entryRoot 'host-drain-lifecycle.json')).value
-        Assert-Repair ([bool]$hostLife.process_exited) 'Recovered host lifecycle omitted process_exited.'
-        Assert-Repair (-not [bool]$hostLife.stdout_eof) 'Recovered host lifecycle fabricated stdout EOF.'
-        Assert-Repair (-not [bool]$hostLife.stderr_eof) 'Recovered host lifecycle fabricated stderr EOF.'
-        Assert-Repair ([string]$hostLife.stream_eof_observation -ceq 'reader_unrecoverable' -or [string]$hostLife.stream_eof_observation -ceq 'handoff_pending') ('Recovered stream observation drifted: ' + [string]$hostLife.stream_eof_observation)
-        Assert-Repair ([string]$hostLife.last_output_sha256 -ceq $entryNativeSha) 'Recovered lifecycle lost launcher native-output bytes.'
-        Assert-Repair ((Get-RepairSha256 -Path (Join-Path $entryRoot 'native-output.txt')) -ceq $entryNativeSha) 'Supervisor recovery mutated launcher native-output.txt.'
+        $recoveredDrain = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $entryRoot -WaitMilliseconds 8000
+        Assert-Repair (-not [bool]$recoveredDrain.pending) ('Owned readers did not reach a terminal drain: ' + [string]$recoveredDrain.pending)
+        Assert-Repair ([bool]$recoveredDrain.host_terminal) 'Owned host drain did not become terminal after reader completion.'
+        Assert-Repair ([bool]$recoveredDrain.stdout_eof) 'Owned host drain lost stdout EOF.'
+        Assert-Repair ([bool]$recoveredDrain.stderr_eof) 'Owned host drain lost stderr EOF.'
+        $hostObs = Get-TelephoneLeadOwnedStreamObservation -RunRoot $entryRoot -Identity $entryOwner -Role host -SessionId $session -RunId $entryRun
+        Assert-Repair ([string]$hostObs.observation -ceq 'handoff_complete' -or [string]$hostObs.observation -ceq 'open_drain_readers') ('Owned host stream was not exact-producer EOF: ' + [string]$hostObs.observation)
+        Assert-Repair ([bool]$hostObs.stdout_eof) 'Owned host observation lost stdout EOF.'
+        Assert-Repair ($null -ne $hostObs.last_output) 'Owned host observation lost durable last output.'
+        Assert-Repair ([string]$hostObs.last_output.sha256 -ceq $entryNativeSha) 'Owned host observation last output did not match launcher native-output.txt.'
+        $entrySupResult2 = Invoke-RepairSupervisor -StateRoot $entrySup
+        $null = $entrySupResult2
+        $nestedDoc2 = (Read-TelephoneJson -Path $nestedProof).value
+        Assert-Repair ([string]$nestedDoc2.decision -ceq 'owned_nested_drain_complete') ('Second supervisor entry did not observe recoverable drain completion: ' + [string]$nestedDoc2.decision)
+        Assert-Repair (-not [bool]$nestedDoc2.drain_pending) 'Completed drain stayed pending on the second supervisor entry.'
+        $entryContinue = Invoke-TelephoneLeadWakeReconcile -LaunchResultPath (Join-Path $entryJob 'wake-launch-result.json') -RunId $entryRun -SessionId $session -ExtraArguments @('-StateRootOverride', $leadState) -Worktree $work
+        Assert-Repair ([string]$entryContinue.decision -cin @('recovered_attach', 'attached')) ('Same-session continuation relaunched instead of attaching: ' + [string]$entryContinue.decision)
         $turnsAfter = @([regex]::Matches([IO.File]::ReadAllText($turnLog), [regex]::Escape($entryRun))).Count
         Assert-Repair ($turnsAfter -eq 1) ('Normal-entry recovery duplicate model-start: ' + [string]$turnsAfter)
-        Assert-Repair ((Get-RepairSha256 -Path $entryAck) -ceq $ackBefore) 'Supervisor recovery mutated the receipt-bound ack.'
-        Assert-Repair ((Get-RepairSha256 -Path $entryDelivery) -ceq $deliveryBefore) 'Supervisor recovery mutated receipt delivery while recovering drain.'
+        Assert-Repair ((Get-RepairSha256 -Path $entryAck) -ceq $ackBefore) 'Supervisor recovery mutated the production wake ack.'
+        Assert-Repair ((Get-RepairSha256 -Path (Join-Path $entryRoot 'native-output.txt')) -ceq $entryNativeSha) 'Supervisor recovery mutated launcher native-output.txt.'
         $entryOutbox = Get-TelephoneSupervisorRecordPath -StateRoot $entrySup -Kind outbox -RunId $entrySupRunId
         Assert-Repair (-not [IO.File]::Exists($entryOutbox)) 'Nested native-complete recovery wrote SUPERVISOR_OWNER_DEAD_NO_RERUN.'
+        $env:TELEPHONE_LINE_LEAD_STATE_ROOT = $previousEntryLead
+        $env:TELEPHONE_LINE_STATE_ROOT = $previousEntryLine
     } finally {
         if ($entryHostPid -gt 0) { try { Stop-Process -Id $entryHostPid -Force -ErrorAction SilentlyContinue } catch { } }
         if ($entryChildPid -gt 0) { try { Stop-Process -Id $entryChildPid -Force -ErrorAction SilentlyContinue } catch { } }
@@ -2221,7 +2319,7 @@ exit 0
     Assert-Repair ($d4IdsAfter -contains $d4UnrelatedId) 'Unrelated session job was folded with the stale pair.'
     Assert-Repair ($d4IdsAfter -contains $d4LiveId) 'Live owned job was folded after stale consumption.'
     Assert-Repair ($d4IdsAfter -contains $d4UnknownId) 'Unknown job was folded after stale consumption.'
-    $d4ProofDir = Join-Path $repoRoot '_audit_correction6_artifacts_20260909\proof-final'
+    $d4ProofDir = Join-Path $repoRoot '_audit_correction7_artifacts_20260909\proof-final'
     [IO.Directory]::CreateDirectory($d4ProofDir) | Out-Null
     $d4Proof = [ordered]@{
         protocol_version = 'telephone-correction5-d4-current-row-v1'

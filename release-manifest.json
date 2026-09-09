@@ -19,14 +19,14 @@
     {
       "name": "telephone-line-0.1.2-source.zip",
       "contains": "src/, schemas/, docs/, .github/, tests/, and root README.md, LICENSE, CONTRIBUTING.md, SECURITY.md, THIRD-PARTY-NOTICES.md, .gitattributes",
-      "bytes": 957565,
-      "sha256": "fe4a370fb30048c834411e763535bd6013fdd54570fe000f80f3df2a9e1ccb69"
+      "bytes": 960272,
+      "sha256": "081f189360857c4c0a481fd5a146e1c9cd706b6c5c20663a445db13104b719cc"
     },
     {
       "name": "telephone-line-0.1.2-windows.zip",
       "contains": "src/, schemas/, docs/, and root README.md, LICENSE, CONTRIBUTING.md, SECURITY.md, THIRD-PARTY-NOTICES.md, .gitattributes; excludes tests/ and .github/",
-      "bytes": 530483,
-      "sha256": "6efba06e77c648101448250c23061b1a125cc8a798b1fe5b29969200d9e535d4"
+      "bytes": 531959,
+      "sha256": "0027beeeadde4e7a4506d64c2e19274a2e3665e3ece0472908af78bc3a2b8173"
     }
   ],
   "files": [
@@ -762,8 +762,8 @@
     },
     {
       "path": "src/core/TelephoneLeadRuntime.Common.ps1",
-      "bytes": 112658,
-      "sha256": "7c4a04b98d7147b73557335fde86a88750c327585bb74ad872f6f6849475a6ba"
+      "bytes": 118170,
+      "sha256": "a6e9f7f89caa2305437a69459df8718455a23def9335cdcd46f9edacf7a8df83"
     },
     {
       "path": "src/core/TelephoneLine.Common.ps1",
@@ -962,8 +962,8 @@
     },
     {
       "path": "src/supervisor/TelephoneSupervisor.Common.ps1",
-      "bytes": 136006,
-      "sha256": "1a0b6171af119099e354453f3bb3247eca1019bd0b3f4c559d52379219775501"
+      "bytes": 141291,
+      "sha256": "12da4a9192e34b215183cb8894c2d285a3e941ce43259df459f1e9844b9740ed"
     },
     {
       "path": "tests/Invoke-OfflineTests.ps1",
@@ -1422,8 +1422,8 @@
     },
     {
       "path": "tests/core/test_audit_repair.ps1",
-      "bytes": 161149,
-      "sha256": "60ce118b73a4a568e4a910f78308554c28c0179b5a485df0027cf8f5dd52359e"
+      "bytes": 168020,
+      "sha256": "35fb7682f5bfcbd32f0d6167b19143bc910956190b22a236d762d74041ff220e"
     },
     {
       "path": "tests/core/test_autonomous_event_chain.ps1",
@@ -1518,7 +1518,7 @@
   ],
   "counts": {
     "files": 297,
-    "bytes": 4403759
+    "bytes": 4421427
   },
   "excluded": [
     ".control/**",

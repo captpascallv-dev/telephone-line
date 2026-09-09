@@ -115,26 +115,65 @@ function Get-TelephoneLeadProcessSnapshot {
     return $null
 }
 
+function ConvertTo-TelephoneLeadProducerIdentity {
+    [CmdletBinding()]
+    param([AllowNull()][object]$Doc)
+    if ($null -eq $Doc -or $Doc -isnot [Collections.IDictionary]) { return $null }
+    $ownedPid = 0
+    $ticks = [int64]0
+    $exe = ''
+    try {
+        if ($Doc.Contains('pid')) { $ownedPid = [int]$Doc['pid'] }
+        elseif ($Doc.Contains('target_pid')) { $ownedPid = [int]$Doc['target_pid'] }
+        if ($Doc.Contains('start_time_utc_ticks')) { $ticks = [int64]$Doc['start_time_utc_ticks'] }
+        if ($Doc.Contains('executable_path')) { $exe = [string]$Doc['executable_path'] }
+    } catch {
+        return $null
+    }
+    if ($ownedPid -le 0 -or $ticks -le 0) { return $null }
+    return [ordered]@{
+        pid = [int]$ownedPid
+        start_time_utc_ticks = [int64]$ticks
+        executable_path = [string]$exe
+    }
+}
+
 function Test-TelephoneLeadProcessIdentityMatch {
     [CmdletBinding()]
     param(
         [AllowNull()][object]$Expected,
         [AllowNull()][object]$Actual
     )
-    if ($null -eq $Expected -or $null -eq $Actual) { return $false }
-    if ($Expected -isnot [Collections.IDictionary] -or $Actual -isnot [Collections.IDictionary]) { return $false }
-    if (-not $Expected.Contains('pid') -or -not $Expected.Contains('start_time_utc_ticks')) { return $false }
-    if (-not $Actual.Contains('pid') -or -not $Actual.Contains('start_time_utc_ticks')) { return $false }
-    if ([int]$Expected.pid -ne [int]$Actual.pid) { return $false }
-    if ([int64]$Expected.start_time_utc_ticks -ne [int64]$Actual.start_time_utc_ticks) { return $false }
-    $expectedExe = ''
-    $actualExe = ''
-    if ($Expected.Contains('executable_path')) { $expectedExe = [string]$Expected.executable_path }
-    if ($Actual.Contains('executable_path')) { $actualExe = [string]$Actual.executable_path }
+    $left = ConvertTo-TelephoneLeadProducerIdentity -Doc $Expected
+    $right = ConvertTo-TelephoneLeadProducerIdentity -Doc $Actual
+    if ($null -eq $left -or $null -eq $right) { return $false }
+    if ([int]$left.pid -ne [int]$right.pid) { return $false }
+    if ([int64]$left.start_time_utc_ticks -ne [int64]$right.start_time_utc_ticks) { return $false }
+    $expectedExe = [string]$left.executable_path
+    $actualExe = [string]$right.executable_path
     if (-not [string]::IsNullOrWhiteSpace($expectedExe) -and -not [string]::IsNullOrWhiteSpace($actualExe)) {
-        if (-not [string]::Equals($expectedExe, $actualExe, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+        try {
+            $expectedFull = [IO.Path]::GetFullPath($expectedExe)
+            $actualFull = [IO.Path]::GetFullPath($actualExe)
+            if (-not $expectedFull.Equals($actualFull, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+        } catch {
+            if (-not [string]::Equals($expectedExe, $actualExe, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+        }
     }
     return $true
+}
+
+function Test-TelephoneLeadDrainMatchesExpectedProducer {
+    [CmdletBinding()]
+    param(
+        [AllowNull()][object]$Doc,
+        [AllowNull()][object]$ExpectedIdentity,
+        [string]$SessionId = '',
+        [string]$RunId = ''
+    )
+    if (-not (Test-TelephoneLeadDrainIdentityComplete -Doc $Doc -SessionId $SessionId -RunId $RunId)) { return $false }
+    if ($null -eq $ExpectedIdentity) { return $false }
+    return (Test-TelephoneLeadProcessIdentityMatch -Expected $ExpectedIdentity -Actual $Doc)
 }
 
 function Get-TelephoneLeadOwnerIdentityObservation {
@@ -569,7 +608,16 @@ function Start-TelephoneLeadOpenDrain {
         [string]$RunId = '',
         [string]$HandoffPath = ''
     )
-    $key = [string]$Identity.pid
+    $selfProc = Get-Process -Id $PID
+    $ownerTicks = [int64]0
+    $ownerExe = ''
+    try {
+        $ownerTicks = [int64]$selfProc.StartTime.ToUniversalTime().Ticks
+        try { $ownerExe = [string]$selfProc.MainModule.FileName } catch { $ownerExe = [string]$selfProc.Path }
+    } finally {
+        $selfProc.Dispose()
+    }
+    $key = ([string]$Identity.pid) + '|' + ([string]$Identity.start_time_utc_ticks)
     $script:TelephoneLeadOpenDrains[$key] = [ordered]@{
         process = $Process
         stdout_task = $StdoutTask
@@ -582,13 +630,18 @@ function Start-TelephoneLeadOpenDrain {
         session_id = [string]$SessionId
         run_id = [string]$RunId
         owner_pid = [int]$PID
+        owner_start_time_utc_ticks = [int64]$ownerTicks
+        owner_executable_path = [string]$ownerExe
         handoff_path = [string]$HandoffPath
     }
     if (-not [string]::IsNullOrWhiteSpace($HandoffPath)) {
         $handoff = [ordered]@{
             protocol_version = 'telephone-line-drain-handoff-v1'
             owner_pid = [int]$PID
+            owner_start_time_utc_ticks = [int64]$ownerTicks
+            owner_executable_path = [string]$ownerExe
             target_pid = [int]$Identity.pid
+            pid = [int]$Identity.pid
             start_time_utc_ticks = [int64]$Identity.start_time_utc_ticks
             executable_path = [string]$Identity.executable_path
             session_id = [string]$SessionId
@@ -607,15 +660,48 @@ function Start-TelephoneLeadOpenDrain {
     }
 }
 
+function Find-TelephoneLeadOpenDrainKey {
+    [CmdletBinding()]
+    param(
+        [int]$ProcessId = 0,
+        [AllowNull()][object]$Identity = $null,
+        [string]$SessionId = '',
+        [string]$RunId = ''
+    )
+    $matches = [Collections.Generic.List[string]]::new()
+    foreach ($key in @($script:TelephoneLeadOpenDrains.Keys)) {
+        $drain = $script:TelephoneLeadOpenDrains[$key]
+        $drainIdentity = $drain.identity
+        $drainPid = 0
+        try {
+            if ($null -ne $drainIdentity -and $drainIdentity -is [Collections.IDictionary] -and $drainIdentity.Contains('pid')) {
+                $drainPid = [int]$drainIdentity['pid']
+            }
+        } catch { $drainPid = 0 }
+        if ($ProcessId -gt 0 -and $drainPid -ne $ProcessId) { continue }
+        if ($null -ne $Identity) {
+            if (-not (Test-TelephoneLeadProcessIdentityMatch -Expected $Identity -Actual $drainIdentity)) { continue }
+        }
+        if (-not [string]::IsNullOrWhiteSpace($SessionId) -and [string]$drain.session_id -cne $SessionId) { continue }
+        if (-not [string]::IsNullOrWhiteSpace($RunId) -and [string]$drain.run_id -cne $RunId) { continue }
+        [void]$matches.Add([string]$key)
+    }
+    if ($matches.Count -ne 1) { return '' }
+    return [string]$matches[0]
+}
+
 function Complete-TelephoneLeadOpenDrain {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][int]$ProcessId,
+        [AllowNull()][object]$Identity = $null,
+        [string]$SessionId = '',
+        [string]$RunId = '',
         [switch]$Wait,
         [int]$WaitMilliseconds = 0
     )
-    $key = [string]$ProcessId
-    if (-not $script:TelephoneLeadOpenDrains.Contains($key)) {
+    $key = Find-TelephoneLeadOpenDrainKey -ProcessId $ProcessId -Identity $Identity -SessionId $SessionId -RunId $RunId
+    if ([string]::IsNullOrWhiteSpace($key) -or -not $script:TelephoneLeadOpenDrains.Contains($key)) {
         return [ordered]@{ found = $false; process_exited = $false; stdout_eof = $false; stderr_eof = $false; pending = $true }
     }
     $drain = $script:TelephoneLeadOpenDrains[$key]
@@ -668,7 +754,15 @@ function Complete-TelephoneLeadOpenDrain {
             $done = [ordered]@{
                 protocol_version = 'telephone-line-drain-handoff-v1'
                 owner_pid = [int]$drain.owner_pid
+                owner_start_time_utc_ticks = $(if ($drain.Contains('owner_start_time_utc_ticks')) { [int64]$drain.owner_start_time_utc_ticks } else { [int64]0 })
+                owner_executable_path = $(if ($drain.Contains('owner_executable_path')) { [string]$drain.owner_executable_path } else { '' })
                 target_pid = [int]$ProcessId
+                pid = [int]$ProcessId
+                start_time_utc_ticks = $(if ($null -ne $drain.identity -and $drain.identity -is [Collections.IDictionary] -and $drain.identity.Contains('start_time_utc_ticks')) { [int64]$drain.identity.start_time_utc_ticks } else { [int64]0 })
+                executable_path = $(if ($null -ne $drain.identity -and $drain.identity -is [Collections.IDictionary] -and $drain.identity.Contains('executable_path')) { [string]$drain.identity.executable_path } else { '' })
+                session_id = [string]$drain.session_id
+                run_id = [string]$drain.run_id
+                role = [string]$drain.role
                 pending = $false
                 process_exited = $true
                 exit_code = [int]$exitCode
@@ -764,33 +858,7 @@ function Test-TelephoneLeadDurableDrainTerminal {
     )
     if (-not (Test-TelephoneLeadDrainIdentityComplete -Doc $Doc -SessionId $SessionId -RunId $RunId)) { return $false }
     if ($null -ne $ExpectedIdentity) {
-        $expectedPid = 0
-        $expectedTicks = [int64]0
-        $expectedExe = ''
-        try {
-            if ($ExpectedIdentity.Contains('pid')) { $expectedPid = [int]$ExpectedIdentity['pid'] }
-            elseif ($ExpectedIdentity.Contains('target_pid')) { $expectedPid = [int]$ExpectedIdentity['target_pid'] }
-            if ($ExpectedIdentity.Contains('start_time_utc_ticks')) { $expectedTicks = [int64]$ExpectedIdentity['start_time_utc_ticks'] }
-            if ($ExpectedIdentity.Contains('executable_path')) { $expectedExe = [string]$ExpectedIdentity['executable_path'] }
-        } catch { return $false }
-        $docPid = 0
-        $docTicks = [int64]0
-        $docExe = ''
-        try {
-            if ($Doc.Contains('pid')) { $docPid = [int]$Doc['pid'] }
-            elseif ($Doc.Contains('target_pid')) { $docPid = [int]$Doc['target_pid'] }
-            if ($Doc.Contains('start_time_utc_ticks')) { $docTicks = [int64]$Doc['start_time_utc_ticks'] }
-            if ($Doc.Contains('executable_path')) { $docExe = [string]$Doc['executable_path'] }
-        } catch { return $false }
-        if ($expectedPid -gt 0 -and $docPid -ne $expectedPid) { return $false }
-        if ($expectedTicks -gt 0 -and $docTicks -ne $expectedTicks) { return $false }
-        if (-not [string]::IsNullOrWhiteSpace($expectedExe) -and -not [string]::IsNullOrWhiteSpace($docExe)) {
-            try {
-                $left = [IO.Path]::GetFullPath($expectedExe)
-                $right = [IO.Path]::GetFullPath($docExe)
-                if (-not $left.Equals($right, [StringComparison]::OrdinalIgnoreCase)) { return $false }
-            } catch { return $false }
-        }
+        if (-not (Test-TelephoneLeadDrainMatchesExpectedProducer -Doc $Doc -ExpectedIdentity $ExpectedIdentity -SessionId $SessionId -RunId $RunId)) { return $false }
     }
     $exited = $false
     $stdoutEof = $false
@@ -886,7 +954,7 @@ function Get-TelephoneLeadOwnedStreamObservation {
         elseif ($Identity -is [Collections.IDictionary] -and $Identity.Contains('target_pid')) { $ownedPid = [int]$Identity['target_pid'] }
     } catch { $ownedPid = 0 }
     if ($ownedPid -gt 0) {
-        $complete = Complete-TelephoneLeadOpenDrain -ProcessId $ownedPid -Wait -WaitMilliseconds 1500
+        $complete = Complete-TelephoneLeadOpenDrain -ProcessId $ownedPid -Identity $Identity -SessionId $SessionId -RunId $RunId -Wait -WaitMilliseconds 1500
         if ([bool]$complete.found) {
             $result.stdout_eof = [bool]$complete.stdout_eof
             $result.stderr_eof = [bool]$complete.stderr_eof
@@ -901,27 +969,60 @@ function Get-TelephoneLeadOwnedStreamObservation {
     $handoffPath = Join-Path $root $handoffName
     if ([IO.File]::Exists($handoffPath)) {
         $doc = Read-TelephoneLeadDrainRecord -Path $handoffPath
-        if ($null -ne $doc -and $doc -is [Collections.IDictionary] -and -not ($doc.Contains('unreadable') -and [bool]$doc['unreadable']) -and (Test-TelephoneLeadDrainIdentityComplete -Doc $doc -SessionId $SessionId -RunId $RunId)) {
-            $pending = $true
-            if ($doc.Contains('pending')) { $pending = [bool]$doc['pending'] }
-            if (-not $pending) {
-                if ($doc.Contains('stdout_eof')) { $result.stdout_eof = [bool]$doc['stdout_eof'] }
-                if ($doc.Contains('stderr_eof')) { $result.stderr_eof = [bool]$doc['stderr_eof'] }
-                $result.observation = 'handoff_complete'
-                if ($doc.Contains('exit_code')) { $result.exit_code = $doc['exit_code'] }
-            } else {
-                $result.observation = 'handoff_pending'
+        if ($null -ne $doc -and $doc -is [Collections.IDictionary] -and -not ($doc.Contains('unreadable') -and [bool]$doc['unreadable'])) {
+            if (Test-TelephoneLeadDrainMatchesExpectedProducer -Doc $doc -ExpectedIdentity $Identity -SessionId $SessionId -RunId $RunId) {
+                $pending = $true
+                if ($doc.Contains('pending')) { $pending = [bool]$doc['pending'] }
+                if (-not $pending) {
+                    if ($doc.Contains('stdout_eof')) { $result.stdout_eof = [bool]$doc['stdout_eof'] }
+                    if ($doc.Contains('stderr_eof')) { $result.stderr_eof = [bool]$doc['stderr_eof'] }
+                    $result.observation = 'handoff_complete'
+                    if ($doc.Contains('exit_code')) { $result.exit_code = $doc['exit_code'] }
+                } else {
+                    $result.observation = 'handoff_pending'
+                    $result.stdout_eof = $false
+                    $result.stderr_eof = $false
+                }
+            } elseif (Test-TelephoneLeadDrainIdentityComplete -Doc $doc -SessionId $SessionId -RunId $RunId) {
+                $result.observation = 'handoff_foreign_producer'
                 $result.stdout_eof = $false
                 $result.stderr_eof = $false
             }
         }
     }
     $result.last_output = Get-TelephoneLeadDurableLastOutput -RunRoot $RunRoot
-    if ([string]$result.observation -ceq 'reader_unrecoverable' -or [string]$result.observation -ceq 'handoff_pending') {
+    if ([string]$result.observation -cin @('reader_unrecoverable', 'handoff_pending', 'handoff_foreign_producer')) {
         $result.stdout_eof = $false
         $result.stderr_eof = $false
     }
     return $result
+}
+
+function Test-TelephoneLeadDrainCoordinatorAlive {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$RunRoot,
+        [string]$Role = 'host'
+    )
+    $root = [IO.Path]::GetFullPath($RunRoot).TrimEnd('\')
+    $handoffName = if ([string]$Role -ceq 'cli' -or [string]$Role -ceq 'child') { 'cli-drain-handoff.json' } else { 'host-drain-handoff.json' }
+    $path = Join-Path $root $handoffName
+    $doc = Read-TelephoneLeadDrainRecord -Path $path
+    if ($null -eq $doc -or $doc -isnot [Collections.IDictionary] -or ($doc.Contains('unreadable') -and [bool]$doc['unreadable'])) { return $false }
+    $ownerPid = 0
+    $ownerTicks = [int64]0
+    $ownerExe = ''
+    try {
+        if ($doc.Contains('owner_pid')) { $ownerPid = [int]$doc['owner_pid'] }
+        if ($doc.Contains('owner_start_time_utc_ticks')) { $ownerTicks = [int64]$doc['owner_start_time_utc_ticks'] }
+        if ($doc.Contains('owner_executable_path')) { $ownerExe = [string]$doc['owner_executable_path'] }
+    } catch { return $false }
+    if ($ownerPid -le 0 -or $ownerTicks -le 0) { return $false }
+    return (Test-TelephoneLeadOwnerIdentityAlive -Owner ([ordered]@{
+        pid = [int]$ownerPid
+        start_time_utc_ticks = [int64]$ownerTicks
+        executable_path = [string]$ownerExe
+    }))
 }
 
 function Write-TelephoneLeadOwnedRecoveredDrainLifecycle {
@@ -1099,7 +1200,7 @@ function Wait-TelephoneLeadOwnedDrainTerminal {
             $result.host_observation_status = [string]$hostObs.status
             $result.host_alive = ([string]$hostObs.status -ceq 'alive')
             if ($hostPid -gt 0) {
-                $hostDrain = Complete-TelephoneLeadOpenDrain -ProcessId $hostPid -Wait:($slice -gt 0) -WaitMilliseconds $slice
+                $hostDrain = Complete-TelephoneLeadOpenDrain -ProcessId $hostPid -Identity $hostIdentity -SessionId $sessionId -RunId $runId -Wait:($slice -gt 0) -WaitMilliseconds $slice
             }
             if ($null -ne $hostDrain -and [bool]$hostDrain.found -and [bool]$hostDrain.process_exited -and [bool]$hostDrain.stdout_eof -and [bool]$hostDrain.stderr_eof) {
                 $recheck = Test-TelephoneLeadExactProcessObservation -Doc $hostIdentity
@@ -1138,7 +1239,7 @@ function Wait-TelephoneLeadOwnedDrainTerminal {
             $remain = [int][Math]::Max(0, ($deadline - [DateTimeOffset]::UtcNow).TotalMilliseconds)
             $slice = [Math]::Min(250, $remain)
             if ($childPid -gt 0) {
-                $childDrain = Complete-TelephoneLeadOpenDrain -ProcessId $childPid -Wait:($slice -gt 0) -WaitMilliseconds $slice
+                $childDrain = Complete-TelephoneLeadOpenDrain -ProcessId $childPid -Identity $childIdentity -SessionId $sessionId -RunId $runId -Wait:($slice -gt 0) -WaitMilliseconds $slice
             }
             if ($null -ne $childDrain -and [bool]$childDrain.found -and [bool]$childDrain.process_exited -and [bool]$childDrain.stdout_eof -and [bool]$childDrain.stderr_eof) {
                 $recheckChild = Test-TelephoneLeadExactProcessObservation -Doc $childIdentity
@@ -1151,6 +1252,14 @@ function Wait-TelephoneLeadOwnedDrainTerminal {
             if (-not $childDone) {
                 foreach ($doc in @($snap.child_docs)) {
                     if (Test-TelephoneLeadDurableDrainTerminal -Doc $doc -SessionId $sessionId -RunId $runId -ExpectedIdentity $childIdentity) { $childDone = $true; break }
+                }
+            }
+            if (-not $childDone -and -not [bool]$result.child_alive -and [string]$childObs.status -cin @('not_found', 'mismatch')) {
+                $childHandoffPath = Join-Path $root 'cli-drain-handoff.json'
+                $childDrainOwned = [IO.File]::Exists($childHandoffPath) -or -not [string]::IsNullOrWhiteSpace((Find-TelephoneLeadOpenDrainKey -ProcessId $childPid -Identity $childIdentity -SessionId $sessionId -RunId $runId))
+                if (-not $childDrainOwned) {
+                    $childDone = $true
+                    $result.child_observation_status = 'streams_never_owned_process_exited'
                 }
             }
         } elseif ([bool]$result.child_absence_proven) {

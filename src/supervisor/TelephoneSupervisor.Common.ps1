@@ -2191,6 +2191,23 @@ function Get-TelephoneSupervisorStatus {
     return $status
 }
 
+function Get-TelephoneSupervisorRequestArgumentValue {
+    [CmdletBinding()]
+    param(
+        [AllowNull()][object]$Request,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+    if ($null -eq $Request -or $Request -isnot [Collections.IDictionary]) { return '' }
+    if (-not $Request.Contains('command') -or $Request.command -isnot [Collections.IDictionary]) { return '' }
+    if (-not $Request.command.Contains('arguments')) { return '' }
+    $args = @($Request.command.arguments | ForEach-Object { [string]$_ })
+    $token = '-' + $Name
+    for ($index = 0; $index -lt ($args.Count - 1); $index++) {
+        if ([string]$args[$index] -ceq $token) { return [string]$args[$index + 1] }
+    }
+    return ''
+}
+
 function Resolve-TelephoneSupervisorNestedLeadRun {
     [CmdletBinding()]
     param([AllowNull()][object]$Request)
@@ -2200,7 +2217,47 @@ function Resolve-TelephoneSupervisorNestedLeadRun {
     if ([string]::IsNullOrWhiteSpace($session)) { return $null }
     $leadRunId = ''
     if ($Request.Contains('lead_run_id')) { $leadRunId = [string]$Request['lead_run_id'] }
+    $supervisorRunId = ''
+    if ($Request.Contains('run_id')) { $supervisorRunId = [string]$Request['run_id'] }
     $candidates = [Collections.Generic.List[string]]::new()
+    $requestState = Get-TelephoneSupervisorRequestArgumentValue -Request $Request -Name 'StateRoot'
+    if ([string]::IsNullOrWhiteSpace($requestState)) {
+        $requestState = Get-TelephoneSupervisorRequestArgumentValue -Request $Request -Name 'StateRootOverride'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($requestState)) {
+        try {
+            $stateFull = [IO.Path]::GetFullPath($requestState).TrimEnd('\')
+            $jobsRoot = Join-Path $stateFull 'jobs'
+            if ([IO.Directory]::Exists($jobsRoot) -and -not [string]::IsNullOrWhiteSpace($supervisorRunId)) {
+                foreach ($jobDir in @([IO.Directory]::GetDirectories($jobsRoot))) {
+                    $lineagePath = Join-Path $jobDir 'supervisor-lineage.json'
+                    if (-not [IO.File]::Exists($lineagePath)) { continue }
+                    try {
+                        $lineage = (Read-TelephoneJson -Path $lineagePath).value
+                    } catch { continue }
+                    if ($lineage -isnot [Collections.IDictionary]) { continue }
+                    if ([string]$lineage.supervisor_run_id -cne $supervisorRunId) { continue }
+                    if ($lineage.Contains('lead_session_id') -and -not [string]::IsNullOrWhiteSpace([string]$lineage.lead_session_id) -and [string]$lineage.lead_session_id -cne $session) { continue }
+                    $jobPaths = Get-TelephoneJobPaths -JobRoot $jobDir
+                    foreach ($resultPath in @($jobPaths.wake_launch_result, $jobPaths.nested_wake_launch_result, $jobPaths.owner_wake_launch_result, $jobPaths.delivery)) {
+                        if (-not [IO.File]::Exists($resultPath)) { continue }
+                        try {
+                            $saved = (Read-TelephoneJson -Path $resultPath).value
+                        } catch { continue }
+                        if ($saved -isnot [Collections.IDictionary]) { continue }
+                        $savedRoot = ''
+                        if ($saved.Contains('run_root')) { $savedRoot = [string]$saved['run_root'] }
+                        elseif ($saved.Contains('lead_run_root')) { $savedRoot = [string]$saved['lead_run_root'] }
+                        if ([string]::IsNullOrWhiteSpace($savedRoot)) { continue }
+                        try {
+                            $full = [IO.Path]::GetFullPath($savedRoot).TrimEnd('\')
+                            if (-not [string]::IsNullOrWhiteSpace($full) -and -not $candidates.Contains($full)) { [void]$candidates.Add($full) }
+                        } catch { }
+                    }
+                }
+            }
+        } catch { }
+    }
     foreach ($raw in @(
         $(if ($Request.Contains('command') -and $Request.command -is [Collections.IDictionary] -and $Request.command.Contains('working_directory')) { [string]$Request.command.working_directory } else { '' }),
         $(if ($Request.Contains('worktree')) { [string]$Request.worktree } else { '' }),
@@ -2299,6 +2356,18 @@ function Reconcile-TelephoneSupervisorClaimed {
             } catch {
                 $drain = [ordered]@{ recovered = $false; refused = 'nested_drain_reconcile_failed' }
             }
+            $drainPending = $true
+            $hostTerminal = $false
+            if ($null -ne $drain -and $drain -is [Collections.IDictionary] -and $drain.Contains('drain') -and $null -ne $drain.drain -and $drain.drain -is [Collections.IDictionary]) {
+                if ($drain.drain.Contains('pending')) { $drainPending = [bool]$drain.drain.pending }
+                if ($drain.drain.Contains('host_terminal')) { $hostTerminal = [bool]$drain.drain.host_terminal }
+            }
+            $coordinatorAlive = $false
+            try { $coordinatorAlive = [bool](Test-TelephoneLeadDrainCoordinatorAlive -RunRoot ([string]$nested.run_root)) } catch { $coordinatorAlive = $false }
+            $nestedDecision = 'owned_nested_drain'
+            if (-not $drainPending -and $hostTerminal) { $nestedDecision = 'owned_nested_drain_complete' }
+            elseif ($coordinatorAlive) { $nestedDecision = 'owned_nested_drain_incomplete' }
+            else { $nestedDecision = 'owned_nested_drain_unrecoverable' }
             $nestedPath = Join-Path $runDir 'owned-nested-drain-reconcile.json'
             try {
                 $nestedRecord = [ordered]@{
@@ -2309,6 +2378,10 @@ function Reconcile-TelephoneSupervisorClaimed {
                     nested_run_id = [string]$nested.run_id
                     recovered = $(if ($null -ne $drain -and $drain -is [Collections.IDictionary] -and $drain.Contains('recovered')) { [bool]$drain.recovered } else { $false })
                     refused = $(if ($null -ne $drain -and $drain -is [Collections.IDictionary] -and $drain.Contains('refused')) { [string]$drain.refused } else { '' })
+                    drain_pending = [bool]$drainPending
+                    host_terminal = [bool]$hostTerminal
+                    coordinator_alive = [bool]$coordinatorAlive
+                    decision = $nestedDecision
                     recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
                 }
                 $null = Write-TelephoneJsonReplace -Path $nestedPath -Value $nestedRecord
@@ -2327,11 +2400,21 @@ function Reconcile-TelephoneSupervisorClaimed {
             Close-TelephoneSupervisorRunJob -Job $job
         }
         if ($null -ne $nested) {
+            $nestedDecision = 'owned_nested_drain'
+            $nestedProofPath = Join-Path $runDir 'owned-nested-drain-reconcile.json'
+            if ([IO.File]::Exists($nestedProofPath)) {
+                try {
+                    $nestedProof = (Read-TelephoneJson -Path $nestedProofPath).value
+                    if ($nestedProof -is [Collections.IDictionary] -and $nestedProof.Contains('decision') -and -not [string]::IsNullOrWhiteSpace([string]$nestedProof.decision)) {
+                        $nestedDecision = [string]$nestedProof.decision
+                    }
+                } catch { }
+            }
             $reconcilePath = Join-Path $runDir 'claimed-reconcile.json'
             $record = [ordered]@{
                 protocol_version = 'telephone-line-supervisor-claimed-reconcile-v1'
                 run_id = $runId
-                decision = 'owned_nested_drain'
+                decision = $nestedDecision
                 error_code = ''
                 replay = $false
                 silent_skip = $false
@@ -2340,7 +2423,7 @@ function Reconcile-TelephoneSupervisorClaimed {
                 recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
             }
             try { $null = Write-TelephoneJsonReplace -Path $reconcilePath -Value $record } catch { }
-            [void]$reconciled.Add([ordered]@{ run_id = $runId; terminal = ''; decision = 'owned_nested_drain' })
+            [void]$reconciled.Add([ordered]@{ run_id = $runId; terminal = ''; decision = $nestedDecision })
             continue
         }
         $null = Write-TelephoneSupervisorOutbox -StateRoot $StateRoot -RunId $runId -Terminal 'failed' -Request $claimed.value -ErrorCode 'SUPERVISOR_OWNER_DEAD_NO_RERUN'
