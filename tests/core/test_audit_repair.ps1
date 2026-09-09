@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-# Correction-7 focused proofs. Isolated fixtures only; no live install, Task
+# Correction-8 focused proofs. Isolated fixtures only; no live install, Task
 # Scheduler, App, paid PI, or live mailbox mutation. Does not replay the unsafe
 # 315730a2 mailbox-ref Execute, Collect-Probe-2dbc8dd, or unchanged D3/D5 suites.
 # Does not rerun the prior 310/290/full-suite classification for its own sake.
@@ -752,7 +752,7 @@ exit 0
     }
     Assert-Repair (Test-TelephoneDashboardJobMustRemainVisible -Job $unknownJob) 'UNKNOWN job without a live process was hidden.'
 
-    $showPath = Join-Path $repoRoot '_audit_correction7_artifacts_20260909\private-candidate\cockpit\Show-PascalGlobalAutopilotStatus.ps1'
+    $showPath = Join-Path $repoRoot '_audit_correction8_artifacts_20260909\private-candidate\cockpit\Show-PascalGlobalAutopilotStatus.ps1'
     $showText = [IO.File]::ReadAllText($showPath)
     $cut = $showText.IndexOf('if ($LibraryOnly) { return }')
     $start = $showText.IndexOf('$script:ThreadIdCache')
@@ -1684,8 +1684,8 @@ Invoke-TelephoneLeadDrainedProcess -FileName '$($pwsh.Replace('''', ''''''))' -A
     }
 
     # D5 isolated adapter follow_up is an unchanged proof class; not rerun here.
-    $v23Launcher = Join-Path $repoRoot '_audit_correction7_artifacts_20260909\private-candidate\launchers\Invoke-V23_11WiredLead.ps1'
-    $v23Helper = Join-Path $repoRoot '_audit_correction7_artifacts_20260909\private-candidate\launchers\DirectCursor.Common.ps1'
+    $v23Launcher = Join-Path $repoRoot '_audit_correction8_artifacts_20260909\private-candidate\launchers\Invoke-V23_11WiredLead.ps1'
+    $v23Helper = Join-Path $repoRoot '_audit_correction8_artifacts_20260909\private-candidate\launchers\DirectCursor.Common.ps1'
     Assert-Repair ([IO.File]::Exists($v23Launcher)) 'Candidate V23 launcher copy was missing.'
     Assert-Repair ([IO.File]::Exists($v23Helper)) 'Candidate DirectCursor helper copy was missing.'
     $env:TELEPHONE_LINE_DIRECTCURSOR_COMMON = $v23Helper
@@ -2112,14 +2112,22 @@ exit 0
         $env:TELEPHONE_LINE_LEAD_STATE_ROOT = $leadDecoy
         $env:TELEPHONE_LINE_STATE_ROOT = $leadDecoy
         $env:TELEPHONE_LINE_INSTALL_ROOT = $repoRoot
+        $handoffBeforePath = Join-Path $entryRoot 'host-drain-handoff.json'
+        Assert-Repair ([IO.File]::Exists($handoffBeforePath)) 'Normal-entry launcher did not persist a host drain handoff.'
+        $handoffBeforeBytes = [IO.File]::ReadAllBytes($handoffBeforePath)
+        $obsDir = Join-Path $testRoot 'automatic-drain-observations'
+        [IO.Directory]::CreateDirectory($obsDir) | Out-Null
+        [IO.File]::WriteAllBytes((Join-Path $obsDir 'host-drain-handoff.before.json'), $handoffBeforeBytes)
         $entrySupResult = Invoke-RepairSupervisor -StateRoot $entrySup
-        $null = $entrySupResult
+        [IO.File]::WriteAllText((Join-Path $obsDir 'supervisor-1.stdout.txt'), [string]$entrySupResult.stdout, [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $obsDir 'supervisor-1.stderr.txt'), [string]$entrySupResult.stderr, [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $obsDir 'supervisor-1.exit.txt'), ([string]$entrySupResult.exit_code + "`n"), [Text.UTF8Encoding]::new($false))
+        Assert-Repair ([int]$entrySupResult.exit_code -eq 0) ('Normal-entry supervisor exited non-zero: ' + [string]$entrySupResult.exit_code)
         $nestedProof = Join-Path $entrySup ('runs\' + $entrySupRunId + '\owned-nested-drain-reconcile.json')
         Assert-Repair ([IO.File]::Exists($nestedProof)) 'Normal-entry supervisor did not persist nested drain reconcile proof.'
         $nestedDoc = (Read-TelephoneJson -Path $nestedProof).value
         Assert-Repair ([string]$nestedDoc.nested_run_root -ceq $entryRoot) ('Normal-entry resolved the wrong nested root: ' + [string]$nestedDoc.nested_run_root)
         Assert-Repair ([bool]$nestedDoc.recovered) ('Normal-entry supervisor nested drain did not recover: ' + [string]$nestedDoc.refused)
-        Assert-Repair ([string]$nestedDoc.decision -ceq 'owned_nested_drain_incomplete') ('Recoverable drain was treated as finished before reader EOF: ' + [string]$nestedDoc.decision)
         $hostAfter = $null
         try { $hostAfter = Get-Process -Id $entryHostPid -ErrorAction SilentlyContinue } catch { $hostAfter = $null }
         Assert-Repair ($null -eq $hostAfter) 'Normal-entry supervisor left the owned lingering host running.'
@@ -2130,21 +2138,49 @@ exit 0
         try { $foreignAfter = Get-Process -Id ([int]$entryForeign.Id) -ErrorAction SilentlyContinue } catch { $foreignAfter = $null }
         Assert-Repair ($null -ne $foreignAfter) 'Normal-entry supervisor touched a foreign process.'
         if ($null -ne $foreignAfter) { $foreignAfter.Dispose() }
-        $recoveredDrain = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $entryRoot -WaitMilliseconds 8000
-        Assert-Repair (-not [bool]$recoveredDrain.pending) ('Owned readers did not reach a terminal drain: ' + [string]$recoveredDrain.pending)
-        Assert-Repair ([bool]$recoveredDrain.host_terminal) 'Owned host drain did not become terminal after reader completion.'
-        Assert-Repair ([bool]$recoveredDrain.stdout_eof) 'Owned host drain lost stdout EOF.'
-        Assert-Repair ([bool]$recoveredDrain.stderr_eof) 'Owned host drain lost stderr EOF.'
-        $hostObs = Get-TelephoneLeadOwnedStreamObservation -RunRoot $entryRoot -Identity $entryOwner -Role host -SessionId $session -RunId $entryRun
-        Assert-Repair ([string]$hostObs.observation -ceq 'handoff_complete' -or [string]$hostObs.observation -ceq 'open_drain_readers') ('Owned host stream was not exact-producer EOF: ' + [string]$hostObs.observation)
-        Assert-Repair ([bool]$hostObs.stdout_eof) 'Owned host observation lost stdout EOF.'
-        Assert-Repair ($null -ne $hostObs.last_output) 'Owned host observation lost durable last output.'
-        Assert-Repair ([string]$hostObs.last_output.sha256 -ceq $entryNativeSha) 'Owned host observation last output did not match launcher native-output.txt.'
+        $handoffDeadline = [DateTimeOffset]::UtcNow.AddSeconds(8)
+        $handoffAfter = $null
+        do {
+            if ([IO.File]::Exists($handoffBeforePath)) {
+                try { $handoffAfter = (Read-TelephoneJson -Path $handoffBeforePath).value } catch { $handoffAfter = $null }
+            }
+            $autoDone = $false
+            if ($null -ne $handoffAfter -and $handoffAfter -is [Collections.IDictionary]) {
+                $autoDone = (
+                    [int]$handoffAfter.pid -eq $entryHostPid -and
+                    [int64]$handoffAfter.start_time_utc_ticks -eq $entryHostTicks -and
+                    [string]$handoffAfter.session_id -ceq $session -and
+                    [string]$handoffAfter.run_id -ceq $entryRun -and
+                    [string]$handoffAfter.role -ceq 'host' -and
+                    -not [bool]$handoffAfter.pending -and
+                    [bool]$handoffAfter.process_exited -and
+                    [bool]$handoffAfter.stdout_eof -and
+                    [bool]$handoffAfter.stderr_eof -and
+                    [string]$handoffAfter.recorded_by -ceq 'owner_reader_completion'
+                )
+            }
+            if ($autoDone) { break }
+            if ([DateTimeOffset]::UtcNow -ge $handoffDeadline) { break }
+            Start-Sleep -Milliseconds 100
+        } while ($true)
+        Assert-Repair ($null -ne $handoffAfter) 'Automatic drain completion did not leave a readable host handoff.'
+        Assert-Repair ([string]$handoffAfter.recorded_by -ceq 'owner_reader_completion') ('Durable handoff was not written by the owner reader completion path: ' + [string]$handoffAfter.recorded_by)
+        Assert-Repair (-not [bool]$handoffAfter.pending) 'Owner did not persist a completed drain handoff.'
+        Assert-Repair ([bool]$handoffAfter.stdout_eof) 'Automatic host handoff lost stdout EOF.'
+        Assert-Repair ([bool]$handoffAfter.stderr_eof) 'Automatic host handoff lost stderr EOF.'
+        Assert-Repair ([int]$handoffAfter.pid -eq $entryHostPid) 'Automatic host handoff lost the exact producer PID.'
+        Assert-Repair ([int64]$handoffAfter.start_time_utc_ticks -eq $entryHostTicks) 'Automatic host handoff lost the exact producer ticks.'
+        [IO.File]::Copy($handoffBeforePath, (Join-Path $obsDir 'host-drain-handoff.after.json'), $true)
+        $nativeAfter = Get-RepairSha256 -Path (Join-Path $entryRoot 'native-output.txt')
+        Assert-Repair ($nativeAfter -ceq $entryNativeSha) 'Automatic drain completion mutated launcher native-output.txt.'
         $entrySupResult2 = Invoke-RepairSupervisor -StateRoot $entrySup
-        $null = $entrySupResult2
+        [IO.File]::WriteAllText((Join-Path $obsDir 'supervisor-2.stdout.txt'), [string]$entrySupResult2.stdout, [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $obsDir 'supervisor-2.stderr.txt'), [string]$entrySupResult2.stderr, [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $obsDir 'supervisor-2.exit.txt'), ([string]$entrySupResult2.exit_code + "`n"), [Text.UTF8Encoding]::new($false))
         $nestedDoc2 = (Read-TelephoneJson -Path $nestedProof).value
-        Assert-Repair ([string]$nestedDoc2.decision -ceq 'owned_nested_drain_complete') ('Second supervisor entry did not observe recoverable drain completion: ' + [string]$nestedDoc2.decision)
-        Assert-Repair (-not [bool]$nestedDoc2.drain_pending) 'Completed drain stayed pending on the second supervisor entry.'
+        Assert-Repair ([string]$nestedDoc2.decision -ceq 'owned_nested_drain_complete') ('Normal supervisor entry did not observe automatic drain completion: ' + [string]$nestedDoc2.decision)
+        Assert-Repair (-not [bool]$nestedDoc2.drain_pending) 'Completed drain stayed pending on the normal supervisor entry.'
+        Assert-Repair ([bool]$nestedDoc2.host_terminal) 'Automatic drain completion did not make the host terminal.'
         $entryContinue = Invoke-TelephoneLeadWakeReconcile -LaunchResultPath (Join-Path $entryJob 'wake-launch-result.json') -RunId $entryRun -SessionId $session -ExtraArguments @('-StateRootOverride', $leadState) -Worktree $work
         Assert-Repair ([string]$entryContinue.decision -cin @('recovered_attach', 'attached')) ('Same-session continuation relaunched instead of attaching: ' + [string]$entryContinue.decision)
         $turnsAfter = @([regex]::Matches([IO.File]::ReadAllText($turnLog), [regex]::Escape($entryRun))).Count
@@ -2319,7 +2355,7 @@ exit 0
     Assert-Repair ($d4IdsAfter -contains $d4UnrelatedId) 'Unrelated session job was folded with the stale pair.'
     Assert-Repair ($d4IdsAfter -contains $d4LiveId) 'Live owned job was folded after stale consumption.'
     Assert-Repair ($d4IdsAfter -contains $d4UnknownId) 'Unknown job was folded after stale consumption.'
-    $d4ProofDir = Join-Path $repoRoot '_audit_correction7_artifacts_20260909\proof-final'
+    $d4ProofDir = Join-Path $repoRoot '_audit_correction8_artifacts_20260909\proof-final'
     [IO.Directory]::CreateDirectory($d4ProofDir) | Out-Null
     $d4Proof = [ordered]@{
         protocol_version = 'telephone-correction5-d4-current-row-v1'

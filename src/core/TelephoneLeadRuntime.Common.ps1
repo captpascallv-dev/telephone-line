@@ -6,6 +6,115 @@
 Set-StrictMode -Version Latest
 
 $script:TelephoneLeadOpenDrains = [ordered]@{}
+$script:TelephoneLeadOpenDrainGate = [object]::new()
+
+if (-not ('TelephoneLeadOwnedReaderCompletion' -as [type])) {
+    Add-Type -Language CSharp -TypeDefinition @'
+using System;
+using System.IO;
+using System.Text;
+using System.Threading.Tasks;
+
+public static class TelephoneLeadOwnedReaderCompletion {
+    public static void Attach(
+        System.Diagnostics.Process process,
+        Task stdoutTask,
+        Task stderrTask,
+        string handoffPath,
+        string lifecyclePath,
+        int pid,
+        long ticks,
+        string startedAt,
+        string exe,
+        string sessionId,
+        string runId,
+        string role,
+        int ownerPid,
+        long ownerTicks,
+        string ownerExe) {
+        if (process == null || stdoutTask == null || stderrTask == null) return;
+        if (string.IsNullOrWhiteSpace(handoffPath)) return;
+        Task.WhenAll(stdoutTask, stderrTask).ContinueWith(delegate(Task antecedent) {
+            try {
+                Publish(process, stdoutTask, stderrTask, handoffPath, lifecyclePath, pid, ticks, startedAt, exe, sessionId, runId, role, ownerPid, ownerTicks, ownerExe);
+            } catch {
+            }
+        });
+    }
+
+    static void Publish(
+        System.Diagnostics.Process process,
+        Task stdoutTask,
+        Task stderrTask,
+        string handoffPath,
+        string lifecyclePath,
+        int pid,
+        long ticks,
+        string startedAt,
+        string exe,
+        string sessionId,
+        string runId,
+        string role,
+        int ownerPid,
+        long ownerTicks,
+        string ownerExe) {
+        if (process == null || !process.HasExited) return;
+        if (stdoutTask == null || stderrTask == null) return;
+        if (stdoutTask.Status != TaskStatus.RanToCompletion) return;
+        if (stderrTask.Status != TaskStatus.RanToCompletion) return;
+        int exitCode = -1;
+        try { exitCode = process.ExitCode; } catch { exitCode = -1; }
+        string recorded = DateTimeOffset.UtcNow.ToString("o");
+        string handoff = "{"
+            + "\"protocol_version\":\"telephone-line-drain-handoff-v1\","
+            + "\"owner_pid\":" + ownerPid.ToString(System.Globalization.CultureInfo.InvariantCulture) + ","
+            + "\"owner_start_time_utc_ticks\":" + ownerTicks.ToString(System.Globalization.CultureInfo.InvariantCulture) + ","
+            + "\"owner_executable_path\":\"" + Escape(ownerExe) + "\","
+            + "\"target_pid\":" + pid.ToString(System.Globalization.CultureInfo.InvariantCulture) + ","
+            + "\"pid\":" + pid.ToString(System.Globalization.CultureInfo.InvariantCulture) + ","
+            + "\"start_time_utc_ticks\":" + ticks.ToString(System.Globalization.CultureInfo.InvariantCulture) + ","
+            + "\"executable_path\":\"" + Escape(exe) + "\","
+            + "\"session_id\":\"" + Escape(sessionId) + "\","
+            + "\"run_id\":\"" + Escape(runId) + "\","
+            + "\"role\":\"" + Escape(role) + "\","
+            + "\"pending\":false,"
+            + "\"process_exited\":true,"
+            + "\"exit_code\":" + exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture) + ","
+            + "\"stdout_eof\":true,"
+            + "\"stderr_eof\":true,"
+            + "\"recorded_by\":\"owner_reader_completion\","
+            + "\"recorded_at_utc\":\"" + Escape(recorded) + "\""
+            + "}\n";
+        File.WriteAllText(handoffPath, handoff, new UTF8Encoding(false));
+        if (!string.IsNullOrWhiteSpace(lifecyclePath)) {
+            string life = "{"
+                + "\"protocol_version\":\"telephone-line-drained-process-v1\","
+                + "\"pid\":" + pid.ToString(System.Globalization.CultureInfo.InvariantCulture) + ","
+                + "\"start_time_utc_ticks\":" + ticks.ToString(System.Globalization.CultureInfo.InvariantCulture) + ","
+                + "\"started_at_utc\":\"" + Escape(startedAt) + "\","
+                + "\"executable_path\":\"" + Escape(exe) + "\","
+                + "\"process_exited\":true,"
+                + "\"stdout_eof\":true,"
+                + "\"stderr_eof\":true,"
+                + "\"timed_out\":false,"
+                + "\"native_turn_complete\":true,"
+                + "\"recorded_at_utc\":\"" + Escape(recorded) + "\","
+                + "\"exit_code\":" + exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture) + ","
+                + "\"role\":\"" + Escape(role) + "\","
+                + "\"session_id\":\"" + Escape(sessionId) + "\","
+                + "\"run_id\":\"" + Escape(runId) + "\""
+                + "}\n";
+            File.WriteAllText(lifecyclePath, life, new UTF8Encoding(false));
+        }
+    }
+
+    static string Escape(string value) {
+        if (string.IsNullOrEmpty(value)) return "";
+        return value.Replace("\\", "\\\\").Replace("\"", "\\\"");
+    }
+}
+'@
+}
 
 function Get-TelephoneLeadNamedArgumentValue {
     [CmdletBinding()]
@@ -656,6 +765,32 @@ function Start-TelephoneLeadOpenDrain {
         try {
             [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($HandoffPath))) | Out-Null
             [IO.File]::WriteAllText($HandoffPath, (($handoff | ConvertTo-Json -Compress) + "`n"), [Text.UTF8Encoding]::new($false))
+        } catch { }
+    }
+    if ($null -ne $StdoutTask -and $null -ne $StderrTask -and -not [string]::IsNullOrWhiteSpace($HandoffPath)) {
+        $startedAt = ''
+        try {
+            if ($null -ne $Identity -and $Identity -is [Collections.IDictionary] -and $Identity.Contains('started_at_utc')) {
+                $startedAt = [string]$Identity.started_at_utc
+            }
+        } catch { $startedAt = '' }
+        try {
+            [TelephoneLeadOwnedReaderCompletion]::Attach(
+                $Process,
+                $StdoutTask,
+                $StderrTask,
+                [string]$HandoffPath,
+                [string]$LifecyclePath,
+                [int]$Identity.pid,
+                [int64]$Identity.start_time_utc_ticks,
+                $startedAt,
+                [string]$Identity.executable_path,
+                [string]$SessionId,
+                [string]$RunId,
+                [string]$Role,
+                [int]$PID,
+                [int64]$ownerTicks,
+                [string]$ownerExe)
         } catch { }
     }
 }
