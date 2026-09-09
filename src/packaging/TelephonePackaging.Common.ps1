@@ -10,11 +10,11 @@ Add-Type -AssemblyName System.IO.Compression
 $script:TelephonePackagingResultProtocol = 'telephone-line-package-result-v1'
 $script:TelephonePackagingManifestProtocol = 'telephone-line-release-manifest-v1'
 $script:TelephonePackagingProduct = 'telephone-line'
-$script:TelephonePackagingVersion = '0.1.0'
+$script:TelephonePackagingVersion = '0.1.2'
 $script:TelephonePackagingLicense = 'MPL-2.0'
 $script:TelephonePackagingPlatform = 'windows'
-$script:TelephonePackagingSourceZipName = 'telephone-line-0.1.0-source.zip'
-$script:TelephonePackagingReleaseZipName = 'telephone-line-0.1.0-windows.zip'
+$script:TelephonePackagingSourceZipName = ('telephone-line-' + $script:TelephonePackagingVersion + '-source.zip')
+$script:TelephonePackagingReleaseZipName = ('telephone-line-' + $script:TelephonePackagingVersion + '-windows.zip')
 $script:TelephonePackagingRequiredTrees = @('src', 'schemas', 'docs')
 $script:TelephonePackagingSourceOnlyTrees = @('.github', 'tests')
 $script:TelephonePackagingRootFiles = @('README.md', 'LICENSE', 'CONTRIBUTING.md', 'SECURITY.md', 'THIRD-PARTY-NOTICES.md', '.gitattributes')

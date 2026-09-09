@@ -38,6 +38,7 @@ $script:TelephoneInstallPublicMessage = [ordered]@{
     HEALTHY = 'The install is healthy.'
     DRIFT_DETECTED = 'Installed files do not match the install manifest.'
     ADAPTER_DESCRIPTOR_INVALID = 'One or more adapter descriptors did not validate.'
+    SUPERVISOR_TASK_OWNED_BY_OTHER_INSTALL = 'A different Telephone Line install already owns the supervisor task. This install root was not changed.'
 }
 
 function Get-TelephoneInstallPublicMessage {
@@ -836,6 +837,13 @@ function Invoke-TelephoneLineInstall {
         }
         $inventory = @(Get-TelephoneInstallInventory -SourceRoot $source)
         $identity = Get-TelephoneInstallSourceIdentity -Inventory $inventory
+        Import-TelephoneSupervisorCommon
+        $taskGate = Test-TelephoneSupervisorTaskAvailableForInstallRoot -InstallRoot $dest
+        if (-not [bool]$taskGate.available) {
+            return (New-TelephoneInstallResult -Ok $false -Action 'install' -Code 'SUPERVISOR_TASK_OWNED_BY_OTHER_INSTALL' -Extra ([ordered]@{
+                changed = $false
+            }))
+        }
         $existing = $null
         if ([IO.Directory]::Exists($dest)) {
             Assert-TelephoneInstallNoReparse -Path $dest -Label 'Install root'
@@ -941,12 +949,15 @@ function Invoke-TelephoneLineUninstall {
 
         Import-TelephoneSupervisorCommon
         $supState = Resolve-TelephoneSupervisorStateRoot
-        try { $null = Write-TelephoneSupervisorPause -StateRoot $supState -Paused $true } catch { }
-        foreach ($run in @(Get-TelephoneSupervisorActiveRunList -StateRoot $supState)) {
-            $null = Stop-TelephoneSupervisorExactRun -StateRoot $supState -RunId ([string]$run.run_id)
+        $taskGate = Test-TelephoneSupervisorTaskAvailableForInstallRoot -InstallRoot $dest
+        if ([bool]$taskGate.available) {
+            try { $null = Write-TelephoneSupervisorPause -StateRoot $supState -Paused $true } catch { }
+            foreach ($run in @(Get-TelephoneSupervisorActiveRunList -StateRoot $supState)) {
+                $null = Stop-TelephoneSupervisorExactRun -StateRoot $supState -RunId ([string]$run.run_id)
+            }
+            $null = Stop-TelephoneSupervisorExactProcess -StateRoot $supState
+            Unregister-TelephoneSupervisorInstallSurface -InstallRoot $dest
         }
-        $null = Stop-TelephoneSupervisorExactProcess -StateRoot $supState
-        Unregister-TelephoneSupervisorInstallSurface -InstallRoot $dest
 
         if ([bool]$manifest.path_appended) {
             Remove-TelephoneInstallPathEntry -InstallRoot $dest
@@ -1063,6 +1074,12 @@ function Invoke-TelephoneLineUpdate {
         }
 
         Import-TelephoneSupervisorCommon
+        $taskGate = Test-TelephoneSupervisorTaskAvailableForInstallRoot -InstallRoot $dest
+        if (-not [bool]$taskGate.available) {
+            return (New-TelephoneInstallResult -Ok $false -Action 'update' -Code 'SUPERVISOR_TASK_OWNED_BY_OTHER_INSTALL' -Extra ([ordered]@{
+                changed = $false
+            }))
+        }
         $supState = Resolve-TelephoneSupervisorStateRoot
         $pinned = @(Get-TelephoneSupervisorPinnedVersionIds -StateRoot $supState)
         $inventory = @(Get-TelephoneInstallInventory -SourceRoot $source)

@@ -8,9 +8,9 @@ v0.1 is Codex-first. Packaging is transport-product distribution, not a second L
 
 The redistributable set is defined once in `src/packaging/TelephonePackaging.Common.ps1` and reused by both archives and by the release manifest.
 
-The **source archive** (`telephone-line-0.1.0-source.zip`) contains `src/` (including `src/lead-side/` and `src/dashboard/`), `schemas/`, `docs/`, `.github/`, `tests/`, and the root files `README.md`, `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`, `THIRD-PARTY-NOTICES.md`, and `.gitattributes`.
+The **source archive** (`telephone-line-0.1.2-source.zip`) contains `src/` (including `src/lead-side/` and `src/dashboard/`), `schemas/`, `docs/`, `.github/`, `tests/`, and the root files `README.md`, `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`, `THIRD-PARTY-NOTICES.md`, and `.gitattributes`.
 
-The **Release ZIP** (`telephone-line-0.1.0-windows.zip`) is what a user actually installs plus the license, notices, and readable docs: `src/`, `schemas/`, `docs/`, and those same six root files. It does not contain `tests/` or `.github/`. `.gitattributes` is repository metadata carried with both package forms.
+The **Release ZIP** (`telephone-line-0.1.2-windows.zip`) is what a user actually installs plus the license, notices, and readable docs: `src/`, `schemas/`, `docs/`, and those same six root files. It does not contain `tests/` or `.github/`. `.gitattributes` is repository metadata carried with both package forms.
 
 Neither artifact contains `.control`, `.git`, runtime state, logs, receipts, dispatches, deliveries, caches, binaries, installer images, or anything taken from a user profile. `.control` is private control plane.
 

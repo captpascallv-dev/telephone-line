@@ -99,7 +99,8 @@ actions keep the current projection and HUD non-green with an exact reason.
 `src/packaging/Test-TelephoneOpenSourceReadiness.ps1` combines source parsing,
 the frozen eight-route denominator, control-plane Doctor checks, privacy
 scanning, the offline suite, and the single existing public-candidate
-identity. It can return `READY_FOR_HUHU_CONTROL_PLANE_REVIEW`; it cannot
+identity. It can return `READY_FOR_PASCAL_README_REVIEW` or
+`OPEN_SOURCE_CONTROL_PLANE_NOT_READY`; it cannot
 install, synchronize the public candidate, create a repository, or publish.
 
 The gate requires schema-backed raw evidence bound to the exact accepted Git

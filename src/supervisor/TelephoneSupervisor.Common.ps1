@@ -749,6 +749,131 @@ function New-TelephoneSupervisorTaskActionDefinition {
     }
 }
 
+function Convert-TelephoneSupervisorNormalizedInstallRoot {
+    [CmdletBinding()]
+    param([AllowNull()][string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) { return '' }
+    try {
+        return [IO.Path]::GetFullPath($Path).TrimEnd('\')
+    } catch {
+        return ''
+    }
+}
+
+function Get-TelephoneSupervisorTaskMapText {
+    [CmdletBinding()]
+    param(
+        [AllowNull()][object]$Task,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+    if ($null -eq $Task) { return '' }
+    if ($Task -is [Collections.IDictionary]) {
+        if (-not $Task.Contains($Name)) { return '' }
+        return [string]$Task[$Name]
+    }
+    $prop = $Task.PSObject.Properties[$Name]
+    if ($null -eq $prop) { return '' }
+    return [string]$prop.Value
+}
+
+function Get-TelephoneSupervisorInstallRootFromActionScript {
+    [CmdletBinding()]
+    param([AllowNull()][string]$ActionScript)
+    $full = Convert-TelephoneSupervisorNormalizedInstallRoot -Path $ActionScript
+    if ([string]::IsNullOrWhiteSpace($full)) { return '' }
+    $name = [IO.Path]::GetFileName($full)
+    if ($name -cin @('Invoke-TelephoneSupervisor.ps1', 'Start-TelephoneSupervisorHostVisible.ps1', 'Invoke-TelephoneSupervisorHidden.vbs', 'Show-TelephoneSupervisorControl.ps1')) {
+        return (Convert-TelephoneSupervisorNormalizedInstallRoot -Path (Join-Path ([IO.Path]::GetDirectoryName($full)) '..\..'))
+    }
+    return ''
+}
+
+function Get-TelephoneSupervisorInstallRootFromArguments {
+    [CmdletBinding()]
+    param([AllowNull()][string]$Arguments)
+    $text = [string]$Arguments
+    if ([string]::IsNullOrWhiteSpace($text)) { return '' }
+    $encoded = [regex]::Match($text, '(?i)-EncodedCommand\s+([A-Za-z0-9+/=]+)')
+    if ($encoded.Success) {
+        try {
+            $command = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String([string]$encoded.Groups[1].Value))
+            $nested = Get-TelephoneSupervisorInstallRootFromArguments -Arguments $command
+            if (-not [string]::IsNullOrWhiteSpace($nested)) { return $nested }
+        } catch { }
+    }
+    $single = [regex]::Match($text, "(?i)-InstallRoot\s+'((?:''|[^'])+)'")
+    if ($single.Success) { return (Convert-TelephoneSupervisorNormalizedInstallRoot -Path ([string]$single.Groups[1].Value.Replace("''", "'"))) }
+    $quoted = [regex]::Match($text, '(?i)-InstallRoot\s+"([^"]+)"')
+    if ($quoted.Success) { return (Convert-TelephoneSupervisorNormalizedInstallRoot -Path ([string]$quoted.Groups[1].Value)) }
+    $bare = [regex]::Match($text, '(?i)-InstallRoot\s+(\S+)')
+    if ($bare.Success) { return (Convert-TelephoneSupervisorNormalizedInstallRoot -Path ([string]$bare.Groups[1].Value.Trim('"'))) }
+    return (Get-TelephoneSupervisorInstallRootFromActionScript -ActionScript (Get-TelephoneSupervisorTaskActionScript -Arguments $text))
+}
+
+function Get-TelephoneSupervisorTaskOwnedInstallRoot {
+    [CmdletBinding()]
+    param([AllowNull()][object]$Task)
+    if ($null -eq $Task) { return '' }
+    $registered = $false
+    if ($Task -is [Collections.IDictionary]) {
+        if ($Task.Contains('registered')) { $registered = [bool]$Task['registered'] }
+    } else {
+        try { $registered = [bool]$Task.registered } catch { $registered = $false }
+    }
+    if (-not $registered) { return '' }
+    $found = [Collections.Generic.List[string]]::new()
+    foreach ($candidate in @(
+        (Convert-TelephoneSupervisorNormalizedInstallRoot -Path (Get-TelephoneSupervisorTaskMapText -Task $Task -Name 'install_root')),
+        (Get-TelephoneSupervisorInstallRootFromActionScript -ActionScript (Get-TelephoneSupervisorTaskMapText -Task $Task -Name 'action_script')),
+        (Get-TelephoneSupervisorInstallRootFromArguments -Arguments (Get-TelephoneSupervisorTaskMapText -Task $Task -Name 'action_arguments'))
+    )) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
+        $dup = $false
+        foreach ($existing in $found) {
+            if ($existing.Equals($candidate, [StringComparison]::OrdinalIgnoreCase)) { $dup = $true; break }
+        }
+        if (-not $dup) { [void]$found.Add($candidate) }
+    }
+    if ($found.Count -eq 1) { return [string]$found[0] }
+    return ''
+}
+
+function Test-TelephoneSupervisorTaskAvailableForInstallRoot {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$InstallRoot)
+    $wanted = Convert-TelephoneSupervisorNormalizedInstallRoot -Path $InstallRoot
+    if ([string]::IsNullOrWhiteSpace($wanted)) {
+        return [ordered]@{ registered = $false; available = $false; owned_install_root = '' }
+    }
+    $existing = Invoke-TelephoneSupervisorTaskOperation -Operation get -InstallRoot $wanted
+    $registered = $false
+    if ($null -ne $existing) {
+        if ($existing -is [Collections.IDictionary]) {
+            if ($existing.Contains('registered')) { $registered = [bool]$existing['registered'] }
+        } else {
+            try { $registered = [bool]$existing.registered } catch { $registered = $false }
+        }
+    }
+    if (-not $registered) {
+        return [ordered]@{ registered = $false; available = $true; owned_install_root = '' }
+    }
+    $owned = Get-TelephoneSupervisorTaskOwnedInstallRoot -Task $existing
+    $available = ((-not [string]::IsNullOrWhiteSpace($owned)) -and $owned.Equals($wanted, [StringComparison]::OrdinalIgnoreCase))
+    return [ordered]@{
+        registered = $true
+        available = [bool]$available
+        owned_install_root = [string]$owned
+    }
+}
+
+function Assert-TelephoneSupervisorTaskMutationAllowed {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$InstallRoot)
+    $gate = Test-TelephoneSupervisorTaskAvailableForInstallRoot -InstallRoot $InstallRoot
+    if (-not [bool]$gate.available) { throw 'SUPERVISOR_TASK_OWNED_BY_OTHER_INSTALL' }
+    return $gate
+}
+
 function Invoke-TelephoneSupervisorTaskOperation {
     [CmdletBinding()]
     param(
@@ -757,6 +882,9 @@ function Invoke-TelephoneSupervisorTaskOperation {
         [string]$ActionScript,
         [string]$ActionArguments
     )
+    if ([string]$Operation -cin @('register', 'unregister')) {
+        $null = Assert-TelephoneSupervisorTaskMutationAllowed -InstallRoot $InstallRoot
+    }
     $backend = [string]$env:TELEPHONE_LINE_TASK_BACKEND
     $store = [string]$env:TELEPHONE_LINE_TASK_STORE
     if (-not [string]::IsNullOrWhiteSpace($backend)) {
@@ -2299,6 +2427,7 @@ function Register-TelephoneSupervisorInstallSurface {
 function Unregister-TelephoneSupervisorInstallSurface {
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][string]$InstallRoot)
+    $null = Assert-TelephoneSupervisorTaskMutationAllowed -InstallRoot $InstallRoot
     Unregister-TelephoneSupervisorDesktopShortcuts
     try { $null = Invoke-TelephoneSupervisorTaskOperation -Operation unregister -InstallRoot $InstallRoot } catch { }
 }

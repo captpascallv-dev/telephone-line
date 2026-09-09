@@ -22,6 +22,7 @@ $manifestMatchesTree = 0
 $manifestDeterministic = 0
 $manifestRoutesEight = 0
 $manifestSchemaValid = 0
+$manifestVersionMatchesPackager = 0
 $redistributionPrivacyClean = 0
 $thirdPartyInventoryAccurate = 0
 $archivesMarkdownLinksResolved = 0
@@ -385,6 +386,11 @@ try {
     Assert-PackagingTest ($null -ne $readBack.value) 'Read-TelephoneJson failed to read release-manifest.json.'
     $script:manifestSchemaValid = 1
 
+    Assert-PackagingTest ([string]$manifest.version -ceq $script:TelephonePackagingVersion) 'Committed manifest version does not match the packager version.'
+    Assert-PackagingTest ([string]$manifest.artifacts[0].name -ceq $script:TelephonePackagingSourceZipName) 'Committed source artifact name does not match the packager.'
+    Assert-PackagingTest ([string]$manifest.artifacts[1].name -ceq $script:TelephonePackagingReleaseZipName) 'Committed windows artifact name does not match the packager.'
+    $script:manifestVersionMatchesPackager = 1
+
     $created = @(
         'src/packaging/TelephonePackaging.Common.ps1',
         'src/packaging/New-TelephoneSourceArchive.ps1',
@@ -515,6 +521,7 @@ try {
         manifest_deterministic = $manifestDeterministic
         manifest_routes_eight = $manifestRoutesEight
         manifest_schema_valid = $manifestSchemaValid
+        manifest_version_matches_packager = $manifestVersionMatchesPackager
         redistribution_privacy_clean = $redistributionPrivacyClean
         third_party_inventory_accurate = $thirdPartyInventoryAccurate
         archives_markdown_links_resolved = $archivesMarkdownLinksResolved
@@ -533,6 +540,7 @@ try {
         manifest_deterministic = $manifestDeterministic
         manifest_routes_eight = $manifestRoutesEight
         manifest_schema_valid = $manifestSchemaValid
+        manifest_version_matches_packager = $manifestVersionMatchesPackager
         redistribution_privacy_clean = $redistributionPrivacyClean
         third_party_inventory_accurate = $thirdPartyInventoryAccurate
         archives_markdown_links_resolved = $archivesMarkdownLinksResolved

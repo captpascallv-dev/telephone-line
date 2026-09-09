@@ -1,7 +1,7 @@
 {
   "protocol_version": "telephone-line-release-manifest-v1",
   "product": "telephone-line",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "license": "MPL-2.0",
   "platform": "windows",
   "denominator": 8,
@@ -17,13 +17,13 @@
   ],
   "artifacts": [
     {
-      "name": "telephone-line-0.1.0-source.zip",
+      "name": "telephone-line-0.1.2-source.zip",
       "contains": "src/, schemas/, docs/, .github/, tests/, and root README.md, LICENSE, CONTRIBUTING.md, SECURITY.md, THIRD-PARTY-NOTICES.md, .gitattributes",
       "bytes": null,
       "sha256": null
     },
     {
-      "name": "telephone-line-0.1.0-windows.zip",
+      "name": "telephone-line-0.1.2-windows.zip",
       "contains": "src/, schemas/, docs/, and root README.md, LICENSE, CONTRIBUTING.md, SECURITY.md, THIRD-PARTY-NOTICES.md, .gitattributes; excludes tests/ and .github/",
       "bytes": null,
       "sha256": null
@@ -157,8 +157,8 @@
     },
     {
       "path": "docs/control-plane.md",
-      "bytes": 6835,
-      "sha256": "8c80f0362d4bd0f8f8c2e4d66856c2ab844c5e987b09a23d6dd4fdfc11436d35"
+      "bytes": 6871,
+      "sha256": "ddc475b26097645952a822c6db079c322c675604274b7ce8dd15d09ac54ba152"
     },
     {
       "path": "docs/cursor-external-lead.md",
@@ -248,7 +248,7 @@
     {
       "path": "docs/packaging.md",
       "bytes": 3903,
-      "sha256": "cde60ea5dabc5f7b5f0c52745b59146bfff74f3d410c86023de3cb1863d773bd"
+      "sha256": "a3c090f38facfcf733243bc01091f8ba10cf6a4279f602e2cbec277310791179"
     },
     {
       "path": "docs/privacy.md",
@@ -257,13 +257,13 @@
     },
     {
       "path": "docs/quick-start.md",
-      "bytes": 16657,
-      "sha256": "300f06bc2823c01762f39906fced067de298e428c2c1e2935e634247733cdb8a"
+      "bytes": 16760,
+      "sha256": "c6211ab0cd54478fea644928b065187cc5feb6b31d69fe89a8cdfb47ee872a50"
     },
     {
       "path": "docs/redistribution-audit.md",
       "bytes": 3272,
-      "sha256": "1275ed664cbeb6047f735458955c5c87b0ed0a1e33ab8a0224cf234d4c349526"
+      "sha256": "2919c629719f6be054a348235fc7d7cf241a021b04b56db2eddcfee244488234"
     },
     {
       "path": "docs/routes.md",
@@ -458,7 +458,7 @@
     {
       "path": "schemas/release-manifest.schema.json",
       "bytes": 3669,
-      "sha256": "1455fc864a75a6a7611317180dd1ad67ad97e854115b63984e407157ff60d12c"
+      "sha256": "9d35b6e336517d0b9727a923a9167022bffd0c795910043de926163f1041eae7"
     },
     {
       "path": "schemas/telephone-line-batch.schema.json",
@@ -782,8 +782,8 @@
     },
     {
       "path": "src/dashboard/TelephoneDashboard.Projection.ps1",
-      "bytes": 135097,
-      "sha256": "ed7e97d35a1aef895d38c25c08efdf3179a521dec8c0d6edb72a3a7c99eb7559"
+      "bytes": 135199,
+      "sha256": "446826826fe916fd18294ab60ee4352e6b543f49831ccb427f0cc02711064394"
     },
     {
       "path": "src/dashboard/TelephoneDashboard.Reducer.ps1",
@@ -807,8 +807,8 @@
     },
     {
       "path": "src/install/TelephoneLineInstall.Common.ps1",
-      "bytes": 65928,
-      "sha256": "faa6d3125d0dae74a69cd9cf198dfe2fb139f31ca725ace5f8ffff966ce20ded"
+      "bytes": 66963,
+      "sha256": "a057bb6361082212455fb13656ad8ad88597c58e7ec16a3e1c5e625933d221d3"
     },
     {
       "path": "src/install/Uninstall-TelephoneLine.ps1",
@@ -912,8 +912,8 @@
     },
     {
       "path": "src/packaging/TelephonePackaging.Common.ps1",
-      "bytes": 21130,
-      "sha256": "04f03d586f427f96fbaa871e9426df5133a9d549c8c2951d52e52b57fd31647e"
+      "bytes": 21206,
+      "sha256": "346c0dec129eef65f4dc08724a7e3dc424063673fa7c9de404cbbdc6733f7a91"
     },
     {
       "path": "src/packaging/Test-TelephoneOpenSourceReadiness.ps1",
@@ -957,8 +957,8 @@
     },
     {
       "path": "src/supervisor/TelephoneSupervisor.Common.ps1",
-      "bytes": 112038,
-      "sha256": "3cb2e57298a60ee6deb754b61c004c8bea3e06347dc4763d9cc135fb512cf870"
+      "bytes": 118059,
+      "sha256": "c9edf48107fc2d047e5cfc27c934d9f0238bf9bdbf1634aef2162f553b14a791"
     },
     {
       "path": "tests/Invoke-OfflineTests.ps1",
@@ -1442,8 +1442,8 @@
     },
     {
       "path": "tests/install/test_install_lifecycle.ps1",
-      "bytes": 57108,
-      "sha256": "1370664ca2c86f3f334aeea9103d95f9433465206db32ee2f704162711ed065a"
+      "bytes": 59787,
+      "sha256": "370486fdb0a7c05851b763ed8c71b8933429f2ed318c2097f103bfd0ad063718"
     },
     {
       "path": "tests/lead-side/codex-app-server/fixtures/Mock-CodexAppServer.ps1",
@@ -1477,8 +1477,8 @@
     },
     {
       "path": "tests/packaging/test_packaging.ps1",
-      "bytes": 33220,
-      "sha256": "76287c0b9adec571d65fd59ac67eaa8f5bbf94e25da1cb132622dcdbedde50ac"
+      "bytes": 33956,
+      "sha256": "04bbfdfb1424523e134396ba393872a192849fa2282c732264eaef8215988170"
     },
     {
       "path": "tests/supervisor/fixtures/mock-owned-child.ps1",
@@ -1497,13 +1497,13 @@
     },
     {
       "path": "tests/supervisor/test_wired_supervisor.ps1",
-      "bytes": 97994,
-      "sha256": "78b0de088e23cffaa62d3cae402be25cbe2e520e682fc7604372499bee7fc90a"
+      "bytes": 100350,
+      "sha256": "cf95a4a17a942ce3ff87c5927ebabee0fd1d3318b456cf461dbb25264a0888d8"
     }
   ],
   "counts": {
     "files": 294,
-    "bytes": 3940685
+    "bytes": 3953829
   },
   "excluded": [
     ".control/**",

@@ -39,6 +39,7 @@ $mailboxCancelPreserves = 0
 $mailboxZeroResidue = 0
 $recycleForeignOwnerRefused = 0
 $recycleNoDirectDelete = 0
+$supervisorTaskForeignRootRefused = 0
 
 function Assert-Sup {
     param([bool]$Condition, [string]$Message)
@@ -328,6 +329,43 @@ try {
     [IO.File]::WriteAllText($explicitFailureScript, "exit 9`n", [Text.UTF8Encoding]::new($false))
     $explicitFailureProbe = Invoke-SupRawArguments -Arguments (New-TelephoneSupervisorEncodedTaskArguments -ActionScript $explicitFailureScript -ActionArguments '')
     Assert-Sup ($explicitFailureProbe.exit_code -eq 9) 'Encoded task action did not propagate an explicit script failure.'
+
+    $foreignInstall = Join-Path $testRoot 'foreign-install-root'
+    [IO.Directory]::CreateDirectory($foreignInstall) | Out-Null
+    $beforeForeignTask = [IO.File]::ReadAllText((Join-Path $taskStore 'task.json'))
+    $foreignRegisterThrew = $false
+    $foreignRegisterCode = ''
+    try {
+        $null = Register-TelephoneSupervisorInstallSurface -InstallRoot $foreignInstall -StateRoot $script:supState
+    } catch {
+        $foreignRegisterThrew = $true
+        $foreignRegisterCode = [string]$_.Exception.Message
+    }
+    Assert-Sup $foreignRegisterThrew 'Foreign InstallRoot register did not refuse.'
+    Assert-Sup ($foreignRegisterCode -ceq 'SUPERVISOR_TASK_OWNED_BY_OTHER_INSTALL') 'Foreign InstallRoot register used the wrong code.'
+    Assert-Sup ([IO.File]::ReadAllText((Join-Path $taskStore 'task.json')) -ceq $beforeForeignTask) 'Foreign InstallRoot register mutated the owned task.'
+    $foreignUnregisterThrew = $false
+    try {
+        Unregister-TelephoneSupervisorInstallSurface -InstallRoot $foreignInstall
+    } catch {
+        $foreignUnregisterThrew = ([string]$_.Exception.Message -ceq 'SUPERVISOR_TASK_OWNED_BY_OTHER_INSTALL')
+    }
+    Assert-Sup $foreignUnregisterThrew 'Foreign InstallRoot unregister did not refuse.'
+    Assert-Sup ([IO.File]::Exists((Join-Path $taskStore 'task.json'))) 'Foreign InstallRoot unregister removed the owned task.'
+    Assert-Sup ([IO.File]::ReadAllText((Join-Path $taskStore 'task.json')) -ceq $beforeForeignTask) 'Foreign InstallRoot unregister mutated the owned task.'
+    $null = Register-TelephoneSupervisorInstallSurface -InstallRoot $repoRoot -StateRoot $script:supState
+    Assert-Sup ([IO.File]::Exists((Join-Path $taskStore 'task.json'))) 'Same-root re-register lost the task.'
+    $script:supervisorTaskForeignRootRefused = 1
+    if ([string]$env:TELEPHONE_LINE_TEST_OWNERSHIP_ONLY -ceq '1') {
+        [ordered]@{
+            success = $true
+            mock = $true
+            focused = 'ownership_only'
+            assertions = $assertions
+            supervisor_task_foreign_root_refused = $supervisorTaskForeignRootRefused
+        } | ConvertTo-Json -Compress
+        return
+    }
 
     $runA = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee01'
     $reqA = New-SupRequest -RunId $runA -MarkerDir $marker -HoldMilliseconds 6000
@@ -1384,6 +1422,7 @@ try {
         supervisor_mailbox_zero_residue = $mailboxZeroResidue
         supervisor_recycle_foreign_owner_refused = $recycleForeignOwnerRefused
         supervisor_recycle_no_direct_delete = $recycleNoDirectDelete
+        supervisor_task_foreign_root_refused = $supervisorTaskForeignRootRefused
     } | ConvertTo-Json -Compress
 } catch {
     [ordered]@{
@@ -1419,6 +1458,7 @@ try {
         supervisor_mailbox_zero_residue = $mailboxZeroResidue
         supervisor_recycle_foreign_owner_refused = $recycleForeignOwnerRefused
         supervisor_recycle_no_direct_delete = $recycleNoDirectDelete
+        supervisor_task_foreign_root_refused = $supervisorTaskForeignRootRefused
     } | ConvertTo-Json -Compress
     exit 1
 } finally {

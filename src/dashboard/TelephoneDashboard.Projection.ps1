@@ -176,7 +176,12 @@ function Convert-TelephoneDashboardEventsFromLog {
 }
 
 $script:TelephoneDashboardDirectStartupGateSeconds = 90
-$script:TelephoneDashboardDirectRequestProtocols = @('huhu-direct-grok-request-v1', 'huhu-direct-cursor-request-v1')
+$script:TelephoneDashboardDirectRequestProtocols = @(
+    'telephone-line-direct-grok-request-v1',
+    'telephone-line-direct-cursor-request-v1',
+    'huhu-direct-grok-request-v1',
+    'huhu-direct-cursor-request-v1'
+)
 $script:TelephoneDashboardPromptAcceptedPhases = @('prompt_accepted', 'execution', 'executing', 'delivered', 'completed', 'accepted')
 $script:TelephoneDashboardPrePromptPhases = @('session_create', 'startup', 'starting')
 $script:TelephoneDashboardAcceptedTurnTypes = @('turn_started', 'first_token')

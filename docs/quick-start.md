@@ -4,7 +4,7 @@ This is the shortest honest path from a clean Windows machine to one completed r
 
 Windows is the only v0.1 production target. The frozen denominator is exactly eight routes; no ninth is planned.
 
-For a new Codex CLI Lead, use the App Server binding in [codex-app-server-lead.md](codex-app-server-lead.md) as the default wireless telephone. The caller-supplied CLI exec launcher is the wired cold backup for existing wired sessions or for a failed new wireless create before its first turn is accepted. Do not switch an already accepted wireless thread to wired transport; recover the same exact App Server thread instead. If the original Lead turn is still active when the receipt returns, Telephone keeps one pending callback and delivers it after that same thread is idle.
+For new work, wired is the recommended first-use route. Create a valid `telephone-line-wired-supervisor-request-v1` and publish it with `Start-TelephoneWiredRun.ps1` as shown in [Wired supervisor and Pascal control](#wired-supervisor-and-pascal-control). The App Server binding in [codex-app-server-lead.md](codex-app-server-lead.md) remains a supported wireless alternative after its first turn is accepted. Do not switch an already accepted wireless thread to wired transport; recover the same exact App Server thread instead. If the original Lead turn is still active when the receipt returns, Telephone keeps one pending callback and delivers it after that same thread is idle.
 
 ## Prerequisites and the route you pick
 

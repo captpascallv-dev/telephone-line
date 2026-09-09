@@ -20,7 +20,7 @@ Both zips store POSIX relative entry names, never an absolute path. `LICENSE` is
 
 ## Release manifest
 
-`release-manifest.json` uses protocol `telephone-line-release-manifest-v1`. It records product `telephone-line`, version `0.1.0`, license `MPL-2.0`, platform `windows`, denominator 8, and the eight `route_id` values read from `src/catalog/routes.json`. Artifact identity fields are null until a zip is built. Every `files` row is a redistributable path with bytes and SHA-256; `release-manifest.json` is omitted from that list so regeneration remains stable. Regenerating over an unchanged tree is byte-identical (`manifest_deterministic`). The file validates through `Get-TelephoneSchemaPath -Name release-manifest` (`manifest_schema_valid`).
+`release-manifest.json` uses protocol `telephone-line-release-manifest-v1`. It records product `telephone-line`, version `0.1.2`, license `MPL-2.0`, platform `windows`, denominator 8, and the eight `route_id` values read from `src/catalog/routes.json`. Artifact identity fields are null until a zip is built. Every `files` row is a redistributable path with bytes and SHA-256; `release-manifest.json` is omitted from that list so regeneration remains stable. Regenerating over an unchanged tree is byte-identical (`manifest_deterministic`). The file validates through `Get-TelephoneSchemaPath -Name release-manifest` (`manifest_schema_valid`).
 
 ## Privacy
 

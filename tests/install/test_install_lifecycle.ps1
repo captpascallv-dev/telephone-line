@@ -28,6 +28,7 @@ $uninstallConvergentLifecycle = 0
 $uninstallRemoveState = 0
 $localAppDataSafeOracle = 0
 $emptyFileFingerprint = 0
+$supervisorTaskForeignRootRefused = 0
 
 function Assert-InstallTest {
     param([bool]$Condition, [string]$Message)
@@ -312,6 +313,27 @@ try {
     Assert-InstallTest (Test-InstallMapsEqual -Left $beforeSecond -Right $afterSecond) 'Second install copied files again.'
     $script:installIdempotent += 1
 
+    $conflictRoot = Join-Path $testRoot 'conflict-other-install'
+    $beforeConflictTask = [IO.File]::ReadAllText((Join-Path $taskStore 'task.json'))
+    $beforeConflictInstall = Get-InstallTreeBytes -Root $installRoot
+    $conflict = Invoke-InstallCommand -ScriptName 'Install-TelephoneLine.ps1' -Arguments @(
+        '-InstallRoot', $conflictRoot, '-SourceRoot', $sourceRoot
+    )
+    Assert-InstallTest ($conflict.exit_code -ne 0) 'Conflicting-root install exited zero.'
+    Assert-InstallTest ($conflict.json.ok -eq $false) 'Conflicting-root install reported ok.'
+    Assert-InstallTest ([string]$conflict.json.code -ceq 'SUPERVISOR_TASK_OWNED_BY_OTHER_INSTALL') 'Conflicting-root install used the wrong public code.'
+    Assert-InstallTest ($conflict.json.changed -eq $false) 'Conflicting-root install reported a change.'
+    Assert-InstallTest (-not [IO.Directory]::Exists($conflictRoot)) 'Conflicting-root install created a second install root.'
+    Assert-InstallTest ([IO.File]::ReadAllText((Join-Path $taskStore 'task.json')) -ceq $beforeConflictTask) 'Conflicting-root install mutated the owned task.'
+    Assert-InstallTest (Test-InstallMapsEqual -Left $beforeConflictInstall -Right (Get-InstallTreeBytes -Root $installRoot)) 'Conflicting-root install mutated the owning install.'
+    $conflictUninstall = Invoke-InstallCommand -ScriptName 'Uninstall-TelephoneLine.ps1' -Arguments @(
+        '-InstallRoot', $conflictRoot
+    )
+    Assert-InstallTest ($conflictUninstall.exit_code -eq 0) 'Absent conflicting-root uninstall exited non-zero.'
+    Assert-InstallTest ([string]$conflictUninstall.json.code -ceq 'ALREADY_CURRENT') 'Absent conflicting-root uninstall used the wrong public code.'
+    Assert-InstallTest ([IO.File]::ReadAllText((Join-Path $taskStore 'task.json')) -ceq $beforeConflictTask) 'Absent conflicting-root uninstall removed the owned task.'
+    $script:supervisorTaskForeignRootRefused = 1
+
     $stateMarker = Join-Path $stateRoot 'durable-marker.txt'
     $markerBytes = [Text.UTF8Encoding]::new($false).GetBytes('durable-state-v1')
     [IO.File]::WriteAllBytes($stateMarker, $markerBytes)
@@ -586,6 +608,9 @@ try {
     Assert-InstallTest ($recycleFn -notmatch 'TerminateProcess') 'Recycle function terminates processes.'
 
     $foreignProc = $null
+    if ([string]$env:TELEPHONE_LINE_TEST_SANDBOX_ONLY -ceq '1') {
+        $script:recycleForeignOwnerRefused = 0
+    } else {
     try {
         $foreignProc = Start-InstallForeignOwnerProcess
         $foreignOwner = New-TelephoneSupervisorOwnerSnapshot -Kind supervisor -ProcessId ([int]$foreignProc.Id)
@@ -624,9 +649,14 @@ try {
     } finally {
         Stop-InstallExactProcess -Process $foreignProc
     }
+    }
 
     $savedRecycleRoot = [string]$env:TELEPHONE_LINE_RECYCLE_ROOT
     $prodInstall = Join-Path ([string]$env:LOCALAPPDATA) 'TelephoneLine'
+    if ([string]$env:TELEPHONE_LINE_TEST_SANDBOX_ONLY -ceq '1') {
+        $script:recycleTransientRetry = 0
+        $script:recycleRealWindowsProbe = 0
+    } else {
     $nativeProbe = Join-Path ([string]$env:LOCALAPPDATA) ('TelephoneLine.RecycleProbe.' + [Guid]::NewGuid().ToString('N'))
     Assert-InstallTest (-not $nativeProbe.Equals($prodInstall, [StringComparison]::OrdinalIgnoreCase)) 'Native recycle probe used the production install root.'
     Assert-InstallTest (-not (Test-TelephoneInstallPathInsideRoot -Path $nativeProbe -Root $prodInstall)) 'Native recycle probe was nested under the production install root.'
@@ -668,6 +698,7 @@ try {
             try { $null = Move-TelephonePathToRecycleBin -Path $nativeProbe } catch { }
         }
         $env:TELEPHONE_LINE_RECYCLE_ROOT = $savedRecycleRoot
+    }
     }
 
     $convRoot = Join-Path $testRoot 'convergent'
@@ -727,6 +758,10 @@ try {
     Assert-InstallTest ($convDoctor.json.manifest.identity_match -eq $true) 'Post-remove doctor identity did not match.'
     Assert-InstallTest ([int]$convDoctor.json.adapters.validated -eq 8) 'Post-remove doctor did not validate eight adapters.'
     $script:uninstallConvergentLifecycle = 1
+    $convCleanup = Invoke-InstallCommand -ScriptName 'Uninstall-TelephoneLine.ps1' -Arguments @(
+        '-InstallRoot', $convInstall, '-RemoveState'
+    )
+    Assert-InstallTest ($convCleanup.exit_code -eq 0) 'Pre-oracle conv uninstall exited non-zero.'
     $env:TELEPHONE_LINE_STATE_ROOT = $savedStateRoot
     $env:TELEPHONE_LINE_SUPERVISOR_STATE_ROOT = $savedSupRoot
 
@@ -835,6 +870,7 @@ try {
         uninstall_remove_state = $uninstallRemoveState
         local_appdata_safe_oracle = $localAppDataSafeOracle
         empty_file_fingerprint = $emptyFileFingerprint
+        supervisor_task_foreign_root_refused = $supervisorTaskForeignRootRefused
         residue = $false
     } | ConvertTo-Json -Compress
 } catch {
@@ -860,6 +896,7 @@ try {
         uninstall_remove_state = $uninstallRemoveState
         local_appdata_safe_oracle = $localAppDataSafeOracle
         empty_file_fingerprint = $emptyFileFingerprint
+        supervisor_task_foreign_root_refused = $supervisorTaskForeignRootRefused
     } | ConvertTo-Json -Compress
     exit 1
 }
