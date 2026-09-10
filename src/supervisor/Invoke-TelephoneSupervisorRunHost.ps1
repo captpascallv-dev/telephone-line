@@ -111,11 +111,18 @@ try {
     $null = Write-TelephoneSupervisorJobMembers -Path $memberPath -RunId $RunId -Job $job -LeadIdentity $leadIdentity
     $terminal = 'completed'
     $relayScript = Join-Path ([string]$identities.pinned_runtime_root) 'src\core\Invoke-TelephoneLineRelay.ps1'
+    $ownedLead = $null
+    try { $ownedLead = Resolve-TelephoneSupervisorNestedLeadRun -Request $request } catch { $ownedLead = $null }
     while ($true) {
         $null = Write-TelephoneSupervisorJobMembers -Path $memberPath -RunId $RunId -Job $job -LeadIdentity $leadIdentity
         try {
             $null = Sync-TelephoneSupervisorMailboxBinding -StateRoot $resolvedState -RunId $RunId -Job $job -RelayScript $relayScript
         } catch { }
+        if ($null -ne $ownedLead) {
+            try {
+                $null = Reconcile-TelephoneSupervisorOwnedLeadDrain -RunRoot ([string]$ownedLead.run_root) -ExpectedSessionId ([string]$ownedLead.session_id) -ExpectedRunId ([string]$ownedLead.run_id)
+            } catch { }
+        }
         if ([IO.File]::Exists($stopPath)) {
             $null = Stop-TelephoneSupervisorRunJob -Job $job
             $terminal = 'cancelled'

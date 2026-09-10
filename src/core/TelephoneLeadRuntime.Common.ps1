@@ -2075,6 +2075,89 @@ function Stop-TelephoneLeadCompletedOwnProcess {
     return $record
 }
 
+function Reconcile-TelephoneLeadCompletedOwnedResidue {
+    [CmdletBinding()]
+    param(
+        [string]$LeadStateRoot,
+        [Parameter(Mandatory = $true)][string]$ExpectedSessionId,
+        [string]$ExpectedRunId = ''
+    )
+    $result = [ordered]@{
+        protocol_version = 'telephone-line-completed-owned-residue-reconcile-v1'
+        lead_state_root = ''
+        session_id = [string]$ExpectedSessionId
+        scanned = 0
+        recovered = 0
+        skipped_foreign = 0
+        skipped_active = 0
+        refused = [Collections.Generic.List[object]]::new()
+        pending = [Collections.Generic.List[object]]::new()
+        recovered_runs = [Collections.Generic.List[object]]::new()
+        provider_replayed = $false
+        recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+    }
+    if ([string]::IsNullOrWhiteSpace($LeadStateRoot) -or -not [IO.Directory]::Exists($LeadStateRoot)) {
+        $result.refused.Add([ordered]@{ reason = 'lead_state_root_missing' })
+        return $result
+    }
+    $rootBase = [IO.Path]::GetFullPath($LeadStateRoot).TrimEnd('\')
+    $result.lead_state_root = $rootBase
+    $candidates = [Collections.Generic.List[string]]::new()
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedRunId)) {
+        $one = Join-Path $rootBase $ExpectedRunId
+        if ([IO.Directory]::Exists($one)) { [void]$candidates.Add($one) }
+    } else {
+        foreach ($dir in @([IO.Directory]::GetDirectories($rootBase))) {
+            if ([IO.File]::Exists((Join-Path $dir 'lead-run.json'))) { [void]$candidates.Add($dir) }
+        }
+    }
+    foreach ($runRoot in @($candidates)) {
+        $runId = [IO.Path]::GetFileName($runRoot)
+        if (-not [string]::IsNullOrWhiteSpace($ExpectedRunId) -and $runId -cne $ExpectedRunId) { continue }
+        $result.scanned += 1
+        $life = $null
+        try {
+            $life = Get-TelephoneLeadRunLifecycle -RunRoot $runRoot -ExpectedSessionId $ExpectedSessionId -ExpectedRunId $runId
+        } catch {
+            [void]$result.refused.Add([ordered]@{ run_id = $runId; reason = 'lifecycle_read_failed' })
+            continue
+        }
+        if (-not [bool]$life.binding_ok) {
+            $rej = [string]$life.rejected
+            if ($rej -cin @('wrong_session', 'run_binding_mismatch', 'foreign_session')) {
+                $result.skipped_foreign += 1
+            } else {
+                [void]$result.refused.Add([ordered]@{ run_id = $runId; reason = $(if ([string]::IsNullOrWhiteSpace($rej)) { 'binding_not_ok' } else { $rej }) })
+            }
+            continue
+        }
+        if (-not [bool]$life.native_turn_complete) {
+            $result.skipped_active += 1
+            continue
+        }
+        $recovery = $null
+        if ([bool]$life.owner_alive -or [bool]$life.cli_child_alive) {
+            $recovery = Stop-TelephoneLeadCompletedOwnProcess -Lifecycle $life -ExpectedSessionId $ExpectedSessionId -ExpectedRunId $runId
+            if ([bool]$recovery.recovered) {
+                $result.recovered += 1
+                [void]$result.recovered_runs.Add([ordered]@{ run_id = $runId; run_root = $runRoot })
+            } elseif (-not [string]::IsNullOrWhiteSpace([string]$recovery.refused)) {
+                [void]$result.refused.Add([ordered]@{ run_id = $runId; reason = [string]$recovery.refused })
+            }
+        }
+        $drain = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $runRoot -WaitMilliseconds 1500
+        if ($null -ne $drain -and $drain -is [Collections.IDictionary] -and [bool]$drain.pending) {
+            [void]$result.pending.Add([ordered]@{
+                run_id = $runId
+                identity_status = [string]$drain.identity_status
+                host_alive = [bool]$drain.host_alive
+                child_alive = [bool]$drain.child_alive
+            })
+        }
+    }
+    return $result
+}
+
 function New-TelephoneLeadLaunchFromRunRoot {
     [CmdletBinding()]
     param(

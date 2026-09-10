@@ -1018,6 +1018,106 @@ function Assert-TelephoneSupervisorTaskMutationAllowed {
     return $gate
 }
 
+function Get-TelephoneSupervisorSharedTaskStateRoot {
+    [CmdletBinding()]
+    param([string]$InstallRoot)
+    $install = ''
+    if (-not [string]::IsNullOrWhiteSpace($InstallRoot)) {
+        $install = Convert-TelephoneSupervisorNormalizedInstallRoot -Path $InstallRoot
+    }
+    if ([string]::IsNullOrWhiteSpace($install) -and -not [string]::IsNullOrWhiteSpace([string]$env:TELEPHONE_LINE_INSTALL_ROOT)) {
+        $install = Convert-TelephoneSupervisorNormalizedInstallRoot -Path ([string]$env:TELEPHONE_LINE_INSTALL_ROOT)
+    }
+    if ([string]::IsNullOrWhiteSpace($install) -and -not [string]::IsNullOrWhiteSpace([string]$env:LOCALAPPDATA)) {
+        $install = [IO.Path]::GetFullPath((Join-Path ([string]$env:LOCALAPPDATA) 'TelephoneLine')).TrimEnd('\')
+    }
+    if ([string]::IsNullOrWhiteSpace($install)) { return '' }
+    return [IO.Path]::GetFullPath((Join-Path $install 'supervisor-state')).TrimEnd('\')
+}
+
+function Resolve-TelephoneSupervisorStartConsumer {
+    [CmdletBinding()]
+    param(
+        [string]$InstallRoot,
+        [string]$ActionArguments,
+        [string]$RequestedStateRoot
+    )
+    $requested = Convert-TelephoneSupervisorNormalizedInstallRoot -Path $RequestedStateRoot
+    if ([string]::IsNullOrWhiteSpace($requested)) {
+        $requested = Get-TelephoneSupervisorStateRootFromArguments -Arguments $ActionArguments
+    }
+    $shared = Get-TelephoneSupervisorSharedTaskStateRoot -InstallRoot $InstallRoot
+    $usesShared = ([string]::IsNullOrWhiteSpace($requested) -or (
+        (-not [string]::IsNullOrWhiteSpace($shared)) -and $requested.Equals($shared, [StringComparison]::OrdinalIgnoreCase)
+    ))
+    return [ordered]@{
+        protocol_version = 'telephone-line-supervisor-start-consumer-v1'
+        requested_state_root = [string]$requested
+        shared_task_state_root = [string]$shared
+        consumer = $(if ($usesShared) { 'shared-scheduled-task' } else { 'requested-state-host-visible' })
+        shared_task_would_start = [bool]$usesShared
+        requested_state_consumer = (-not [bool]$usesShared)
+    }
+}
+
+function Invoke-TelephoneSupervisorRequestedStateConsumer {
+    [CmdletBinding()]
+    param(
+        [string]$InstallRoot,
+        [Parameter(Mandatory = $true)][string]$StateRoot
+    )
+    $state = [IO.Path]::GetFullPath($StateRoot).TrimEnd('\')
+    $launcher = Join-Path $PSScriptRoot 'Start-TelephoneSupervisorHostVisible.ps1'
+    $launcher = Assert-TelephoneRegularFilePath -Path $launcher -Label 'Requested-state supervisor start backend'
+    $install = Convert-TelephoneSupervisorNormalizedInstallRoot -Path $InstallRoot
+    $info = [Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = [string]([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
+    $info.UseShellExecute = $false
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $info.CreateNoWindow = $true
+    foreach ($argument in @(
+        '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', $launcher, '-StateRoot', $state
+    )) {
+        [void]$info.ArgumentList.Add([string]$argument)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($install)) {
+        [void]$info.ArgumentList.Add('-InstallRoot')
+        [void]$info.ArgumentList.Add($install)
+    }
+    $process = [Diagnostics.Process]::Start($info)
+    if ($null -eq $process) { throw 'Requested-state supervisor start backend did not start.' }
+    try {
+        $stdout = $process.StandardOutput.ReadToEnd()
+        $stderr = $process.StandardError.ReadToEnd()
+        $process.WaitForExit()
+        $pidValue = [int]$process.Id
+        $ticks = [int64]0
+        $startedAt = ''
+        try {
+            $ticks = [int64]$process.StartTime.ToUniversalTime().Ticks
+            $startedAt = $process.StartTime.ToUniversalTime().ToString('o')
+        } catch { }
+        $ok = ([int]$process.ExitCode -eq 0)
+        return [ordered]@{
+            started = [bool]$ok
+            shared_task_started = $false
+            consumer = 'Start-TelephoneSupervisorHostVisible.ps1'
+            requested_state_root = $state
+            install_root = [string]$install
+            pid = $pidValue
+            start_time_utc_ticks = $ticks
+            started_at_utc = $startedAt
+            exit_code = [int]$process.ExitCode
+            stdout = [string]$stdout
+            stderr = [string]$stderr
+        }
+    } finally {
+        $process.Dispose()
+    }
+}
+
 function Invoke-TelephoneSupervisorTaskOperation {
     [CmdletBinding()]
     param(
@@ -1028,6 +1128,12 @@ function Invoke-TelephoneSupervisorTaskOperation {
     )
     if ([string]$Operation -cin @('register', 'unregister')) {
         $null = Assert-TelephoneSupervisorTaskMutationAllowed -InstallRoot $InstallRoot
+    }
+    if ([string]$Operation -ceq 'start') {
+        $startDecision = Resolve-TelephoneSupervisorStartConsumer -InstallRoot $InstallRoot -ActionArguments $ActionArguments
+        if ([bool]$startDecision.requested_state_consumer) {
+            return (Invoke-TelephoneSupervisorRequestedStateConsumer -InstallRoot $InstallRoot -StateRoot ([string]$startDecision.requested_state_root))
+        }
     }
     $backend = [string]$env:TELEPHONE_LINE_TASK_BACKEND
     $store = [string]$env:TELEPHONE_LINE_TASK_STORE
@@ -1119,7 +1225,7 @@ function Invoke-TelephoneSupervisorTaskOperation {
                     }
                 }
                 $started = Start-TelephoneSupervisorDetachedPowerShell -ScriptPath ([string]$record.action_script) -Arguments @($argTokens)
-                return [ordered]@{ started = $true; pid = [int]$started.pid }
+                return [ordered]@{ started = $true; shared_task_started = $true; pid = [int]$started.pid }
             }
             default { throw 'Unknown task operation.' }
         }
@@ -1191,7 +1297,7 @@ function Invoke-TelephoneSupervisorRealTaskOperation {
         }
         'start' {
             Start-ScheduledTask -TaskName $script:TelephoneSupervisorTaskName
-            return [ordered]@{ started = $true }
+            return [ordered]@{ started = $true; shared_task_started = $true }
         }
         default { throw 'Unknown task operation.' }
     }

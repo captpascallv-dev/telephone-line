@@ -52,6 +52,10 @@ if ($null -ne $pointer) {
 $published = Publish-TelephoneSupervisorInbox -StateRoot $resolvedState -Request $request
 $triggered = $false
 $launched = $false
+$sharedTaskStarted = $false
+$consumer = ''
+$consumerState = $resolvedState
+$consumerExit = $null
 if (-not [bool]$published.replayed) {
     $pause = Get-TelephoneSupervisorPause -StateRoot $resolvedState
     if (-not [bool]$pause.paused_by_pascal) {
@@ -62,6 +66,14 @@ if (-not [bool]$published.replayed) {
         $start = Invoke-TelephoneSupervisorTaskOperation -Operation start -InstallRoot $resolvedInstall -ActionScript $supervisorScript -ActionArguments ('-InstallRoot "' + $resolvedInstall + '" -StateRoot "' + $resolvedState + '"')
         $triggered = $true
         $launched = [bool]($start.Contains('started') -and [bool]$start.started)
+        if ($start -is [Collections.IDictionary]) {
+            if ($start.Contains('shared_task_started')) { $sharedTaskStarted = [bool]$start['shared_task_started'] }
+            if ($start.Contains('consumer')) { $consumer = [string]$start['consumer'] }
+            if ($start.Contains('requested_state_root') -and -not [string]::IsNullOrWhiteSpace([string]$start['requested_state_root'])) {
+                $consumerState = [string]$start['requested_state_root']
+            }
+            if ($start.Contains('exit_code')) { $consumerExit = [int]$start['exit_code'] }
+        }
     }
 }
 
@@ -70,6 +82,10 @@ if (-not [bool]$published.replayed) {
     replayed = [bool]$published.replayed
     triggered = [bool]$triggered
     launched = [bool]$launched
+    shared_task_started = [bool]$sharedTaskStarted
+    start_consumer = [string]$consumer
+    consumer_state_root = [string]$consumerState
+    consumer_exit_code = $consumerExit
     run_id = [string]$request.run_id
     request_sha256 = [string]$published.request_sha256
     state_root = $resolvedState

@@ -263,6 +263,34 @@ if ([bool]$enqueued.counted -eq $false) {
 }
 
 $leadKey = [string]$enqueued.lead_key
+$leadStateHint = ''
+try {
+    $leadStateHint = Get-TelephoneLeadNamedArgumentValue -Arguments @($leadBinding.launcher.arguments) -Name 'StateRootOverride'
+} catch { $leadStateHint = '' }
+if ([string]::IsNullOrWhiteSpace($leadStateHint) -and -not [string]::IsNullOrWhiteSpace([string]$env:TELEPHONE_LINE_LEAD_STATE_ROOT)) {
+    $leadStateHint = [string]$env:TELEPHONE_LINE_LEAD_STATE_ROOT
+}
+if (-not [string]::IsNullOrWhiteSpace($leadStateHint) -and -not [string]::IsNullOrWhiteSpace($leadSessionId)) {
+    try {
+        $null = Reconcile-TelephoneLeadCompletedOwnedResidue -LeadStateRoot $leadStateHint -ExpectedSessionId $leadSessionId
+    } catch { }
+}
+foreach ($wakeResultPath in @($paths.wake_launch_result, $paths.nested_wake_launch_result, $paths.owner_wake_launch_result)) {
+    if (-not [IO.File]::Exists($wakeResultPath)) { continue }
+    try {
+        $savedWake = (Read-TelephoneJson -Path $wakeResultPath).value
+        if ($savedWake -isnot [Collections.IDictionary]) { continue }
+        $savedRoot = ''
+        if ($savedWake.Contains('run_root')) { $savedRoot = [string]$savedWake['run_root'] }
+        elseif ($savedWake.Contains('lead_run_root')) { $savedRoot = [string]$savedWake['lead_run_root'] }
+        $savedRun = ''
+        if ($savedWake.Contains('wake_run_id')) { $savedRun = [string]$savedWake['wake_run_id'] }
+        elseif ($savedWake.Contains('run_id')) { $savedRun = [string]$savedWake['run_id'] }
+        if ([string]::IsNullOrWhiteSpace($savedRoot) -or -not [IO.Directory]::Exists($savedRoot)) { continue }
+        $savedParent = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($savedRoot).TrimEnd('\'))
+        $null = Reconcile-TelephoneLeadCompletedOwnedResidue -LeadStateRoot $savedParent -ExpectedSessionId $leadSessionId -ExpectedRunId $savedRun
+    } catch { }
+}
 try {
     $null = Ensure-TelephoneLeadCollector -StateRoot $stateRoot -LeadKey $leadKey -RelayScript $relayScript
 } catch { }
