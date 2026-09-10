@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MPL-2.0
 # Discriminating R2 consumer: actual receipt -> mailbox -> collector/wake
-# production path, bound local fixture launcher, completed-owned residue
+# production command host and relay, bound local fixture launcher, completed-owned residue
 # recovery with genuine OS exit/EOF, plus automatic live-child and foreign
 # refusals. Not C/E/F and not a fabricated provider success.
 [CmdletBinding()]
@@ -83,6 +83,7 @@ exit 7
         resume_session_id = $childSession
         events_path = $childEvents
         created_at_utc = $utc
+        cli_child_expected = $false
     })
     $liveCaptured = Invoke-TelephoneLeadDrainedProcess -FileName $pwsh -Arguments @(
         '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $liveHostScript
@@ -130,6 +131,7 @@ exit 7
         resume_session_id = $session
         events_path = $foreignEvents
         created_at_utc = $utc
+        cli_child_expected = $false
     })
     [IO.File]::WriteAllText($foreignEvents, ('{"type":"thread.started","thread_id":"' + $session + '"}' + "`n" + '{"type":"turn.started","turn_id":"fx","session_id":"' + $session + '","run_id":"' + $foreignRun + '"}' + "`n" + '{"type":"turn.completed","turn_id":"fx","session_id":"' + $session + '","run_id":"' + $foreignRun + '"}' + "`n"), [Text.UTF8Encoding]::new($false))
     $null = Write-TelephoneJsonCreateNew -Path (Join-Path $foreignRoot 'owner.json') -Value ([ordered]@{
@@ -177,6 +179,7 @@ exit 7
         resume_session_id = $session
         events_path = $eventsPath
         created_at_utc = $utc
+        cli_child_expected = $false
     })
     $captured = Invoke-TelephoneLeadDrainedProcess -FileName $pwsh -Arguments @(
         '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $childScript
@@ -190,8 +193,16 @@ exit 7
     Assert-R2 ([bool]$life.binding_ok) ('Residue lifecycle binding failed: ' + [string]$life.rejected)
     Assert-R2 ([bool]$life.owner_alive) 'Residue owner was not alive after native complete.'
 
+    $residueProcess = Get-Process -Id ([int]$captured.pid) -ErrorAction Stop
+    [void]$owned.Add($residueProcess)
     $countPath = Join-Path $artifact ('launcher-invocation-count-' + $stamp + '.txt')
     [IO.File]::WriteAllText($countPath, "0`n", [Text.UTF8Encoding]::new($false))
+    $firstCommand = Join-Path $artifact 'first-command.ps1'
+    $firstToken = 'FIRST-' + $stamp
+    [IO.File]::WriteAllText($firstCommand, "[Console]::Out.WriteLine('$firstToken'); [Console]::Error.WriteLine('EXPECTED-FAILURE'); exit 7`n", [Text.UTF8Encoding]::new($false))
+    $nextCommand = Join-Path $artifact 'next-command.ps1'
+    [IO.File]::WriteAllText($nextCommand, "[Console]::Out.WriteLine('NEXT-$stamp'); exit 0`n", [Text.UTF8Encoding]::new($false))
+    $consumePath = Join-Path $artifact 'actual-consumption.json'
     $launcherPath = Join-Path $artifact 'bound-fixture-launcher.ps1'
     $launcherText = @"
 param(
@@ -233,6 +244,35 @@ foreach (`$line in (`$prompt -split '\r?\n')) {
 if ([string]::IsNullOrWhiteSpace(`$wakeKey) -or [string]::IsNullOrWhiteSpace(`$receiptSha)) {
     throw 'Bound fixture launcher could not read wake_key/receipt_sha256 from the wake prompt.'
 }
+# Consume the actual command receipt before acknowledging its wake. These are
+# local transport fixture semantics, not a model/provider completion claim.
+`$receiptPath = ''
+foreach (`$line in (`$prompt -split '\r?\n')) {
+    if (`$line -match '^- receipt:\s*(.+)\s*$') { `$receiptPath = `$Matches[1].Trim() }
+}
+if (-not [IO.File]::Exists(`$receiptPath)) { throw 'Actual receipt path missing in wake prompt.' }
+`$actualSha = (Get-FileHash -LiteralPath `$receiptPath -Algorithm SHA256).Hash.ToLowerInvariant()
+if (`$actualSha -cne `$receiptSha) { throw 'Wake receipt hash mismatch.' }
+`$actual = [IO.File]::ReadAllText(`$receiptPath) | ConvertFrom-Json
+if (`$actual.command_exit_code -ne 7) { throw 'Actual first command failure was not consumed.' }
+`$commandOutput = [IO.File]::ReadAllText(`$actual.stdout.path).Trim()
+if (`$commandOutput -cne '$firstToken') { throw 'Actual command output nonce did not match.' }
+`$nextInfo = [Diagnostics.ProcessStartInfo]::new()
+`$nextInfo.FileName = '$pwsh'
+`$nextInfo.UseShellExecute = `$false
+`$nextInfo.CreateNoWindow = `$true
+`$nextInfo.RedirectStandardOutput = `$true
+`$nextInfo.RedirectStandardError = `$true
+foreach (`$arg in @('-NoProfile','-File','$nextCommand')) { [void]`$nextInfo.ArgumentList.Add(`$arg) }
+`$next = [Diagnostics.Process]::Start(`$nextInfo)
+`$nextOut = `$next.StandardOutput.ReadToEnd()
+`$nextErr = `$next.StandardError.ReadToEnd()
+`$next.WaitForExit()
+`$nextExit = `$next.ExitCode
+`$next.Dispose()
+if (`$nextExit -ne 0 -or `$nextOut.Trim() -cne 'NEXT-$stamp') { throw 'Next actual command failed.' }
+`$consumed = [ordered]@{session_id=`$ResumeSessionId;run_id=`$RunId;receipt_sha256=`$actualSha;first_exit=7;first_stdout=`$commandOutput;next_exit=`$nextExit;next_stdout=`$nextOut.Trim();next_stderr=`$nextErr;local_transport=`$true;provider_exercised=`$false}
+[IO.File]::WriteAllText('$consumePath', (`$consumed | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new(`$false))
 `$now = [DateTimeOffset]::UtcNow.ToString('o')
 `$nl = [Environment]::NewLine
 `$runDoc = [ordered]@{
@@ -307,7 +347,7 @@ exit 0
         command = [ordered]@{
             executable = $pwsh
             working_directory = $artifact
-            arguments = @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'exit 7')
+            arguments = @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', ('"' + $firstCommand + '"'))
             stdin = $null
         }
         source_request = $sourceIdentity
@@ -318,28 +358,9 @@ exit 0
     }
     $null = Write-TelephoneJsonCreateNew -Path $paths.dispatch -Value $dispatch
     $dispatchRead = Read-TelephoneJson -Path $paths.dispatch -SchemaName 'dispatch'
-    $receipt = [ordered]@{
-        protocol_version = 'telephone-line-receipt-v1'
-        line_job_id = $jobId
-        project = 'maintenance-r2-local'
-        stage = 'reliability-correction-1'
-        role = 'execution'
-        route = 'local-fixture'
-        summary = 'isolated-automatic-receipt-collector'
-        dispatch = $dispatchRead.identity
-        transport_complete = $true
-        command_exit_code = 7
-        command_error_code = $null
-        command_error_message = $null
-        stdout = $null
-        stderr = $null
-        started_at_utc = $utc
-        completed_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
-        absolute_task_timeout = $false
-        automatic_rerun = $false
-        project_judgment = $false
-    }
-    $null = Write-TelephoneJsonCreateNew -Path $paths.receipt -Value $receipt
+    $commandHost = Join-Path $repoRoot 'src\core\Invoke-TelephoneLineCommandHost.ps1'
+    & $pwsh -NoLogo -NoProfile -NonInteractive -File $commandHost -JobRoot $jobRoot
+    Assert-R2 ($LASTEXITCODE -eq 7) 'Actual command host did not return the real failure exit.'
     $receiptRead = Read-TelephoneJson -Path $paths.receipt -SchemaName 'receipt'
     Assert-R2 ([int]$receiptRead.value.command_exit_code -eq 7) 'Original failure receipt exit was not retained before the production path.'
 
@@ -433,6 +454,8 @@ exit 0
         Assert-R2 ([bool]$recoveryDoc.provider_replayed -eq $false) 'Recovery record claimed provider replay.'
     }
 
+    $consumed = Read-R2JsonFile $consumePath
+    Assert-R2 ($null -ne $consumed -and $consumed.session_id -ceq $session -and $consumed.next_exit -eq 0) 'Same bound local consumer did not perform next actual work.'
     $collectorStill = $false
     $collectorWaitUntil = [DateTimeOffset]::UtcNow.AddSeconds(20)
     while ([DateTimeOffset]::UtcNow -lt $collectorWaitUntil) {
@@ -447,6 +470,7 @@ exit 0
         Start-Sleep -Milliseconds 200
     }
 
+    Assert-R2 (-not $collectorStill) 'Production collector owner remained alive after automatic terminal delivery.'
     $relStdout = ''
     $relStderr = ''
     $relExit = -1
@@ -459,9 +483,13 @@ exit 0
     [IO.File]::WriteAllText((Join-Path $traceDir 'relay.stdout.txt'), [string]$relStdout, [Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText((Join-Path $traceDir 'relay.stderr.txt'), [string]$relStderr, [Text.UTF8Encoding]::new($false))
 
+    Assert-R2 ($relExit -eq 0) 'Production relay did not terminate cleanly.'
     $observations = [ordered]@{
         protocol_version = 'telephone-maintenance-r2-lifecycle-observations-v1'
         assertions = $assertions
+        first_command_receipt_producer = 'production Invoke-TelephoneLineCommandHost.ps1'
+        handwritten_receipt = $false
+        actual_same_binding_consumption = $consumed
         not_runcard_c_e_f = $true
         fabricated_provider_success = $false
         provider_replayed = $false

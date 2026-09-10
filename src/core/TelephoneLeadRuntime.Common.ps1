@@ -16,7 +16,7 @@ using System.Text;
 using System.Threading.Tasks;
 
 public static class TelephoneLeadOwnedReaderCompletion {
-    public static void Attach(
+    public static Task Attach(
         System.Diagnostics.Process process,
         Task stdoutTask,
         Task stderrTask,
@@ -31,53 +31,50 @@ public static class TelephoneLeadOwnedReaderCompletion {
         string role,
         int ownerPid,
         long ownerTicks,
-        string ownerExe) {
-        if (process == null || stdoutTask == null || stderrTask == null) return;
-        if (string.IsNullOrWhiteSpace(handoffPath)) return;
-        Task exited = ProcessExited(process);
-        Task.WhenAll(stdoutTask, stderrTask, exited).ContinueWith(delegate(Task antecedent) {
+        string ownerExe,
+        Stream stdoutTarget,
+        Stream stderrTarget) {
+        if (process == null || stdoutTask == null || stderrTask == null) return Task.CompletedTask;
+        if (string.IsNullOrWhiteSpace(handoffPath)) return Task.CompletedTask;
+        Task<int?> exited = ProcessExited(process);
+        return Task.WhenAll(stdoutTask, stderrTask, exited).ContinueWith(delegate(Task antecedent) {
             try {
                 if (antecedent.IsFaulted || antecedent.IsCanceled) return;
-                Publish(process, stdoutTask, stderrTask, handoffPath, lifecyclePath, pid, ticks, startedAt, exe, sessionId, runId, role, ownerPid, ownerTicks, ownerExe);
+                FlushTarget(stdoutTarget);
+                FlushTarget(stderrTarget);
+                Publish(exited.Result, stdoutTask, stderrTask, handoffPath, lifecyclePath, pid, ticks, startedAt, exe, sessionId, runId, role, ownerPid, ownerTicks, ownerExe);
             } catch {
             }
         });
     }
 
-    static void CloseReaders(System.Diagnostics.Process process) {
-        try {
-            if (process != null && process.StandardOutput != null && process.StandardOutput.BaseStream != null) {
-                process.StandardOutput.BaseStream.Close();
-            }
-        } catch { }
-        try {
-            if (process != null && process.StandardError != null && process.StandardError.BaseStream != null) {
-                process.StandardError.BaseStream.Close();
-            }
-        } catch { }
+    static void FlushTarget(Stream target) {
+        if (target is FileStream file) file.Flush(true);
+        else if (target != null) target.Flush();
     }
 
-    static Task ProcessExited(System.Diagnostics.Process process) {
-        var done = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    static int? ReadExitCode(System.Diagnostics.Process process) {
+        try { return process.ExitCode; } catch { return null; }
+    }
+
+    static Task<int?> ProcessExited(System.Diagnostics.Process process) {
+        var done = new TaskCompletionSource<int?>(TaskCreationOptions.RunContinuationsAsynchronously);
         if (process.HasExited) {
-            CloseReaders(process);
-            done.TrySetResult(true);
+            done.TrySetResult(ReadExitCode(process));
             return done.Task;
         }
         process.EnableRaisingEvents = true;
         process.Exited += delegate {
-            CloseReaders(process);
-            done.TrySetResult(true);
+            done.TrySetResult(ReadExitCode(process));
         };
         if (process.HasExited) {
-            CloseReaders(process);
-            done.TrySetResult(true);
+            done.TrySetResult(ReadExitCode(process));
         }
         return done.Task;
     }
 
     static void Publish(
-        System.Diagnostics.Process process,
+        int? exitCode,
         Task stdoutTask,
         Task stderrTask,
         string handoffPath,
@@ -92,12 +89,11 @@ public static class TelephoneLeadOwnedReaderCompletion {
         int ownerPid,
         long ownerTicks,
         string ownerExe) {
-        if (process == null || !process.HasExited) return;
         if (stdoutTask == null || stderrTask == null) return;
         if (stdoutTask.Status != TaskStatus.RanToCompletion) return;
         if (stderrTask.Status != TaskStatus.RanToCompletion) return;
-        int exitCode = -1;
-        try { exitCode = process.ExitCode; } catch { exitCode = -1; }
+        string exitJson = exitCode.HasValue ? exitCode.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) : "null";
+        string exitObserved = exitCode.HasValue ? "true" : "false";
         string recorded = DateTimeOffset.UtcNow.ToString("o");
         string handoff = "{"
             + "\"protocol_version\":\"telephone-line-drain-handoff-v1\","
@@ -111,9 +107,10 @@ public static class TelephoneLeadOwnedReaderCompletion {
             + "\"session_id\":\"" + Escape(sessionId) + "\","
             + "\"run_id\":\"" + Escape(runId) + "\","
             + "\"role\":\"" + Escape(role) + "\","
-            + "\"pending\":false,"
+            + "\"pending\":" + (exitCode.HasValue ? "false" : "true") + ","
             + "\"process_exited\":true,"
-            + "\"exit_code\":" + exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture) + ","
+            + "\"exit_code\":" + exitJson + ","
+            + "\"exit_code_observed\":" + exitObserved + ","
             + "\"stdout_eof\":true,"
             + "\"stderr_eof\":true,"
             + "\"recorded_by\":\"owner_reader_completion\","
@@ -133,7 +130,8 @@ public static class TelephoneLeadOwnedReaderCompletion {
                 + "\"timed_out\":false,"
                 + "\"native_turn_complete\":true,"
                 + "\"recorded_at_utc\":\"" + Escape(recorded) + "\","
-                + "\"exit_code\":" + exitCode.ToString(System.Globalization.CultureInfo.InvariantCulture) + ","
+                + "\"exit_code\":" + exitJson + ","
+                + "\"exit_code_observed\":" + exitObserved + ","
                 + "\"role\":\"" + Escape(role) + "\","
                 + "\"session_id\":\"" + Escape(sessionId) + "\","
                 + "\"run_id\":\"" + Escape(runId) + "\""
@@ -384,8 +382,13 @@ function Test-TelephoneLeadWindowsConsoleHostExecutable {
         $full = [IO.Path]::GetFullPath($Path)
         $windows = [IO.Path]::GetFullPath($env:WINDIR).TrimEnd('\')
         if ([string]::IsNullOrWhiteSpace($windows)) { $windows = 'C:\Windows' }
-        $prefix = $windows + '\'
-        return $full.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
+        # Only the OS console infrastructure is exempt, never an arbitrary
+        # executable with that name elsewhere under the Windows directory.
+        foreach ($directory in @('System32', 'SysWOW64')) {
+            $trusted = [IO.Path]::Combine($windows, $directory, $name)
+            if ($full.Equals($trusted, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+        }
+        return $false
     } catch {
         return $false
     }
@@ -453,6 +456,12 @@ function Get-TelephoneLeadOwnedDescendantObservation {
                 $parentNow = [int]$obs.snapshot['parent_process_id']
             }
         } catch { $parentNow = 0 }
+        if ($parentNow -le 0) {
+            $result.status = 'query_error'
+            $result.refused = 'descendant_query_error'
+            $result.error = 'A live enumerated descendant has no independently readable parent identity.'
+            return $result
+        }
         if ($parentNow -ne $ownedPid) { continue }
         [void]$result.children.Add($obs.snapshot)
     }
@@ -478,8 +487,7 @@ function ConvertTo-TelephonePersistableRecord {
     if ($Value -is [Collections.IEnumerable]) {
         $items = [Collections.Generic.List[object]]::new()
         foreach ($item in @($Value)) { [void]$items.Add((ConvertTo-TelephonePersistableRecord -Value $item)) }
-        if ($items.Count -eq 0) { return [object[]]@() }
-        return [object[]]$items.ToArray()
+        return ,([object[]]$items.ToArray())
     }
     return $Value
 }
@@ -928,6 +936,7 @@ function Start-TelephoneLeadOpenDrain {
         owner_start_time_utc_ticks = [int64]$ownerTicks
         owner_executable_path = [string]$ownerExe
         handoff_path = [string]$HandoffPath
+        completion_task = $null
     }
     if (-not [string]::IsNullOrWhiteSpace($HandoffPath)) {
         $handoff = [ordered]@{
@@ -961,7 +970,7 @@ function Start-TelephoneLeadOpenDrain {
             }
         } catch { $startedAt = '' }
         try {
-            [TelephoneLeadOwnedReaderCompletion]::Attach(
+            $script:TelephoneLeadOpenDrains[$key].completion_task = [TelephoneLeadOwnedReaderCompletion]::Attach(
                 $Process,
                 $StdoutTask,
                 $StderrTask,
@@ -976,7 +985,9 @@ function Start-TelephoneLeadOpenDrain {
                 [string]$Role,
                 [int]$PID,
                 [int64]$ownerTicks,
-                [string]$ownerExe)
+                [string]$ownerExe,
+                $StdoutFile,
+                $StderrFile)
         } catch { }
     }
 }
@@ -1028,7 +1039,7 @@ function Complete-TelephoneLeadOpenDrain {
     $drain = $script:TelephoneLeadOpenDrains[$key]
     $process = $drain.process
     $exited = $false
-    $exitCode = 1
+    $exitCode = $null
     $boundMs = [Math]::Max(0, [int]$WaitMilliseconds)
     try {
         if ($Wait -and $boundMs -gt 0 -and $null -ne $process -and -not $process.HasExited) {
@@ -1037,9 +1048,7 @@ function Complete-TelephoneLeadOpenDrain {
         if ($null -ne $process) {
             $exited = [bool]$process.HasExited
             if ($exited) {
-                try { $exitCode = [int]$process.ExitCode } catch { $exitCode = -1 }
-                try { if ($null -ne $process.StandardOutput) { $process.StandardOutput.Close() } } catch { }
-                try { if ($null -ne $process.StandardError) { $process.StandardError.Close() } } catch { }
+                try { $exitCode = [int]$process.ExitCode } catch { $exitCode = $null }
             }
         }
     } catch {
@@ -1071,6 +1080,26 @@ function Complete-TelephoneLeadOpenDrain {
             $stderrEof = $true
         }
     } catch { }
+    $terminal = $stdoutEof -and $stderrEof -and $null -ne $exitCode
+    if ($terminal -and $null -ne $drain.completion_task) {
+        try { $terminal = [bool]$drain.completion_task.Wait($streamMs) } catch { $terminal = $false }
+    }
+    if (-not $terminal) {
+        # Keep the actual reader and file handles alive. A later call can finish
+        # the same drain; root exit or a bounded observation is not stream EOF.
+        return [ordered]@{
+            found = $true
+            process_exited = $true
+            exit_code = $exitCode
+            exit_code_observed = ($null -ne $exitCode)
+            stdout_eof = $stdoutEof
+            stderr_eof = $stderrEof
+            pending = $true
+            pid = [int]$ProcessId
+        }
+    }
+    try { if ($null -ne $drain.stdout_file) { $drain.stdout_file.Flush($true) } } catch { }
+    try { if ($null -ne $drain.stderr_file) { $drain.stderr_file.Flush($true) } } catch { }
     if (-not [string]::IsNullOrWhiteSpace([string]$drain.lifecycle_path)) {
         Write-TelephoneLeadDrainLifecycleFile -Path ([string]$drain.lifecycle_path) -Identity $drain.identity -ProcessExited $true -ExitCode $exitCode -StdoutEof $stdoutEof -StderrEof $stderrEof -NativeTurnComplete $true -Role ([string]$drain.role) -SessionId ([string]$drain.session_id) -RunId ([string]$drain.run_id)
     }
@@ -1196,6 +1225,8 @@ function Test-TelephoneLeadDurableDrainTerminal {
         return $false
     }
     if (-not $exited -or -not $stdoutEof -or -not $stderrEof) { return $false }
+    if (-not $Doc.Contains('exit_code') -or $null -eq $Doc['exit_code']) { return $false }
+    if ($Doc.Contains('exit_code_observed') -and -not [bool]$Doc['exit_code_observed']) { return $false }
     $obs = Test-TelephoneLeadExactProcessObservation -Doc $Doc
     if ([string]$obs.status -ceq 'query_error' -or [string]$obs.status -ceq 'alive') { return $false }
     return $true
@@ -1603,9 +1634,6 @@ function Wait-TelephoneLeadOwnedDrainTerminal {
             }
         } elseif ([bool]$result.child_absence_proven) {
             $result.child_observation_status = 'absent_proven'
-            $childDone = $true
-        } elseif (-not [bool]$snap.child_present) {
-            $result.child_observation_status = 'absent_no_cli_identity_docs'
             $childDone = $true
         } else {
             $result.child_observation_status = 'missing_unproven'
@@ -2121,7 +2149,19 @@ function Stop-TelephoneLeadExactOwnedIdentity {
             $record.refused = 'active_descendant'
             return $record
         }
-        Stop-Process -Id ([int]$againObs.snapshot.pid) -Force -ErrorAction Stop
+        # Keep a handle to the exact target across the final identity check and
+        # termination, so a PID reused after the descendant census is not killed.
+        $targetProcess = Get-Process -Id ([int]$againObs.snapshot.pid) -ErrorAction Stop
+        try {
+            $null = $targetProcess.Handle
+            if ($targetProcess.StartTime.ToUniversalTime().Ticks -ne [int64]$expected.start_time_utc_ticks) {
+                $record.refused = 'identity_changed_before_stop'
+                return $record
+            }
+            $targetProcess.Kill()
+        } finally {
+            $targetProcess.Dispose()
+        }
         $goneDeadline = [DateTimeOffset]::UtcNow.AddMilliseconds([Math]::Max(1, [int]$WaitGoneMilliseconds))
         $gone = $false
         do {
@@ -2248,7 +2288,7 @@ function Stop-TelephoneLeadCompletedOwnProcess {
                 if ($drainGone.Contains('measured_os_exit_code') -and $null -ne $drainGone['measured_os_exit_code']) {
                     $record.measured_os_exit_code = [int]$drainGone['measured_os_exit_code']
                 }
-                if (-not [bool]$record.drain_pending -and [bool]$drainGone.process_exited) { $record.recovered = $true }
+                if (-not [bool]$record.drain_pending -and [bool]$drainGone.process_exited -and [bool]$record.stdout_eof -and [bool]$record.stderr_eof -and $null -ne $record.measured_os_exit_code) { $record.recovered = $true }
             }
         } elseif (-not [bool]$record.attempted) {
             $record.refused = 'owner_not_alive'
@@ -2275,15 +2315,9 @@ function Stop-TelephoneLeadCompletedOwnProcess {
             if ($drain.Contains('measured_os_exit_code') -and $null -ne $drain['measured_os_exit_code']) {
                 $record.measured_os_exit_code = [int]$drain['measured_os_exit_code']
             }
-            if (-not [bool]$record.drain_pending -and [bool]$drain.process_exited -and [bool]$record.stdout_eof -and [bool]$record.stderr_eof) {
+            if (-not [bool]$record.drain_pending -and [bool]$drain.process_exited -and [bool]$record.stdout_eof -and [bool]$record.stderr_eof -and $null -ne $record.measured_os_exit_code) {
                 $record.recovered = $true
-            } elseif ([bool]$drain.process_exited -or -not [bool]$drain.host_alive) {
-                $record.recovered = $true
-                if ([bool]$record.drain_pending) { $record.refused = '' }
             }
-        } elseif ([bool]$hostStop.stopped) {
-            $record.recovered = $true
-            $record.drain_pending = $true
         }
     }
     Write-TelephoneLeadOwnedRecoveryRecord -RunRoot $runRoot -Record $record
