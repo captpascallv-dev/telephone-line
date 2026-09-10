@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: MPL-2.0
 [CmdletBinding()]
-param([Parameter(Mandatory = $true)][string]$TestRoot)
+param(
+    [Parameter(Mandatory = $true)][string]$TestRoot,
+    [switch]$Correction1Only
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -67,6 +70,8 @@ try {
     Assert-AdapterTest ([bool]$observed.terminal_available -eq $false) 'Missing terminal was treated as present.'
     Assert-AdapterTest ([bool]$observed.truncated_or_malformed -eq $true) 'Truncated tail was not recorded.'
 
+    $wrapper = Join-Path $repoRoot 'src\adapters\direct-cursor\invoke_cursor_agent.ps1'
+    if (-not $Correction1Only) {
     $childCs = @'
 using System;
 using System.IO;
@@ -140,7 +145,6 @@ namespace DirectCursorRecoveryTest {
     } finally { $cscProc.Dispose() }
     [IO.File]::WriteAllText((Join-Path $versionDir 'index.js'), '// FAKE-SOURCE-NOT-FOR-SWS' + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText((Join-Path $fakeRoot 'cursor-agent.ps1'), '# FAKE-SOURCE-NOT-FOR-SWS' + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
-    $wrapper = Join-Path $repoRoot 'src\adapters\direct-cursor\invoke_cursor_agent.ps1'
     $sessionId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
     [Environment]::SetEnvironmentVariable('DIRECT_CURSOR_TEST_SESSION', $sessionId, 'Process')
 
@@ -265,6 +269,7 @@ exit 1
         failure_code = [string]$receiptRun.value.failure_code
         transport_error = [string]$receiptRun.value.transport_error
     })
+    }
 
     $admitRoot = Join-Path $testRoot 'admit-state'
     $admitWorkspace = Join-Path $outsideRoot 'admit-workspace'
@@ -284,10 +289,14 @@ exit 1
         '{"role":"assistant","message":{"content":[{"type":"tool_use","name":"Read"}]}}'
     ) -join "`n") + "`n"
     [IO.File]::WriteAllText($transcriptPath, $transcript, $utf8)
+    $ownerStart = [DateTimeOffset]::Parse('2020-01-01T00:00:00Z')
+    $createdMs = [int64]($ownerStart.ToUnixTimeMilliseconds() + 5000)
+    $updatedMs = [int64]($createdMs + 60000)
+    $receiptEnd = $ownerStart.AddMinutes(5)
     $meta = [ordered]@{
         schemaVersion = 1
-        createdAtMs = 1
-        updatedAtMs = 2
+        createdAtMs = $createdMs
+        updatedAtMs = $updatedMs
         hasConversation = $true
         cwd = $admitWorkspace
     }
@@ -335,7 +344,7 @@ exit 1
         owner = $null
         automatic_rerun = $false
         replacement_started = $false
-        completed_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+        completed_at_utc = $receiptEnd.ToString('o')
     }
     $null = Write-DirectJsonCreateNew -Path $receiptPathFake -Value $receiptFake
     $oldBindingPath = Join-Path $testRoot 'fake-old-binding.json'
@@ -346,19 +355,34 @@ exit 1
         workspace = $admitWorkspace
         mode = 'ReadOnly'
         allowed_write_paths = @()
-        created_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+        created_at_utc = $ownerStart.ToString('o')
     })
     $ownerPath = Join-Path $testRoot 'fake-dead-owner.json'
     $null = Write-DirectJsonCreateNew -Path $ownerPath -Value ([ordered]@{
         protocol_version = 'telephone-line-direct-cursor-owner-v1'
         pid = 1
-        start_time_utc_ticks = 1
-        started_at_utc = '2020-01-01T00:00:00Z'
+        start_time_utc_ticks = [int64]$ownerStart.UtcDateTime.Ticks
+        started_at_utc = $ownerStart.ToString('o')
     })
-    $originalReceiptBytes = [IO.File]::ReadAllBytes($receiptPathFake)
-
-    $admit = Invoke-AdapterEntrypoint -Entrypoint (Join-Path $repoRoot 'src\adapters\direct-cursor\Register-DirectCursorPartialSession.ps1') -Arguments @(
-        '-StateRoot', $admitRoot,
+    $executionPath = Join-Path $testRoot 'fake-actual-execution.json'
+    $null = Write-DirectJsonCreateNew -Path $executionPath -Value ([ordered]@{
+        fixture_label = 'FAKE-SOURCE-NOT-FOR-SWS'
+        job = $jobId
+        model = 'cursor-grok-4.6-xhigh'
+    })
+    $expectedPath = Join-Path $testRoot 'fake-expected-evidence.json'
+    $null = Write-DirectJsonCreateNew -Path $expectedPath -Value ([ordered]@{
+        fixture_label = 'FAKE-SOURCE-NOT-FOR-SWS'
+        request = Get-DirectFileIdentity -Path $requestPath
+        receipt = Get-DirectFileIdentity -Path $receiptPathFake
+        transcript = Get-DirectFileIdentity -Path $transcriptPath
+        meta = Get-DirectFileIdentity -Path $metaPath
+        prompt = Get-DirectFileIdentity -Path $promptPath
+        actual_execution = Get-DirectFileIdentity -Path $executionPath
+        old_binding = Get-DirectFileIdentity -Path $oldBindingPath
+    })
+    $registerEntry = Join-Path $repoRoot 'src\adapters\direct-cursor\Register-DirectCursorPartialSession.ps1'
+    $admitArgs = @(
         '-FailedRequestPath', $requestPath,
         '-FailedReceiptPath', $receiptPathFake,
         '-NativeTranscriptPath', $transcriptPath,
@@ -366,24 +390,30 @@ exit 1
         '-ObservedSessionId', $fakeSession,
         '-OldBindingPath', $oldBindingPath,
         '-FailedOwnerPath', $ownerPath,
+        '-ActualExecutionPath', $executionPath,
+        '-ExpectedEvidencePath', $expectedPath,
         '-FixtureLabel', 'FAKE-SOURCE-NOT-FOR-SWS'
     )
+    $originalReceiptBytes = [IO.File]::ReadAllBytes($receiptPathFake)
+
+    $admit = Invoke-AdapterEntrypoint -Entrypoint $registerEntry -Arguments (@('-StateRoot', $admitRoot) + $admitArgs)
     Assert-AdapterTest ($admit.exit_code -eq 0) ("Partial admission failed: " + $admit.stderr + ' ' + $admit.stdout)
-    Assert-AdapterTest ([string]$admit.value.status -ceq 'provisional') 'Partial admission was not provisional.'
-    Assert-AdapterTest ([bool]$admit.value.accepted_binding_written -eq $false) 'Partial admission wrote an accepted binding.'
-    Assert-AdapterTest ([bool]$admit.value.receipt_fabricated -eq $false) 'Partial admission fabricated a receipt.'
-    Assert-AdapterTest ([int]$admit.value.continuation_remaining -eq 1) 'Partial admission did not authorize one continuation.'
+    $admitStatus = [string](Get-DirectNoteValue -Object $admit.value -Name 'status')
+    Assert-AdapterTest ($admitStatus -ceq 'provisional') 'Partial admission was not provisional.'
+    Assert-AdapterTest ([bool](Get-DirectNoteValue -Object $admit.value -Name 'accepted_binding_written') -eq $false) 'Partial admission wrote an accepted binding.'
+    Assert-AdapterTest ([bool](Get-DirectNoteValue -Object $admit.value -Name 'receipt_fabricated') -eq $false) 'Partial admission fabricated a receipt.'
+    Assert-AdapterTest ([int](Get-DirectNoteValue -Object $admit.value -Name 'continuation_remaining') -eq 1) 'Partial admission did not authorize one continuation.'
     $bindingPath = Join-Path $admitRoot ('sessions\' + $fakeSession + '\binding.json')
     Assert-AdapterTest (-not [IO.File]::Exists($bindingPath)) 'Partial admission created an ordinary accepted binding.json.'
     $afterReceipt = [IO.File]::ReadAllBytes($receiptPathFake)
     Assert-AdapterTest (@(Compare-Object $originalReceiptBytes $afterReceipt).Count -eq 0) 'Partial admission mutated the original failed receipt.'
     Add-Observation -Name 'partial_admission_positive' -Value ([ordered]@{
-        status = [string]$admit.value.status
-        continuation_remaining = [int]$admit.value.continuation_remaining
-        accepted_binding_written = [bool]$admit.value.accepted_binding_written
+        status = $admitStatus
+        continuation_remaining = [int](Get-DirectNoteValue -Object $admit.value -Name 'continuation_remaining')
+        accepted_binding_written = [bool](Get-DirectNoteValue -Object $admit.value -Name 'accepted_binding_written')
     })
 
-    $mismatch = Invoke-AdapterEntrypoint -Entrypoint (Join-Path $repoRoot 'src\adapters\direct-cursor\Register-DirectCursorPartialSession.ps1') -Arguments @(
+    $mismatch = Invoke-AdapterEntrypoint -Entrypoint $registerEntry -Arguments @(
         '-StateRoot', (Join-Path $testRoot 'admit-mismatch'),
         '-FailedRequestPath', $requestPath,
         '-FailedReceiptPath', $receiptPathFake,
@@ -392,6 +422,8 @@ exit 1
         '-ObservedSessionId', '00000000-0000-4000-8000-000000000000',
         '-OldBindingPath', $oldBindingPath,
         '-FailedOwnerPath', $ownerPath,
+        '-ActualExecutionPath', $executionPath,
+        '-ExpectedEvidencePath', $expectedPath,
         '-FixtureLabel', 'FAKE-SOURCE-NOT-FOR-SWS'
     )
     Assert-AdapterTest ($mismatch.exit_code -ne 0) 'Mismatched session id was admitted.'
@@ -406,22 +438,162 @@ exit 1
             start_time_utc_ticks = [int64]$live.StartTime.ToUniversalTime().Ticks
             started_at_utc = $live.StartTime.ToUniversalTime().ToString('o')
         })
-        $liveAdmit = Invoke-AdapterEntrypoint -Entrypoint (Join-Path $repoRoot 'src\adapters\direct-cursor\Register-DirectCursorPartialSession.ps1') -Arguments @(
+        $liveAdmit = Invoke-AdapterEntrypoint -Entrypoint $registerEntry -Arguments @(
             '-StateRoot', (Join-Path $testRoot 'admit-live'),
             '-FailedRequestPath', $requestPath,
             '-FailedReceiptPath', $receiptPathFake,
             '-NativeTranscriptPath', $transcriptPath,
             '-NativeMetaPath', $metaPath,
             '-ObservedSessionId', $fakeSession,
+            '-OldBindingPath', $oldBindingPath,
             '-FailedOwnerPath', $liveOwnerPath,
+            '-ActualExecutionPath', $executionPath,
+            '-ExpectedEvidencePath', $expectedPath,
             '-FixtureLabel', 'FAKE-SOURCE-NOT-FOR-SWS'
         )
         Assert-AdapterTest ($liveAdmit.exit_code -ne 0) 'Live owner was admitted.'
+        Assert-AdapterTest ([string]$liveAdmit.stderr -match 'Competing owner is still alive') 'Live owner was not refused as a competing owner.'
         Add-Observation -Name 'partial_admission_live_owner' -Value ([ordered]@{ exit_code = $liveAdmit.exit_code; stderr = [string]$liveAdmit.stderr })
     } finally {
         try { Stop-Process -Id $live.Id -Force -ErrorAction SilentlyContinue } catch { }
         try { $live.Dispose() } catch { }
     }
+
+    $wrongExecPath = Join-Path $testRoot 'execution-model-mismatch.json'
+    $null = Write-DirectJsonCreateNew -Path $wrongExecPath -Value ([ordered]@{
+        fixture_label = 'FAKE-SOURCE-NOT-FOR-SWS'
+        job = $jobId
+        model = 'INTENTIONALLY_WRONG_MODEL'
+    })
+    $wrongExpectedPath = Join-Path $testRoot 'expected-model-mismatch.json'
+    $null = Write-DirectJsonCreateNew -Path $wrongExpectedPath -Value ([ordered]@{
+        fixture_label = 'FAKE-SOURCE-NOT-FOR-SWS'
+        request = Get-DirectFileIdentity -Path $requestPath
+        receipt = Get-DirectFileIdentity -Path $receiptPathFake
+        transcript = Get-DirectFileIdentity -Path $transcriptPath
+        meta = Get-DirectFileIdentity -Path $metaPath
+        prompt = Get-DirectFileIdentity -Path $promptPath
+        actual_execution = Get-DirectFileIdentity -Path $wrongExecPath
+        old_binding = Get-DirectFileIdentity -Path $oldBindingPath
+    })
+    $modelMismatch = Invoke-AdapterEntrypoint -Entrypoint $registerEntry -Arguments @(
+        '-StateRoot', (Join-Path $testRoot 'admit-model-mismatch'),
+        '-FailedRequestPath', $requestPath,
+        '-FailedReceiptPath', $receiptPathFake,
+        '-NativeTranscriptPath', $transcriptPath,
+        '-NativeMetaPath', $metaPath,
+        '-ObservedSessionId', $fakeSession,
+        '-OldBindingPath', $oldBindingPath,
+        '-FailedOwnerPath', $ownerPath,
+        '-ActualExecutionPath', $wrongExecPath,
+        '-ExpectedEvidencePath', $wrongExpectedPath,
+        '-FixtureLabel', 'FAKE-SOURCE-NOT-FOR-SWS'
+    )
+    Assert-AdapterTest ($modelMismatch.exit_code -ne 0) 'Mismatched ActualExecution.model was admitted.'
+    Assert-AdapterTest ([string]$modelMismatch.stderr -match 'Actual execution model does not match') 'Model mismatch did not fail closed on the model check.'
+    Add-Observation -Name 'partial_admission_model_mismatch' -Value ([ordered]@{
+        exit_code = $modelMismatch.exit_code
+        stderr = [string]$modelMismatch.stderr
+        fixture_label = 'FAKE-SOURCE-NOT-FOR-SWS'
+    })
+
+    $absent = Invoke-AdapterEntrypoint -Entrypoint $registerEntry -Arguments @(
+        '-StateRoot', (Join-Path $testRoot 'admit-absent'),
+        '-FailedRequestPath', $requestPath,
+        '-FailedReceiptPath', $receiptPathFake,
+        '-NativeTranscriptPath', $transcriptPath,
+        '-NativeMetaPath', $metaPath,
+        '-ObservedSessionId', $fakeSession,
+        '-OldBindingPath', $oldBindingPath,
+        '-FailedOwnerPath', $ownerPath,
+        '-ExpectedEvidencePath', $expectedPath,
+        '-FixtureLabel', 'FAKE-SOURCE-NOT-FOR-SWS'
+    )
+    Assert-AdapterTest ($absent.exit_code -ne 0) 'Admission without actual execution observation was accepted.'
+    Add-Observation -Name 'partial_admission_absent_execution' -Value ([ordered]@{
+        exit_code = $absent.exit_code
+        stderr = [string]$absent.stderr
+        fixture_label = 'FAKE-SOURCE-NOT-FOR-SWS'
+    })
+
+    $orphanRoot = Join-Path $testRoot 'admit-orphan'
+    [IO.Directory]::CreateDirectory($orphanRoot) | Out-Null
+    $orphanPath = Get-DirectCursorPartialAdmissionPath -StateRoot $orphanRoot -NativeSessionId $fakeSession
+    $null = Write-DirectJsonCreateNew -Path $orphanPath -Value ([ordered]@{
+        protocol_version = Get-DirectCursorPartialAdmissionProtocol
+        status = 'provisional'
+        acceptance = 'pending'
+        continuation_remaining = 1
+        native_session_id = $fakeSession
+        original_failure = @{ job_id = $jobId; request_sha256 = (Get-DirectFileIdentity -Path $requestPath).sha256 }
+        fixture_label = 'FAKE-SOURCE-NOT-FOR-SWS'
+    })
+    $orphan = Invoke-AdapterEntrypoint -Entrypoint $registerEntry -Arguments (@('-StateRoot', $orphanRoot) + $admitArgs)
+    Assert-AdapterTest ($orphan.exit_code -ne 0) 'Orphan admission without registry was treated as already_registered.'
+    $orphanStatus = [string](Get-DirectNoteValue -Object $orphan.value -Name 'status')
+    Assert-AdapterTest ($orphanStatus -cne 'already_registered') 'Orphan admission authorized continuation.'
+    Assert-AdapterTest ([string]$orphan.stderr -match 'inconsistent') 'Interrupted admission write did not fail closed.'
+    $orphanFollow = Invoke-AdapterEntrypoint -Entrypoint (Join-Path $repoRoot 'src\adapters\direct-cursor\Invoke-DirectCursorRoute.ps1') -Arguments @(
+        '-Operation', 'follow_up', '-NativeSessionId', $fakeSession, '-StateRoot', $orphanRoot,
+        '-WorkspacePath', $admitWorkspace, '-PromptFile', $promptPath, '-Mode', 'ReadOnly',
+        '-JobId', ([Guid]::NewGuid().ToString('D')), '-WaitTimeoutSeconds', '30'
+    )
+    Assert-AdapterTest ($orphanFollow.exit_code -ne 0) 'Orphan admission authorized a follow_up continuation.'
+    Add-Observation -Name 'partial_admission_interrupted_write' -Value ([ordered]@{
+        register_exit_code = $orphan.exit_code
+        follow_up_exit_code = $orphanFollow.exit_code
+        register_status = $orphanStatus
+        fixture_label = 'FAKE-SOURCE-NOT-FOR-SWS'
+    })
+
+    $lockDir = Join-Path $testRoot 'locked-diagnostic'
+    [IO.Directory]::CreateDirectory($lockDir) | Out-Null
+    $lockStdout = Join-Path $lockDir 'stdout.bin'
+    $lockDiag = Join-Path $lockDir 'process-diagnostic.json'
+    [IO.File]::WriteAllText($lockStdout, '{"type":"system","subtype":"init","session_id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}' + "`n", $utf8)
+    $null = Write-DirectJsonCreateNew -Path $lockDiag -Value ([ordered]@{
+        fixture_label = 'FAKE-SOURCE-NOT-FOR-SWS'
+        failure_code = 'cursor_output_limit'
+        failure_stage = 'process_output_limit'
+    })
+    $held = [IO.File]::Open($lockStdout, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
+    try {
+        $obsThrew = $false
+        $obsType = ''
+        $obs = $null
+        try {
+            $obs = Get-DirectCursorFailureObservation -Run $null -DiagnosticPath $lockDiag -Workspace $admitWorkspace -BeforeSnapshot $null -AllowedWriteRelative @()
+        } catch {
+            $obsThrew = $true
+            $obsType = $_.Exception.GetType().FullName
+        }
+        Assert-AdapterTest ($obsThrew -eq $false) 'Locked stdout still threw from Get-DirectCursorFailureObservation.'
+        Assert-AdapterTest ([string]$obs.stdout_evidence -ceq 'unavailable') 'Locked stdout was not marked unavailable.'
+        $ex = [InvalidOperationException]::new('Cursor CLI output exceeded the bounded result size.')
+        $ex.Data['telephone_direct_cursor_process_failure_class'] = 'output_limit'
+        $ex.Data['telephone_direct_cursor_diagnostic_path'] = $lockDiag
+        $ex.Data['telephone_direct_cursor_observed_session_id'] = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+        $caught = $null
+        try { throw $ex } catch {
+            $caught = New-DirectCursorCaughtFailureResult -ErrorRecord $_ -FailureStage 'cursor_execution' -DispatchId ([Guid]::NewGuid().ToString('D')) -Workspace $admitWorkspace -Mode 'ReadOnly' -Model 'cursor-grok-4.6-xhigh' -AllowedWriteRelative @()
+        }
+        Assert-AdapterTest ([string]$caught.failure_code -ceq 'cursor_output_limit') 'Outer failure path lost the primary output-limit code.'
+        Assert-AdapterTest ([string]$caught.failure_stage -ceq 'process_output_limit') 'Outer failure path lost the primary output-limit stage.'
+        Assert-AdapterTest ([string]$caught.session_id -eq '') 'Outer failure path accepted a session id.'
+        Assert-AdapterTest ([string]$caught.observed_session.session_id -ceq 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb') 'Outer failure path dropped observed session identity.'
+        Assert-AdapterTest ([bool]$caught.evidence.primary_failure_retained -eq $true) 'Outer failure path did not retain the primary failure.'
+        Assert-AdapterTest ([string]$caught.evidence.stdout_evidence -ceq 'unavailable') 'Locked stdout identity was treated as available.'
+        Add-Observation -Name 'diagnostic_locked_stdout_outer' -Value ([ordered]@{
+            observation_threw = $obsThrew
+            observation_error_type = $obsType
+            stdout_evidence = [string]$caught.evidence.stdout_evidence
+            failure_code = [string]$caught.failure_code
+            failure_stage = [string]$caught.failure_stage
+            observed_session_id = [string]$caught.observed_session.session_id
+            secondary_error_types = @($caught.evidence.secondary_error_types)
+            fixture_label = 'FAKE-SOURCE-NOT-FOR-SWS'
+        })
+    } finally { $held.Dispose() }
 
     $followJob = [Guid]::NewGuid().ToString('D')
     $followCopy = Join-Path $testRoot 'adapter-follow'

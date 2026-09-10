@@ -386,7 +386,7 @@ if ($Operation -eq 'recover') {
     $job = Resolve-DirectCursorRecoverJobId -StateRoot $resolvedStateRoot -NativeSessionId $NativeSessionId
     if ([string]::IsNullOrWhiteSpace([string]$job)) {
         $partialForRecover = $null
-        try { $partialForRecover = Read-DirectCursorPartialAdmission -StateRoot $resolvedStateRoot -NativeSessionId $NativeSessionId } catch { }
+        try { $partialForRecover = Test-DirectCursorPartialAdmissionUsable -StateRoot $resolvedStateRoot -NativeSessionId $NativeSessionId } catch { }
         if ($null -ne $partialForRecover) {
             $job = [string](Get-DirectNoteValue -Object (Get-DirectNoteValue -Object $partialForRecover -Name 'original_failure') -Name 'job_id')
         }
@@ -424,7 +424,7 @@ $consumePartialContinuation = $false
 if ($Operation -eq 'follow_up') {
     $sessionPaths = Get-SessionPaths -Root $resolvedStateRoot -SessionId $NativeSessionId
     $partialAdmission = $null
-    try { $partialAdmission = Read-DirectCursorPartialAdmission -StateRoot $resolvedStateRoot -NativeSessionId $NativeSessionId } catch { }
+    try { $partialAdmission = Test-DirectCursorPartialAdmissionUsable -StateRoot $resolvedStateRoot -NativeSessionId $NativeSessionId } catch { }
     if ([IO.File]::Exists($sessionPaths.binding)) {
         $binding = (Read-DirectJson -Path $sessionPaths.binding).value
         if ([string]$binding.native_session_id -cne $NativeSessionId) { throw 'Adapter native session id does not match the frozen session.' }

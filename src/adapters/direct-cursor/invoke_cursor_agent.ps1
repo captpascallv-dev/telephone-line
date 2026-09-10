@@ -766,145 +766,25 @@ try {
         }
     }
 } catch {
-    $processFailureClass = ''
-    if ($null -ne $_.Exception.Data -and $null -ne $_.Exception.Data['telephone_direct_cursor_process_failure_class']) {
-        $processFailureClass = [string]$_.Exception.Data['telephone_direct_cursor_process_failure_class']
-    }
-    $classification = Get-DirectCursorFailureClassification -Message $_.Exception.Message -Stage $failureStage -ExceptionType $_.Exception.GetType().FullName -ProcessFailureClass $processFailureClass
-    $promptPublicIdentity = if ($null -ne $promptIdentity) {
-        [ordered]@{ path = [string]$promptIdentity.FullName; bytes = [int64]$promptBytes.Length; sha256 = $promptSha256 }
-    } else { $null }
-    if ($null -eq $failureEvidence -or $failureEvidence -isnot [Collections.IDictionary]) {
-        $failureEvidence = [ordered]@{}
-    }
-    $failureEvidence.exception_type = $_.Exception.GetType().FullName
-    if ($null -ne $_.Exception.InnerException) {
-        $failureEvidence.inner_exception_type = $_.Exception.InnerException.GetType().FullName
-    }
-    $failureEvidence.requested_native_session_id = [string]$ResumeSessionId
-    $failureEvidence.returned_native_session_id = ''
-    $diagPath = ''
-    if ($null -ne $_.Exception.Data -and $null -ne $_.Exception.Data['telephone_direct_cursor_diagnostic_path']) {
-        $diagPath = [string]$_.Exception.Data['telephone_direct_cursor_diagnostic_path']
-    } elseif ($null -ne $run -and $null -ne $run.Diagnostic) {
-        $diagPath = [string]$run.Diagnostic.path
-    }
-    $stdoutBytes = [int64]0
-    $stderrBytes = [int64]0
-    $nativeExit = $null
-    if ($null -ne $_.Exception.Data -and $null -ne $_.Exception.Data['telephone_direct_cursor_stdout_bytes']) {
-        $stdoutBytes = [int64]$_.Exception.Data['telephone_direct_cursor_stdout_bytes']
-    }
-    if ($null -ne $_.Exception.Data -and $null -ne $_.Exception.Data['telephone_direct_cursor_stderr_bytes']) {
-        $stderrBytes = [int64]$_.Exception.Data['telephone_direct_cursor_stderr_bytes']
-    }
-    if ($null -ne $_.Exception.Data -and $null -ne $_.Exception.Data['telephone_direct_cursor_native_exit_code']) {
-        $nativeExit = [int]$_.Exception.Data['telephone_direct_cursor_native_exit_code']
-    }
-    if ($null -eq $nativeExit -and -not [string]::IsNullOrWhiteSpace($diagPath) -and [IO.File]::Exists($diagPath)) {
-        try {
-            $diagDoc = (Read-DirectJson -Path $diagPath).value
-            $fromDiagExit = Get-DirectNoteValue -Object $diagDoc -Name 'native_exit_code'
-            if ($null -ne $fromDiagExit -and [string]$fromDiagExit -ne '') { $nativeExit = [int]$fromDiagExit }
-        } catch { }
-    }
-    if ([string]::IsNullOrWhiteSpace($diagPath)) {
-        $ownDir = Join-Path $stateRoot ('diagnostics\' + [string]$dispatchId)
-        $ownDiag = Join-Path $ownDir 'process-diagnostic.json'
-        if ([IO.File]::Exists($ownDiag)) {
-            $diagPath = $ownDiag
-        } elseif ([IO.Directory]::Exists($ownDir)) {
-            $ownLatest = @(Get-ChildItem -LiteralPath $ownDir -Recurse -Filter 'process-diagnostic.json' -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending)
-            if ($ownLatest.Count -gt 0) { $diagPath = [string]$ownLatest[0].FullName }
-        }
-        if ([string]::IsNullOrWhiteSpace($diagPath)) {
-            [IO.Directory]::CreateDirectory($ownDir) | Out-Null
-            $null = Restrict-DirectCursorDiagnosticDirectory -Directory $ownDir
-            $stageDiag = Write-DirectCursorProcessDiagnostic -Directory $ownDir -Stage $failureStage -ExceptionType $_.Exception.GetType().FullName -ExceptionMessage $_.Exception.Message -Classification $classification -RequestedSessionId ([string]$ResumeSessionId) -ProcessFailureClass $processFailureClass
-            $diagPath = [string]$stageDiag.path
-        }
-    }
-    if (-not [string]::IsNullOrWhiteSpace($diagPath) -and [IO.File]::Exists($diagPath)) {
-        $failureEvidence.diagnostic = Get-DirectFileIdentity -Path $diagPath
-        $diagDir = [IO.Path]::GetDirectoryName($diagPath)
-        $sp = Join-Path $diagDir 'stdout.bin'
-        $ep = Join-Path $diagDir 'stderr.bin'
-        if ([IO.File]::Exists($sp)) {
-            $failureEvidence.stdout = Get-DirectFileIdentity -Path $sp
-            $stdoutBytes = [int64]$failureEvidence.stdout.bytes
-        }
-        if ([IO.File]::Exists($ep)) {
-            $failureEvidence.stderr_spool = Get-DirectFileIdentity -Path $ep
-            $stderrBytes = [int64]$failureEvidence.stderr_spool.bytes
-        }
-    }
-    $observation = Get-DirectCursorFailureObservation `
+    $payload = New-DirectCursorCaughtFailureResult `
+        -ErrorRecord $_ `
+        -FailureStage $failureStage `
+        -DispatchId $dispatchId `
+        -PromptSha256 $promptSha256 `
+        -PromptIdentity $promptIdentity `
+        -PromptBytes $promptBytes `
+        -FailureEvidence $failureEvidence `
         -Run $run `
-        -DiagnosticPath $diagPath `
+        -ResumeSessionId $ResumeSessionId `
+        -StateRoot $stateRoot `
         -Workspace $workspace `
-        -BeforeSnapshot $beforeSnapshot `
+        -Mode $Mode `
+        -Model $Model `
         -AllowedWriteRelative $allowedWriteRelative `
+        -BeforeSnapshot $beforeSnapshot `
         -SnapshotCompleted $snapshotCompleted `
-        -ExistingChanges $changes
-    $observedSession = $observation.observed_session
-    $changedFilesAvailability = [string]$observation.changed_files_availability
-    if ($changedFilesAvailability -ceq 'available') {
-        $changes = @($observation.changed_files)
-    }
-    if (@($observation.secondary_snapshot_errors).Count -gt 0) {
-        $failureEvidence.secondary_snapshot_error_types = @($observation.secondary_snapshot_errors)
-        $failureEvidence.primary_failure_retained = $true
-    }
-    $failureEvidence.observed_session = $observedSession
-    $failureEvidence.changed_files_availability = $changedFilesAvailability
-    $failureEvidence.process_failure_class = $processFailureClass
-    $observedFromException = ''
-    if ($null -ne $_.Exception.Data -and $null -ne $_.Exception.Data['telephone_direct_cursor_observed_session_id']) {
-        $observedFromException = [string]$_.Exception.Data['telephone_direct_cursor_observed_session_id']
-    }
-    if ([string]::IsNullOrWhiteSpace([string]$observedSession.session_id) -and -not [string]::IsNullOrWhiteSpace($observedFromException)) {
-        $observedSession.session_id = $observedFromException
-        $observedSession.status = 'partial'
-        $observedSession.source = 'process_exception_data'
-        $observedSession.accepted = $false
-    }
-    $violatingPaths = @()
-    if ($null -ne $_.Exception.Data -and $null -ne $_.Exception.Data['telephone_direct_cursor_violating_paths']) {
-        $violatingPaths = @($_.Exception.Data['telephone_direct_cursor_violating_paths'])
-    } elseif ($null -ne $failureEvidence -and $failureEvidence -is [Collections.IDictionary] -and $failureEvidence.Contains('violating_paths')) {
-        $violatingPaths = @($failureEvidence['violating_paths'])
-    }
-    [ordered]@{
-        success = $false
-        dispatch_id = $dispatchId
-        prompt_sha256 = $promptSha256
-        prompt = $promptPublicIdentity
-        failure_kind = [string]$classification.failure_kind
-        failure_code = [string]$classification.failure_code
-        failure_stage = [string]$classification.failure_stage
-        public_error_code = [string]$classification.public_error_code
-        process_failure_class = $processFailureClass
-        exception_type = $_.Exception.GetType().FullName
-        error = Get-DirectPublicError -ErrorCode ([string]$classification.public_error_code)
-        workspace = $workspace
-        mode = $Mode
-        model_id = $Model
-        allowed_write_paths = $allowedWriteRelative
-        resume_session_id = $ResumeSessionId
-        requested_native_session_id = [string]$ResumeSessionId
-        returned_native_session_id = ''
-        session_id = ''
-        observed_session = $observedSession
-        native_exit_code = $nativeExit
-        stdout_bytes = $stdoutBytes
-        stderr_bytes = $stderrBytes
-        violating_paths = @($violatingPaths)
-        policy_violation = ($violatingPaths.Count -gt 0)
-        fast_disabled = $true
-        changed_files_availability = $changedFilesAvailability
-        changed_files = $(if ($changedFilesAvailability -ceq 'available') { @($changes) } else { $null })
-        volatile_snapshot_exclusions = @($volatileSnapshotExclusions)
-        evidence = $failureEvidence
-    } | ConvertTo-Json -Depth 8
+        -ExistingChanges $changes `
+        -VolatileSnapshotExclusions $volatileSnapshotExclusions
+    $payload | ConvertTo-Json -Depth 8
     exit 1
 }

@@ -7,9 +7,10 @@ param(
     [Parameter(Mandatory = $true)][string]$NativeTranscriptPath,
     [Parameter(Mandatory = $true)][string]$NativeMetaPath,
     [Parameter(Mandatory = $true)][string]$ObservedSessionId,
-    [string]$OldBindingPath = '',
-    [string]$FailedOwnerPath = '',
-    [string]$ActualExecutionPath = '',
+    [Parameter(Mandatory = $true)][string]$OldBindingPath,
+    [Parameter(Mandatory = $true)][string]$FailedOwnerPath,
+    [Parameter(Mandatory = $true)][string]$ActualExecutionPath,
+    [Parameter(Mandatory = $true)][string]$ExpectedEvidencePath,
     [int]$CursorNodePid = 0,
     [int64]$CursorNodeStartTicks = 0,
     [string]$FixtureLabel = ''
@@ -30,6 +31,7 @@ $result = Register-DirectCursorPartialSessionAdmission `
     -OldBindingPath $OldBindingPath `
     -FailedOwnerPath $FailedOwnerPath `
     -ActualExecutionPath $ActualExecutionPath `
+    -ExpectedEvidencePath $ExpectedEvidencePath `
     -CursorNodePid $CursorNodePid `
     -CursorNodeStartTicks $CursorNodeStartTicks `
     -FixtureLabel $FixtureLabel
