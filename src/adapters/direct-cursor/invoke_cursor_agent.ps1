@@ -187,6 +187,10 @@ function Invoke-CursorProcess {
     $runFailure = $null
     $overLimit = $false
     $timedOut = $false
+    $stdoutTruncated = $false
+    $stderrTruncated = $false
+    $durableWritten = [int64]0
+    $processFailureClass = ''
     $nativePid = 0
     $nativeTicks = [int64]0
     $nativeExe = [string]$pwshPath
@@ -219,11 +223,21 @@ function Invoke-CursorProcess {
                 $count = $stdoutRead.GetAwaiter().GetResult()
                 if ($count -eq 0) { $stdoutClosed = $true }
                 else {
-                    $stdoutFile.Write($stdoutBuffer, 0, $count)
-                    if (-not $overLimit -and (($stdoutMemory.Length + $stderrMemory.Length + $count) -le $OutputByteLimit)) {
-                        $stdoutMemory.Write($stdoutBuffer, 0, $count)
-                    } else {
+                    $room = [int64]$OutputByteLimit - $durableWritten
+                    if ($room -le 0) {
                         $overLimit = $true
+                        $stdoutTruncated = $true
+                    } else {
+                        $writeCount = if ($count -gt $room) { [int]$room } else { $count }
+                        $stdoutFile.Write($stdoutBuffer, 0, $writeCount)
+                        if (($stdoutMemory.Length + $stderrMemory.Length + $writeCount) -le $OutputByteLimit) {
+                            $stdoutMemory.Write($stdoutBuffer, 0, $writeCount)
+                        }
+                        $durableWritten += $writeCount
+                        if ($writeCount -lt $count) {
+                            $overLimit = $true
+                            $stdoutTruncated = $true
+                        }
                     }
                     $stdoutRead = $stdoutStream.ReadAsync($stdoutBuffer, 0, $stdoutBuffer.Length)
                 }
@@ -232,11 +246,21 @@ function Invoke-CursorProcess {
                 $count = $stderrRead.GetAwaiter().GetResult()
                 if ($count -eq 0) { $stderrClosed = $true }
                 else {
-                    $stderrFile.Write($stderrBuffer, 0, $count)
-                    if (-not $overLimit -and (($stdoutMemory.Length + $stderrMemory.Length + $count) -le $OutputByteLimit)) {
-                        $stderrMemory.Write($stderrBuffer, 0, $count)
-                    } else {
+                    $room = [int64]$OutputByteLimit - $durableWritten
+                    if ($room -le 0) {
                         $overLimit = $true
+                        $stderrTruncated = $true
+                    } else {
+                        $writeCount = if ($count -gt $room) { [int]$room } else { $count }
+                        $stderrFile.Write($stderrBuffer, 0, $writeCount)
+                        if (($stdoutMemory.Length + $stderrMemory.Length + $writeCount) -le $OutputByteLimit) {
+                            $stderrMemory.Write($stderrBuffer, 0, $writeCount)
+                        }
+                        $durableWritten += $writeCount
+                        if ($writeCount -lt $count) {
+                            $overLimit = $true
+                            $stderrTruncated = $true
+                        }
                     }
                     $stderrRead = $stderrStream.ReadAsync($stderrBuffer, 0, $stderrBuffer.Length)
                 }
@@ -252,6 +276,8 @@ function Invoke-CursorProcess {
         if ($rootExited) { $nativeExit = [int]$process.ExitCode }
     } catch {
         $runFailure = $_
+        $failTypeName = $_.Exception.GetType().FullName
+        if ($failTypeName -cmatch '(?i)IOException|IO\.IOException') { $processFailureClass = 'stream_io' }
         try { if ($processStarted -and $process.HasExited) { $nativeExit = [int]$process.ExitCode } } catch { }
     } finally {
         if ($null -ne $stdoutFile) { try { $stdoutFile.Flush(); $stdoutFile.Dispose() } catch { } }
@@ -273,46 +299,73 @@ function Invoke-CursorProcess {
     if ($null -ne $runFailure) {
         $failMessage = [string]$runFailure.Exception.Message
         $failType = $runFailure.Exception.GetType().FullName
+        if ([string]::IsNullOrWhiteSpace($processFailureClass) -and $failType -cmatch '(?i)IOException') {
+            $processFailureClass = 'stream_io'
+            $failMessage = 'Cursor CLI stream I/O failed.'
+        }
     } elseif ($overLimit) {
         $failMessage = 'Cursor CLI output exceeded the bounded result size.'
         $failType = 'System.InvalidOperationException'
+        $processFailureClass = 'output_limit'
     } elseif ($timedOut) {
         $failMessage = 'Cursor CLI startup or command probe exceeded its bounded window.'
         $failType = 'System.InvalidOperationException'
     } elseif (-not $jobClosed -or ($processStarted -and -not $rootExited)) {
         $failMessage = 'Cursor process-tree termination could not be confirmed. Further dispatch is blocked.'
         $failType = 'System.InvalidOperationException'
+        $processFailureClass = 'termination_uncertain'
     }
+    $stdoutPreview = ''
+    try { $stdoutPreview = [Text.Encoding]::UTF8.GetString($stdoutMemory.ToArray()) } catch { }
+    $observed = Get-DirectCursorObservedIdentity -Stdout $stdoutPreview -Workspace $WorkingDirectory
     $classification = if (-not [string]::IsNullOrWhiteSpace($failMessage)) {
-        Get-DirectCursorFailureClassification -Message $failMessage -Stage $Stage
+        Get-DirectCursorFailureClassification -Message $failMessage -Stage $Stage -ExceptionType $failType -ProcessFailureClass $processFailureClass
     } else { $null }
-    $diag = Write-DirectCursorProcessDiagnostic `
-        -Directory $diagDir `
-        -Stage $Stage `
-        -ExceptionType $failType `
-        -ExceptionMessage $failMessage `
-        -Classification $classification `
-        -RequestedSessionId $RequestedSessionId `
-        -ReturnedSessionId '' `
-        -NativePid $nativePid `
-        -NativeStartTicks $nativeTicks `
-        -NativeExecutable $nativeExe `
-        -NativeExitCode $nativeExit `
-        -StdoutPath $stdoutPath `
-        -StderrPath $stderrPath `
-        -OutputByteLimit $OutputByteLimit `
-        -MemoryStdoutBytes ([int]$stdoutMemory.Length) `
-        -MemoryStderrBytes ([int]$stderrMemory.Length) `
-        -ProcessTimeoutSeconds $ProcessTimeoutSeconds `
-        -OverLimit $overLimit
+    $diag = $null
+    try {
+        $diag = Write-DirectCursorProcessDiagnostic `
+            -Directory $diagDir `
+            -Stage $(if ($null -ne $classification) { [string]$classification.failure_stage } else { $Stage }) `
+            -ExceptionType $failType `
+            -ExceptionMessage $failMessage `
+            -Classification $classification `
+            -RequestedSessionId $RequestedSessionId `
+            -ReturnedSessionId '' `
+            -ObservedSessionId ([string]$observed.session_id) `
+            -NativePid $nativePid `
+            -NativeStartTicks $nativeTicks `
+            -NativeExecutable $nativeExe `
+            -NativeExitCode $nativeExit `
+            -StdoutPath $stdoutPath `
+            -StderrPath $stderrPath `
+            -OutputByteLimit $OutputByteLimit `
+            -MemoryStdoutBytes ([int]$stdoutMemory.Length) `
+            -MemoryStderrBytes ([int]$stderrMemory.Length) `
+            -ProcessTimeoutSeconds $ProcessTimeoutSeconds `
+            -OverLimit $overLimit `
+            -StdoutTruncated $stdoutTruncated `
+            -StderrTruncated $stderrTruncated `
+            -ProcessFailureClass $processFailureClass
+    } catch {
+        if ([string]::IsNullOrWhiteSpace($failMessage)) { throw }
+    }
 
     if (-not [string]::IsNullOrWhiteSpace($failMessage)) {
         $ex = [InvalidOperationException]::new($failMessage)
-        $ex.Data['telephone_direct_cursor_diagnostic_path'] = [string]$diag.path
+        if ($null -ne $diag) {
+            $ex.Data['telephone_direct_cursor_diagnostic_path'] = [string]$diag.path
+            $ex.Data['telephone_direct_cursor_stdout_bytes'] = [int64]$diag.stdout_bytes
+            $ex.Data['telephone_direct_cursor_stderr_bytes'] = [int64]$diag.stderr_bytes
+        } else {
+            $ex.Data['telephone_direct_cursor_stdout_bytes'] = [int64]$stdoutMemory.Length
+            $ex.Data['telephone_direct_cursor_stderr_bytes'] = [int64]$stderrMemory.Length
+        }
         $ex.Data['telephone_direct_cursor_exception_type'] = $failType
-        $ex.Data['telephone_direct_cursor_stdout_bytes'] = [int64]$diag.stdout_bytes
-        $ex.Data['telephone_direct_cursor_stderr_bytes'] = [int64]$diag.stderr_bytes
-        if ($null -ne $diag.native_exit_code) { $ex.Data['telephone_direct_cursor_native_exit_code'] = [int]$diag.native_exit_code }
+        $ex.Data['telephone_direct_cursor_process_failure_class'] = $processFailureClass
+        $ex.Data['telephone_direct_cursor_observed_session_id'] = [string]$observed.session_id
+        $ex.Data['telephone_direct_cursor_stdout_truncated'] = [bool]$stdoutTruncated
+        $ex.Data['telephone_direct_cursor_stderr_truncated'] = [bool]$stderrTruncated
+        if ($null -ne $nativeExit) { $ex.Data['telephone_direct_cursor_native_exit_code'] = [int]$nativeExit }
         throw $ex
     }
     return [pscustomobject]@{
@@ -324,6 +377,10 @@ function Invoke-CursorProcess {
         StdoutBytes = [int64]$diag.stdout_bytes
         StderrBytes = [int64]$diag.stderr_bytes
         NativePid = $nativePid
+        ObservedSessionId = [string]$observed.session_id
+        StdoutTruncated = [bool]$stdoutTruncated
+        StderrTruncated = [bool]$stderrTruncated
+        ProcessFailureClass = $processFailureClass
     }
 }
 
@@ -394,6 +451,7 @@ $failureStage = 'input_validation'
 $failureEvidence = $null
 $run = $null
 $volatileSnapshotExclusions = @()
+$snapshotCompleted = $false
 try {
     if (-not $QualifiedProbe -and [string]::IsNullOrWhiteSpace($Prompt)) { throw 'Prompt must not be empty.' }
     if ($AllowFast) { throw 'Direct Cursor Fast mode is disabled.' }
@@ -608,14 +666,18 @@ try {
 
         $failureStage = 'cursor_execution'
         $run = Invoke-CursorProcess -Arguments $arguments -WorkingDirectory $workspace -NodePath ([string]$install.node) -IndexPath ([string]$install.index) -ProcessTimeoutSeconds $TimeoutSeconds -OutputByteLimit $MaxOutputBytes -DiagnosticRoot $stateRoot -DispatchId $dispatchId -RequestedSessionId $ResumeSessionId -Stage $failureStage
+        $failureStage = 'post_execution_reparse'
         if (Test-DirectWorkspaceReparse -Root $workspace) { throw 'Workspace contains a reparse point and is not eligible for automated dispatch.' }
+        $failureStage = 'post_execution_snapshot'
         $afterExclusions = @()
         $afterSnapshot = Get-WorkspaceSnapshot -Root $workspace -AllowedWriteRelative $allowedWriteRelative -VolatileExclusions ([ref]$afterExclusions)
+        $failureStage = 'post_execution_exclusion'
         $beforeExclusionKey = @($beforeExclusions | ForEach-Object { [string]$_.path } | Sort-Object) -join "`n"
         $afterExclusionKey = @($afterExclusions | ForEach-Object { [string]$_.path } | Sort-Object) -join "`n"
         if ($beforeExclusionKey -cne $afterExclusionKey) { throw 'Runtime volatile exclusion set changed during dispatch.' }
         $volatileSnapshotExclusions = @($beforeExclusions)
         $changes = @(Compare-WorkspaceSnapshot -Before $beforeSnapshot -After $afterSnapshot)
+        $snapshotCompleted = $true
         $failureStage = 'terminal_validation'
         $completed = Complete-DirectCursorAgentRun `
             -Mode $Mode `
@@ -693,6 +755,7 @@ try {
         $summary = Get-DirectNoteValue -Object $completed -Name 'result'
         if ($null -eq $summary) { throw 'Cursor result is missing.' }
         $summary.volatile_snapshot_exclusions = @($volatileSnapshotExclusions)
+        $summary.changed_files_availability = 'available'
         $summary.prompt = [ordered]@{ path = [string]$promptIdentity.FullName; bytes = [int64]$promptBytes.Length; sha256 = $promptSha256 }
         $summary | ConvertTo-Json -Depth 10
     } finally {
@@ -703,7 +766,11 @@ try {
         }
     }
 } catch {
-    $classification = Get-DirectCursorFailureClassification -Message $_.Exception.Message -Stage $failureStage
+    $processFailureClass = ''
+    if ($null -ne $_.Exception.Data -and $null -ne $_.Exception.Data['telephone_direct_cursor_process_failure_class']) {
+        $processFailureClass = [string]$_.Exception.Data['telephone_direct_cursor_process_failure_class']
+    }
+    $classification = Get-DirectCursorFailureClassification -Message $_.Exception.Message -Stage $failureStage -ExceptionType $_.Exception.GetType().FullName -ProcessFailureClass $processFailureClass
     $promptPublicIdentity = if ($null -ne $promptIdentity) {
         [ordered]@{ path = [string]$promptIdentity.FullName; bytes = [int64]$promptBytes.Length; sha256 = $promptSha256 }
     } else { $null }
@@ -752,7 +819,8 @@ try {
         }
         if ([string]::IsNullOrWhiteSpace($diagPath)) {
             [IO.Directory]::CreateDirectory($ownDir) | Out-Null
-            $stageDiag = Write-DirectCursorProcessDiagnostic -Directory $ownDir -Stage $failureStage -ExceptionType $_.Exception.GetType().FullName -ExceptionMessage $_.Exception.Message -Classification $classification -RequestedSessionId ([string]$ResumeSessionId)
+            $null = Restrict-DirectCursorDiagnosticDirectory -Directory $ownDir
+            $stageDiag = Write-DirectCursorProcessDiagnostic -Directory $ownDir -Stage $failureStage -ExceptionType $_.Exception.GetType().FullName -ExceptionMessage $_.Exception.Message -Classification $classification -RequestedSessionId ([string]$ResumeSessionId) -ProcessFailureClass $processFailureClass
             $diagPath = [string]$stageDiag.path
         }
     }
@@ -770,6 +838,36 @@ try {
             $stderrBytes = [int64]$failureEvidence.stderr_spool.bytes
         }
     }
+    $observation = Get-DirectCursorFailureObservation `
+        -Run $run `
+        -DiagnosticPath $diagPath `
+        -Workspace $workspace `
+        -BeforeSnapshot $beforeSnapshot `
+        -AllowedWriteRelative $allowedWriteRelative `
+        -SnapshotCompleted $snapshotCompleted `
+        -ExistingChanges $changes
+    $observedSession = $observation.observed_session
+    $changedFilesAvailability = [string]$observation.changed_files_availability
+    if ($changedFilesAvailability -ceq 'available') {
+        $changes = @($observation.changed_files)
+    }
+    if (@($observation.secondary_snapshot_errors).Count -gt 0) {
+        $failureEvidence.secondary_snapshot_error_types = @($observation.secondary_snapshot_errors)
+        $failureEvidence.primary_failure_retained = $true
+    }
+    $failureEvidence.observed_session = $observedSession
+    $failureEvidence.changed_files_availability = $changedFilesAvailability
+    $failureEvidence.process_failure_class = $processFailureClass
+    $observedFromException = ''
+    if ($null -ne $_.Exception.Data -and $null -ne $_.Exception.Data['telephone_direct_cursor_observed_session_id']) {
+        $observedFromException = [string]$_.Exception.Data['telephone_direct_cursor_observed_session_id']
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$observedSession.session_id) -and -not [string]::IsNullOrWhiteSpace($observedFromException)) {
+        $observedSession.session_id = $observedFromException
+        $observedSession.status = 'partial'
+        $observedSession.source = 'process_exception_data'
+        $observedSession.accepted = $false
+    }
     $violatingPaths = @()
     if ($null -ne $_.Exception.Data -and $null -ne $_.Exception.Data['telephone_direct_cursor_violating_paths']) {
         $violatingPaths = @($_.Exception.Data['telephone_direct_cursor_violating_paths'])
@@ -784,6 +882,8 @@ try {
         failure_kind = [string]$classification.failure_kind
         failure_code = [string]$classification.failure_code
         failure_stage = [string]$classification.failure_stage
+        public_error_code = [string]$classification.public_error_code
+        process_failure_class = $processFailureClass
         exception_type = $_.Exception.GetType().FullName
         error = Get-DirectPublicError -ErrorCode ([string]$classification.public_error_code)
         workspace = $workspace
@@ -794,13 +894,15 @@ try {
         requested_native_session_id = [string]$ResumeSessionId
         returned_native_session_id = ''
         session_id = ''
+        observed_session = $observedSession
         native_exit_code = $nativeExit
         stdout_bytes = $stdoutBytes
         stderr_bytes = $stderrBytes
         violating_paths = @($violatingPaths)
         policy_violation = ($violatingPaths.Count -gt 0)
         fast_disabled = $true
-        changed_files = @($changes)
+        changed_files_availability = $changedFilesAvailability
+        changed_files = $(if ($changedFilesAvailability -ceq 'available') { @($changes) } else { $null })
         volatile_snapshot_exclusions = @($volatileSnapshotExclusions)
         evidence = $failureEvidence
     } | ConvertTo-Json -Depth 8

@@ -1,0 +1,4 @@
+FAKE-SOURCE-NOT-FOR-SWS
+These recovery fixtures are synthetic labeled copies for isolated adapter tests.
+They must never be admitted into real Telephone/SWS state.
+The historical native session 722696da-d4ee-4514-a3ea-e94a6ff08a02 is referenced only by identity in _sws_cursor_repair inputs.

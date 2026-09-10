@@ -8,6 +8,7 @@
     "start": true,
     "follow_up": true,
     "recover": true,
-    "exact_native_session": true
+    "exact_native_session": true,
+    "partial_session_admission": true
   }
 }

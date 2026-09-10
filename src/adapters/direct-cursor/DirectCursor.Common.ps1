@@ -169,6 +169,11 @@ function Get-DirectPublicErrorCatalog {
         DIRECT_CURSOR_CLI_FAILURE = 'Direct Cursor CLI did not complete successfully.'
         DIRECT_CURSOR_TERMINAL_INVALID = 'Direct Cursor terminal result is invalid.'
         DIRECT_CURSOR_AUTH_FAILED = 'Direct Cursor subscription authentication is unavailable.'
+        DIRECT_CURSOR_OUTPUT_LIMIT = 'Direct Cursor CLI output exceeded the bounded result size.'
+        DIRECT_CURSOR_STREAM_IO = 'Direct Cursor CLI stream I/O failed.'
+        DIRECT_CURSOR_TERMINATION_UNCERTAIN = 'Direct Cursor process-tree termination could not be confirmed.'
+        DIRECT_CURSOR_POST_EXECUTION = 'Direct Cursor post-execution snapshot or workspace check failed.'
+        DIRECT_CURSOR_RESULT_PROJECTION = 'Direct Cursor result or receipt projection failed.'
     }
 }
 
@@ -179,6 +184,14 @@ function Get-DirectPublicError {
     $catalog = Get-DirectPublicErrorCatalog
     $code = [string]$ErrorCode
     $text = [string]$Message
+    if (-not [string]::IsNullOrWhiteSpace($code) -and $catalog.Contains($code)) {
+        return [string]$catalog[$code]
+    }
+    if ([string]::IsNullOrWhiteSpace($code) -and -not [string]::IsNullOrWhiteSpace($text)) {
+        foreach ($key in @($catalog.Keys)) {
+            if ($text -ceq [string]$catalog[$key]) { $code = [string]$key; break }
+        }
+    }
     if ([string]::IsNullOrWhiteSpace($code)) {
         if ($text -cmatch '(?i)selected model.*capacity|model is at capacity|at capacity') { $code = 'DIRECT_CURSOR_MODEL_CAPACITY' }
         elseif ($text -cmatch '(?i)rate.?limit|too many requests|\b429\b') { $code = 'DIRECT_CURSOR_RATE_LIMITED' }
@@ -187,6 +200,12 @@ function Get-DirectPublicError {
         elseif ($text -cmatch '(?i)already exists|duplicate') { $code = 'ADAPTER_DUPLICATE_NO_RERUN' }
         elseif ($text -cmatch '(?i)Fast') { $code = 'DIRECT_CURSOR_FAST_DISABLED' }
         elseif ($text -cmatch '(?i)write path|write scope|ReadOnly|Verify') { $code = 'DIRECT_CURSOR_WRITE_SCOPE' }
+        elseif ($text -cmatch '(?i)output exceeded the bounded result size') { $code = 'DIRECT_CURSOR_OUTPUT_LIMIT' }
+        elseif ($text -cmatch '(?i)stream I/O|I/O error|IOException') { $code = 'DIRECT_CURSOR_STREAM_IO' }
+        elseif ($text -cmatch '(?i)process-tree termination could not be confirmed') { $code = 'DIRECT_CURSOR_TERMINATION_UNCERTAIN' }
+        elseif ($text -cmatch '(?i)post-execution|volatile exclusion|reparse point and is not eligible') { $code = 'DIRECT_CURSOR_POST_EXECUTION' }
+        elseif ($text -cmatch '(?i)receipt|result projection|not a terminal result object|Cursor result is missing') { $code = 'DIRECT_CURSOR_RESULT_PROJECTION' }
+        elseif ($text -cmatch '(?i)malformed NDJSON|stream must contain|terminal result|session identity is missing or inconsistent') { $code = 'DIRECT_CURSOR_TERMINAL_INVALID' }
         elseif ($text -cmatch '(?i)missing|unknown') { $code = 'ADAPTER_DURABLE_STATE_MISSING' }
         else { $code = 'ADAPTER_TRANSPORT_FAILED' }
     }
@@ -198,13 +217,46 @@ function Get-DirectCursorFailureClassification {
     [CmdletBinding()]
     param(
         [AllowNull()][string]$Message,
-        [string]$Stage = 'unknown'
+        [string]$Stage = 'unknown',
+        [string]$ExceptionType = '',
+        [string]$ProcessFailureClass = ''
     )
 
     $text = [string]$Message
+    $stage = if ([string]::IsNullOrWhiteSpace($Stage)) { 'unknown' } else { $Stage }
     $code = 'adapter_transport_failure'
     $publicCode = 'ADAPTER_TRANSPORT_FAILED'
-    if ($text -cmatch '(?i)selected model.*capacity|model is at capacity|at capacity') {
+    $processClass = [string]$ProcessFailureClass
+    $exceptionType = [string]$ExceptionType
+
+            if ($processClass -ceq 'output_limit' -or $text -cmatch '(?i)output exceeded the bounded result size') {
+        $code = 'cursor_output_limit'
+        $publicCode = 'DIRECT_CURSOR_OUTPUT_LIMIT'
+        if ($stage -ceq 'cursor_execution' -or $stage -ceq 'unknown') { $stage = 'process_output_limit' }
+    } elseif (
+        $processClass -ceq 'stream_io' -or
+        $text -cmatch '(?i)stream I/O|I/O error while reading Cursor' -or
+        (
+            $exceptionType -cmatch '(?i)IOException|IO\.IOException' -and
+            ($stage -ceq 'cursor_execution' -or $stage -ceq 'unknown' -or $stage -ceq 'stream_io')
+        )
+    ) {
+        $code = 'cursor_stream_io'
+        $publicCode = 'DIRECT_CURSOR_STREAM_IO'
+        if ($stage -ceq 'cursor_execution' -or $stage -ceq 'unknown') { $stage = 'stream_io' }
+    } elseif ($processClass -ceq 'termination_uncertain' -or $text -cmatch '(?i)process-tree termination could not be confirmed') {
+        $code = 'cursor_termination_uncertain'
+        $publicCode = 'DIRECT_CURSOR_TERMINATION_UNCERTAIN'
+        if ($stage -ceq 'cursor_execution' -or $stage -ceq 'unknown') { $stage = 'termination_uncertain' }
+    } elseif ($stage -cmatch '(?i)^post_execution_' -or $text -cmatch '(?i)Runtime volatile exclusion set changed|reparse point and is not eligible|Workspace contains a reparse point') {
+        $code = 'cursor_post_execution'
+        $publicCode = 'DIRECT_CURSOR_POST_EXECUTION'
+        if ($stage -ceq 'cursor_execution') { $stage = 'post_execution_snapshot' }
+    } elseif ($stage -ceq 'result_projection' -or $text -cmatch '(?i)not a terminal result object|Cursor result is missing|receipt belongs to another job|result prompt binding differs') {
+        $code = 'cursor_result_projection'
+        $publicCode = 'DIRECT_CURSOR_RESULT_PROJECTION'
+        if ($stage -ceq 'unknown') { $stage = 'result_projection' }
+    } elseif ($text -cmatch '(?i)selected model.*capacity|model is at capacity|at capacity') {
         $code = 'cursor_model_capacity'
         $publicCode = 'DIRECT_CURSOR_MODEL_CAPACITY'
     } elseif ($text -cmatch '(?i)rate.?limit|too many requests|\b429\b') {
@@ -219,7 +271,8 @@ function Get-DirectCursorFailureClassification {
     } elseif ($text -cmatch '(?i)malformed NDJSON|stream must contain|terminal result|session identity is missing or inconsistent') {
         $code = 'cursor_terminal_invalid'
         $publicCode = 'DIRECT_CURSOR_TERMINAL_INVALID'
-    }     elseif ($text -cmatch '(?i)Cursor CLI exited|Cursor CLI wrote to stderr|Cursor process-tree|Cursor CLI process did not start|output exceeded the bounded result size|startup or command probe exceeded') {
+        if ($stage -ceq 'cursor_execution' -or $stage -ceq 'unknown') { $stage = 'terminal_validation' }
+    } elseif ($text -cmatch '(?i)Cursor CLI exited|Cursor CLI wrote to stderr|Cursor CLI process did not start|startup or command probe exceeded') {
         $code = 'cursor_cli_failure'
         $publicCode = 'DIRECT_CURSOR_CLI_FAILURE'
     }
@@ -227,8 +280,40 @@ function Get-DirectCursorFailureClassification {
     return [ordered]@{
         failure_kind = 'transport'
         failure_code = $code
-        failure_stage = $(if ([string]::IsNullOrWhiteSpace($Stage)) { 'unknown' } else { $Stage })
+        failure_stage = $stage
         public_error_code = $publicCode
+        process_failure_class = $processClass
+    }
+}
+
+function Restrict-DirectCursorDiagnosticDirectory {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$Directory)
+
+    $full = [IO.Path]::GetFullPath($Directory).TrimEnd('\')
+    if (-not [IO.Directory]::Exists($full)) { throw 'Diagnostic directory is missing.' }
+    $item = Get-Item -LiteralPath $full -Force -ErrorAction Stop
+    if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'Diagnostic path is not a regular directory.'
+    }
+    try {
+        $acl = Get-Acl -LiteralPath $full
+        $acl.SetAccessRuleProtection($true, $false)
+        foreach ($rule in @($acl.Access)) {
+            try { $null = $acl.RemoveAccessRule($rule) } catch { }
+        }
+        $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+        if ($null -eq $identity -or $null -eq $identity.User) { throw 'Diagnostic owner identity is unavailable.' }
+        $access = [Security.AccessControl.FileSystemRights]::FullControl
+        $inherit = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit
+        $propagate = [Security.AccessControl.PropagationFlags]::None
+        $allow = [Security.AccessControl.AccessControlType]::Allow
+        $rule = [Security.AccessControl.FileSystemAccessRule]::new($identity.User, $access, $inherit, $propagate, $allow)
+        $acl.AddAccessRule($rule)
+        Set-Acl -LiteralPath $full -AclObject $acl
+        return $true
+    } catch {
+        return $false
     }
 }
 
@@ -243,6 +328,7 @@ function New-DirectCursorProcessDiagnosticDirectory {
     $dispatch = if ([string]::IsNullOrWhiteSpace($DispatchId)) { [Guid]::NewGuid().ToString('D') } else { $DispatchId }
     $dir = Join-Path $root ('diagnostics\' + $dispatch + '\' + [Guid]::NewGuid().ToString('N'))
     [IO.Directory]::CreateDirectory($dir) | Out-Null
+    $null = Restrict-DirectCursorDiagnosticDirectory -Directory $dir
     return $dir
 }
 
@@ -266,7 +352,11 @@ function Write-DirectCursorProcessDiagnostic {
         [int]$MemoryStdoutBytes = 0,
         [int]$MemoryStderrBytes = 0,
         [int]$ProcessTimeoutSeconds = 0,
-        [bool]$OverLimit = $false
+        [bool]$OverLimit = $false,
+        [bool]$StdoutTruncated = $false,
+        [bool]$StderrTruncated = $false,
+        [string]$ProcessFailureClass = '',
+        [string]$ObservedSessionId = ''
     )
 
     $dir = [IO.Path]::GetFullPath($Directory).TrimEnd('\')
@@ -283,8 +373,10 @@ function Write-DirectCursorProcessDiagnostic {
         $stderrBytes = [int64]$stderrIdentity.bytes
     }
     $exitValue = $null
+    $exitAvailable = $false
     if ($null -ne $NativeExitCode -and [string]$NativeExitCode -ne '') {
         $exitValue = [int]$NativeExitCode
+        $exitAvailable = $true
     }
     $doc = [ordered]@{
         protocol_version = 'telephone-line-direct-cursor-process-diagnostic-v1'
@@ -295,15 +387,21 @@ function Write-DirectCursorProcessDiagnostic {
         failure_code = if ($null -ne $Classification) { [string](Get-DirectNoteValue -Object $Classification -Name 'failure_code') } else { '' }
         failure_stage = if ($null -ne $Classification) { [string](Get-DirectNoteValue -Object $Classification -Name 'failure_stage') } else { $Stage }
         public_error_code = if ($null -ne $Classification) { [string](Get-DirectNoteValue -Object $Classification -Name 'public_error_code') } else { '' }
+        process_failure_class = [string]$ProcessFailureClass
         requested_native_session_id = [string]$RequestedSessionId
         returned_native_session_id = [string]$ReturnedSessionId
+        observed_native_session_id = [string]$ObservedSessionId
         returned_session_verified = $false
         native_pid = [int]$NativePid
         native_start_time_utc_ticks = [int64]$NativeStartTicks
         native_executable = [string]$NativeExecutable
         native_exit_code = $exitValue
+        native_exit_available = [bool]$exitAvailable
         stdout_bytes = $stdoutBytes
         stderr_bytes = $stderrBytes
+        stdout_truncated = [bool]$StdoutTruncated
+        stderr_truncated = [bool]$StderrTruncated
+        captured_truncated = [bool]($StdoutTruncated -or $StderrTruncated -or $OverLimit)
         memory_stdout_bytes = [int]$MemoryStdoutBytes
         memory_stderr_bytes = [int]$MemoryStderrBytes
         output_byte_limit = [int]$OutputByteLimit
@@ -328,6 +426,12 @@ function Write-DirectCursorProcessDiagnostic {
         stderr = $stderrIdentity
         requested_native_session_id = [string]$RequestedSessionId
         returned_native_session_id = [string]$ReturnedSessionId
+        observed_native_session_id = [string]$ObservedSessionId
+        stdout_truncated = [bool]$StdoutTruncated
+        stderr_truncated = [bool]$StderrTruncated
+        captured_truncated = [bool]($StdoutTruncated -or $StderrTruncated -or $OverLimit)
+        process_failure_class = [string]$ProcessFailureClass
+        native_exit_available = [bool]$exitAvailable
     }
 }
 
@@ -1857,5 +1961,576 @@ function Invoke-DirectCursorLaunchPreflight {
         blockers = @($blockers)
         state_changes = $false
         model_session_created = $false
+    }
+}
+
+function Convert-DirectCursorFailureCodeToPublicErrorCode {
+    [CmdletBinding()]
+    param([AllowNull()][string]$FailureCode)
+
+    switch -Regex ([string]$FailureCode) {
+        '^(?i)cursor_output_limit$' { return 'DIRECT_CURSOR_OUTPUT_LIMIT' }
+        '^(?i)cursor_stream_io$' { return 'DIRECT_CURSOR_STREAM_IO' }
+        '^(?i)cursor_termination_uncertain$' { return 'DIRECT_CURSOR_TERMINATION_UNCERTAIN' }
+        '^(?i)cursor_post_execution$' { return 'DIRECT_CURSOR_POST_EXECUTION' }
+        '^(?i)cursor_result_projection$' { return 'DIRECT_CURSOR_RESULT_PROJECTION' }
+        '^(?i)cursor_cli_failure$' { return 'DIRECT_CURSOR_CLI_FAILURE' }
+        '^(?i)cursor_terminal_invalid$' { return 'DIRECT_CURSOR_TERMINAL_INVALID' }
+        '^(?i)cursor_authentication_failed$' { return 'DIRECT_CURSOR_AUTH_FAILED' }
+        '^(?i)cursor_model_capacity$' { return 'DIRECT_CURSOR_MODEL_CAPACITY' }
+        '^(?i)cursor_rate_limited$' { return 'DIRECT_CURSOR_RATE_LIMITED' }
+        '^(?i)cursor_workspace_busy$' { return 'DIRECT_CURSOR_WORKSPACE_BUSY' }
+        default { return '' }
+    }
+}
+
+function Resolve-DirectCursorReceiptPublicError {
+    [CmdletBinding()]
+    param([AllowNull()]$CursorResult)
+
+    if ($null -eq $CursorResult) {
+        return [ordered]@{
+            public_error_code = 'ADAPTER_TRANSPORT_FAILED'
+            public_error = Get-DirectPublicError -ErrorCode 'ADAPTER_TRANSPORT_FAILED'
+            transport_error = Get-DirectPublicError -ErrorCode 'ADAPTER_TRANSPORT_FAILED'
+            preserve_typed_failure = $false
+        }
+    }
+    $isPolicy = [string](Get-DirectNoteValue -Object $CursorResult -Name 'failure_kind') -ceq 'policy'
+    $success = Get-DirectNoteValue -Object $CursorResult -Name 'success'
+    $existingCode = [string](Get-DirectNoteValue -Object $CursorResult -Name 'public_error_code')
+    $failureCode = [string](Get-DirectNoteValue -Object $CursorResult -Name 'failure_code')
+    $mapped = Convert-DirectCursorFailureCodeToPublicErrorCode -FailureCode $failureCode
+    $code = $existingCode
+    if ([string]::IsNullOrWhiteSpace($code)) { $code = $mapped }
+    $existingError = [string](Get-DirectNoteValue -Object $CursorResult -Name 'error')
+    $existingPublic = [string](Get-DirectNoteValue -Object $CursorResult -Name 'public_error')
+    $message = if (-not [string]::IsNullOrWhiteSpace($existingPublic)) { $existingPublic } else { $existingError }
+    $text = Get-DirectPublicError -ErrorCode $code -Message $message
+    $catalog = Get-DirectPublicErrorCatalog
+    $resolvedCode = $code
+    if ([string]::IsNullOrWhiteSpace($resolvedCode)) {
+        foreach ($key in @($catalog.Keys)) {
+            if ($text -ceq [string]$catalog[$key]) { $resolvedCode = [string]$key; break }
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($resolvedCode) -or -not $catalog.Contains($resolvedCode)) {
+        $resolvedCode = 'ADAPTER_TRANSPORT_FAILED'
+        $text = [string]$catalog[$resolvedCode]
+    } else {
+        $text = [string]$catalog[$resolvedCode]
+    }
+    $transport = $null
+    if ($success -ne $true -and -not $isPolicy) { $transport = $text }
+    return [ordered]@{
+        public_error_code = $resolvedCode
+        public_error = $text
+        transport_error = $transport
+        preserve_typed_failure = (-not [string]::IsNullOrWhiteSpace($failureCode) -or -not [string]::IsNullOrWhiteSpace($existingCode))
+    }
+}
+
+function Get-DirectCursorObservedIdentity {
+    [CmdletBinding()]
+    param(
+        [AllowNull()][string]$Stdout,
+        [string]$Workspace = ''
+    )
+
+    $observed = [ordered]@{
+        session_id = ''
+        status = 'absent'
+        source = 'none'
+        accepted = $false
+        cwd = ''
+        cwd_matches_workspace = $false
+        model_display = ''
+        api_key_source = ''
+        init_available = $false
+        terminal_available = $false
+        truncated_or_malformed = $false
+    }
+    if ([string]::IsNullOrWhiteSpace($Stdout)) { return $observed }
+
+    foreach ($line in @($Stdout -split "`r?`n")) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        $event = $null
+        try { $event = $line | ConvertFrom-Json } catch {
+            $observed.truncated_or_malformed = $true
+            continue
+        }
+        $type = [string](Get-DirectNoteValue -Object $event -Name 'type')
+        $subtype = [string](Get-DirectNoteValue -Object $event -Name 'subtype')
+        if ($type -ceq 'system' -and $subtype -ceq 'init' -and $true -ne $observed.init_available) {
+            $observed.init_available = $true
+            $observed.source = 'init_event'
+            $session = [string](Get-DirectNoteValue -Object $event -Name 'session_id')
+            if (-not [string]::IsNullOrWhiteSpace($session)) {
+                $observed.session_id = $session
+                $observed.status = 'partial'
+            }
+            $cwd = [string](Get-DirectNoteValue -Object $event -Name 'cwd')
+            $observed.cwd = $cwd
+            if (-not [string]::IsNullOrWhiteSpace($Workspace) -and -not [string]::IsNullOrWhiteSpace($cwd)) {
+                $observed.cwd_matches_workspace = [IO.Path]::GetFullPath($cwd).TrimEnd('\').Equals(
+                    [IO.Path]::GetFullPath($Workspace).TrimEnd('\'),
+                    [StringComparison]::OrdinalIgnoreCase
+                )
+            }
+            $model = [string](Get-DirectNoteValue -Object $event -Name 'model')
+            if (-not [string]::IsNullOrWhiteSpace($model)) {
+                try { $observed.model_display = ConvertTo-DirectStableCursorModelDisplay -Display $model } catch { $observed.model_display = $model.Trim() }
+            }
+            $observed.api_key_source = [string](Get-DirectNoteValue -Object $event -Name 'apiKeySource')
+        }
+        if ($type -ceq 'result') { $observed.terminal_available = $true }
+    }
+    if ($observed.init_available -and $observed.terminal_available) {
+        $observed.status = $(if ([string]::IsNullOrWhiteSpace([string]$observed.session_id)) { 'absent' } else { 'observed_unaccepted' })
+    }
+    $observed.accepted = $false
+    return $observed
+}
+
+function Get-DirectCursorStdoutTextForObservation {
+    [CmdletBinding()]
+    param(
+        $Run,
+        [string]$DiagnosticPath = '',
+        [int]$Limit = 16777216
+    )
+
+    $fromRun = [string](Get-DirectNoteValue -Object $Run -Name 'Stdout')
+    if (-not [string]::IsNullOrWhiteSpace($fromRun)) { return $fromRun }
+    $dir = ''
+    if (-not [string]::IsNullOrWhiteSpace($DiagnosticPath) -and [IO.File]::Exists($DiagnosticPath)) {
+        $dir = [IO.Path]::GetDirectoryName($DiagnosticPath)
+    }
+    $stdoutPath = if (-not [string]::IsNullOrWhiteSpace($dir)) { Join-Path $dir 'stdout.bin' } else { '' }
+    if ([string]::IsNullOrWhiteSpace($stdoutPath) -or -not [IO.File]::Exists($stdoutPath)) { return '' }
+    $fs = [IO.File]::Open($stdoutPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+    try {
+        $cap = [Math]::Min([int64]$Limit, [int64]$fs.Length)
+        $buf = [byte[]]::new([int]$cap)
+        $read = $fs.Read($buf, 0, $buf.Length)
+        $enc = [Text.UTF8Encoding]::new($false, $false)
+        return $enc.GetString($buf, 0, $read)
+    } finally { $fs.Dispose() }
+}
+
+function Get-DirectCursorFailureObservation {
+    [CmdletBinding()]
+    param(
+        $Run,
+        [string]$DiagnosticPath = '',
+        [string]$Workspace = '',
+        $BeforeSnapshot = $null,
+        [string[]]$AllowedWriteRelative,
+        [bool]$SnapshotCompleted = $false,
+        $ExistingChanges = $null
+    )
+
+    $stdoutText = Get-DirectCursorStdoutTextForObservation -Run $Run -DiagnosticPath $DiagnosticPath
+    $observed = Get-DirectCursorObservedIdentity -Stdout $stdoutText -Workspace $Workspace
+    $availability = 'unknown'
+    $changes = @()
+    $secondary = [Collections.Generic.List[string]]::new()
+    if ($true -eq $SnapshotCompleted) {
+        $availability = 'available'
+        $changes = @($ExistingChanges)
+    } elseif ($null -ne $BeforeSnapshot -and -not [string]::IsNullOrWhiteSpace($Workspace) -and [IO.Directory]::Exists($Workspace)) {
+        try {
+            $afterExclusions = @()
+            $afterSnapshot = Get-DirectWorkspaceSnapshot -Root $Workspace -AllowedWriteRelative $AllowedWriteRelative -VolatileExclusions ([ref]$afterExclusions)
+            $changes = @(Compare-DirectWorkspaceSnapshot -Before $BeforeSnapshot -After $afterSnapshot)
+            $availability = 'available'
+        } catch {
+            $null = $secondary.Add($_.Exception.GetType().FullName)
+            $availability = 'unknown'
+            $changes = @()
+        }
+    }
+    return [ordered]@{
+        observed_session = $observed
+        changed_files_availability = $availability
+        changed_files = @($changes)
+        secondary_snapshot_errors = @($secondary)
+        stdout_text = $stdoutText
+    }
+}
+
+function Get-DirectCursorPartialAdmissionProtocol {
+    [CmdletBinding()]
+    param()
+    return 'telephone-line-direct-cursor-partial-admission-v1'
+}
+
+function Get-DirectCursorPartialAdmissionPath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$StateRoot,
+        [Parameter(Mandatory = $true)][string]$NativeSessionId
+    )
+
+    if ($NativeSessionId -cnotmatch '^[A-Za-z0-9._:-]+$') { throw 'Adapter native session id is malformed.' }
+    $root = Get-DirectCanonicalDirectory -Path $StateRoot
+    $leaf = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.UTF8Encoding]::new($false).GetBytes($NativeSessionId))).ToLowerInvariant()
+    $dir = Join-Path $root ('partial-admissions\' + $leaf)
+    $full = [IO.Path]::GetFullPath($dir).TrimEnd('\')
+    if (-not (Test-DirectPathWithin -Root (Join-Path $root 'partial-admissions') -Path $full -AllowEqual)) {
+        throw 'Adapter native session id is malformed.'
+    }
+    return Join-Path $full 'admission.json'
+}
+
+function Read-DirectCursorPartialAdmission {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$StateRoot,
+        [Parameter(Mandatory = $true)][string]$NativeSessionId
+    )
+
+    $path = Get-DirectCursorPartialAdmissionPath -StateRoot $StateRoot -NativeSessionId $NativeSessionId
+    if (-not [IO.File]::Exists($path)) { return $null }
+    $read = Read-DirectJson -Path $path
+    $value = $read.value
+    if ([string]$value.protocol_version -cne (Get-DirectCursorPartialAdmissionProtocol)) {
+        throw 'Direct Cursor partial admission protocol is unsupported.'
+    }
+    if ([string]$value.native_session_id -cne $NativeSessionId) {
+        throw 'Adapter native session id does not match the frozen session.'
+    }
+    return $value
+}
+
+function Test-DirectCursorJsonlTranscript {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$ExpectedSessionId
+    )
+
+    $identity = Get-DirectFileIdentity -Path $Path
+    $bytes = [IO.File]::ReadAllBytes([string]$identity.path)
+    $text = [Text.UTF8Encoding]::new($false, $true).GetString($bytes)
+    $records = 0
+    $lastRole = ''
+    $lastHasToolUse = $false
+    foreach ($line in @($text -split "`r?`n")) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        $obj = $null
+        try { $obj = $line | ConvertFrom-Json } catch { throw 'Native transcript is corrupt JSONL.' }
+        $records += 1
+        $lastRole = [string](Get-DirectNoteValue -Object $obj -Name 'role')
+        $message = Get-DirectNoteValue -Object $obj -Name 'message'
+        $content = Get-DirectNoteValue -Object $message -Name 'content'
+        $lastHasToolUse = $false
+        foreach ($block in @($content)) {
+            $blockType = [string](Get-DirectNoteValue -Object $block -Name 'type')
+            if ($blockType -ceq 'tool_use') { $lastHasToolUse = $true }
+        }
+    }
+    if ($records -lt 1) { throw 'Native transcript has no records.' }
+    $name = [IO.Path]::GetFileNameWithoutExtension([string]$identity.path)
+    if ($name -cne $ExpectedSessionId) { throw 'Native transcript session identity does not match.' }
+    $hasFinal = ($lastRole -ceq 'assistant' -and -not $lastHasToolUse)
+    return [ordered]@{
+        identity = $identity
+        record_count = [int]$records
+        last_role = $lastRole
+        last_has_tool_use = [bool]$lastHasToolUse
+        final_response_present = [bool]$hasFinal
+        normal_terminal_record_present = $false
+    }
+}
+
+function Register-DirectCursorPartialSessionAdmission {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$StateRoot,
+        [Parameter(Mandatory = $true)][string]$FailedRequestPath,
+        [Parameter(Mandatory = $true)][string]$FailedReceiptPath,
+        [Parameter(Mandatory = $true)][string]$NativeTranscriptPath,
+        [Parameter(Mandatory = $true)][string]$NativeMetaPath,
+        [Parameter(Mandatory = $true)][string]$ObservedSessionId,
+        [string]$OldBindingPath = '',
+        [string]$FailedOwnerPath = '',
+        [string]$ActualExecutionPath = '',
+        [int]$CursorNodePid = 0,
+        [int64]$CursorNodeStartTicks = 0,
+        [string]$FixtureLabel = ''
+    )
+
+    $resolvedState = Get-DirectCanonicalDirectory -Path $StateRoot
+    if (-not [string]::IsNullOrWhiteSpace($FixtureLabel)) {
+        if ($FixtureLabel -cnotmatch '^FAKE-SOURCE') { throw 'Test fixture label is invalid.' }
+        if ($resolvedState -match '(?i)small-world-sandbox-telephone-resume\\state\\direct-cursor') {
+            throw 'Fake source fixtures must never be admitted into real SWS state.'
+        }
+    }
+    if ($ObservedSessionId -cnotmatch '^[A-Za-z0-9._:-]+$') { throw 'Adapter native session id is malformed.' }
+
+    $requestRead = Read-DirectJson -Path $FailedRequestPath
+    $receiptRead = Read-DirectJson -Path $FailedReceiptPath
+    $request = $requestRead.value
+    $receipt = $receiptRead.value
+    if ([string]$request.protocol_version -cne 'telephone-line-direct-cursor-request-v1') {
+        throw 'Original failed request protocol is unsupported.'
+    }
+    if ([string]$receipt.protocol_version -cne 'telephone-line-direct-cursor-receipt-v1') {
+        throw 'Original failed receipt protocol is unsupported.'
+    }
+    if ([string]$request.job_id -cne [string]$receipt.job_id) { throw 'Original failed request and receipt job ids differ.' }
+    Assert-DirectIdentity -Expected $requestRead.identity -Actual $receipt.request -Label 'Original failed request'
+    if ([bool]$receipt.transport_complete -eq $true -or [bool]$receipt.cursor_success -eq $true) {
+        throw 'Original failure is not an immutable failed start.'
+    }
+    if (-not [string]::IsNullOrWhiteSpace([string]$receipt.native_session_id)) {
+        throw 'Original receipt already has an accepted native session id.'
+    }
+
+    $workspace = [IO.Path]::GetFullPath([string]$request.workspace).TrimEnd('\')
+    $null = Assert-DirectCursorWorkspaceDispatchable -WorkspacePath $workspace
+    $mode = [string]$request.mode
+    $model = [string]$request.model
+    $allowed = [string[]]@($request.allowed_write_paths | ForEach-Object { [string]$_ } | Sort-Object -Unique)
+    $prompt = $request.prompt
+
+    $metaRead = Read-DirectJson -Path $NativeMetaPath
+    $meta = $metaRead.value
+    $metaCwd = [string](Get-DirectNoteValue -Object $meta -Name 'cwd')
+    if ([string]::IsNullOrWhiteSpace($metaCwd)) { throw 'Native metadata cwd is missing.' }
+    if (-not [IO.Path]::GetFullPath($metaCwd).TrimEnd('\').Equals($workspace, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Native metadata cwd does not match the original workspace.'
+    }
+    $hasConversation = Get-DirectNoteValue -Object $meta -Name 'hasConversation'
+    if ($hasConversation -ne $true) { throw 'Native metadata does not record a conversation.' }
+
+    $transcript = Test-DirectCursorJsonlTranscript -Path $NativeTranscriptPath -ExpectedSessionId $ObservedSessionId
+    $metaName = [IO.Path]::GetFileName([IO.Path]::GetDirectoryName([string]$metaRead.identity.path))
+    if ($metaName -cne $ObservedSessionId) { throw 'Native metadata session identity does not match.' }
+
+    $sessionPaths = @{
+        root = Join-Path $resolvedState ('sessions\' + $ObservedSessionId)
+        binding = Join-Path $resolvedState ('sessions\' + $ObservedSessionId + '\binding.json')
+    }
+    if ([IO.File]::Exists($sessionPaths.binding)) {
+        throw 'An accepted binding already exists for this native session.'
+    }
+
+    $oldBinding = $null
+    if (-not [string]::IsNullOrWhiteSpace($OldBindingPath)) {
+        $oldRead = Read-DirectJson -Path $OldBindingPath
+        $oldBinding = $oldRead.value
+        if ([string]$oldBinding.native_session_id -ceq $ObservedSessionId) {
+            throw 'Old binding already uses the observed native session.'
+        }
+        if (-not [IO.Path]::GetFullPath([string]$oldBinding.workspace).TrimEnd('\').Equals($workspace, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Old binding workspace does not match the original request.'
+        }
+    }
+
+    $deadOwners = [Collections.Generic.List[object]]::new()
+    foreach ($ownerPath in @($FailedOwnerPath)) {
+        if ([string]::IsNullOrWhiteSpace($ownerPath)) { continue }
+        $owner = (Read-DirectJson -Path $ownerPath).value
+        if (Test-DirectOwnerAlive -Owner $owner) { throw 'Competing owner is still alive.' }
+        $deadOwners.Add([ordered]@{
+            pid = [int]$owner.pid
+            start_time_utc_ticks = [int64]$owner.start_time_utc_ticks
+            exact_owner_alive = $false
+            source = 'failed_job_owner'
+        })
+    }
+    if ([int]$CursorNodePid -gt 0 -and [int64]$CursorNodeStartTicks -gt 0) {
+        $nodeOwner = [ordered]@{ pid = [int]$CursorNodePid; start_time_utc_ticks = [int64]$CursorNodeStartTicks }
+        if (Test-DirectOwnerAlive -Owner $nodeOwner) { throw 'Competing owner is still alive.' }
+        $deadOwners.Add([ordered]@{
+            pid = [int]$CursorNodePid
+            start_time_utc_ticks = [int64]$CursorNodeStartTicks
+            exact_owner_alive = $false
+            source = 'cursor_node_observation'
+        })
+    }
+
+    $mutex = [Threading.Mutex]::new($false, (Get-DirectCursorWorkspaceMutexName -Workspace $workspace))
+    try {
+        if (-not $mutex.WaitOne(0)) { throw 'Another Cursor dispatch already owns this workspace.' }
+    } finally {
+        try { $mutex.ReleaseMutex() } catch { }
+        $mutex.Dispose()
+    }
+
+    $existing = $null
+    try { $existing = Read-DirectCursorPartialAdmission -StateRoot $resolvedState -NativeSessionId $ObservedSessionId } catch { }
+    if ($null -ne $existing) {
+        $existingRequestSha = [string](Get-DirectNoteValue -Object (Get-DirectNoteValue -Object $existing -Name 'original_failure') -Name 'request_sha256')
+        if ([string]$existingRequestSha -cne [string]$requestRead.identity.sha256) {
+            throw 'A conflicting partial admission already exists for this session.'
+        }
+        return [ordered]@{
+            protocol_version = Get-DirectCursorPartialAdmissionProtocol
+            status = 'already_registered'
+            admission = $existing
+            identity = Get-DirectFileIdentity -Path (Get-DirectCursorPartialAdmissionPath -StateRoot $resolvedState -NativeSessionId $ObservedSessionId)
+        }
+    }
+
+    $execution = $null
+    if (-not [string]::IsNullOrWhiteSpace($ActualExecutionPath) -and [IO.File]::Exists($ActualExecutionPath)) {
+        $execution = (Read-DirectJson -Path $ActualExecutionPath).value
+    }
+    $modelFromProcess = [string](Get-DirectNoteValue -Object $execution -Name 'model')
+    $admission = [ordered]@{
+        protocol_version = Get-DirectCursorPartialAdmissionProtocol
+        status = 'provisional'
+        acceptance = 'pending'
+        continuation_remaining = 1
+        continuation_job_id = ''
+        native_session_id = $ObservedSessionId
+        workspace = $workspace
+        mode = $mode
+        model_id = $model
+        allowed_write_paths = @($allowed)
+        original_failure = [ordered]@{
+            job_id = [string]$request.job_id
+            request = $requestRead.identity
+            receipt = $receiptRead.identity
+            request_sha256 = [string]$requestRead.identity.sha256
+            receipt_sha256 = [string]$receiptRead.identity.sha256
+            prompt = $prompt
+            failure_code = [string](Get-DirectNoteValue -Object (Get-DirectNoteValue -Object $receipt -Name 'cursor_result') -Name 'failure_code')
+            failure_stage = [string](Get-DirectNoteValue -Object (Get-DirectNoteValue -Object $receipt -Name 'cursor_result') -Name 'failure_stage')
+        }
+        native_evidence = [ordered]@{
+            transcript = $transcript.identity
+            transcript_records = [int]$transcript.record_count
+            transcript_last_role = [string]$transcript.last_role
+            transcript_last_has_tool_use = [bool]$transcript.last_has_tool_use
+            transcript_final_response_present = [bool]$transcript.final_response_present
+            meta = $metaRead.identity
+            meta_cwd = $metaCwd
+            meta_created_at_ms = (Get-DirectNoteValue -Object $meta -Name 'createdAtMs')
+            meta_updated_at_ms = (Get-DirectNoteValue -Object $meta -Name 'updatedAtMs')
+            has_conversation = [bool]$hasConversation
+        }
+        fact_sources = [ordered]@{
+            session_id = @('native_transcript_path', 'native_meta_path')
+            model_requested = 'original_request'
+            model_process_command = $(if (-not [string]::IsNullOrWhiteSpace($modelFromProcess)) { 'actual_execution_observation' } else { 'unavailable' })
+            model_native_metadata = 'unavailable'
+            workspace = @('original_request', 'native_meta.cwd')
+            prompt = 'original_request'
+            scope = 'original_request'
+            confirmed_on_resume_only = @('native_stream_model_display', 'terminal_success', 'write_scope_of_resume')
+        }
+        old_binding_native_session_id = if ($null -ne $oldBinding) { [string]$oldBinding.native_session_id } else { '' }
+        owners_confirmed_dead = @($deadOwners)
+        fixture_label = [string]$FixtureLabel
+        created_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+    }
+
+    $path = Get-DirectCursorPartialAdmissionPath -StateRoot $resolvedState -NativeSessionId $ObservedSessionId
+    $identity = Write-DirectJsonCreateNew -Path $path -Value $admission
+
+    $registryPath = Join-Path $resolvedState 'cursor-sessions\sessions.json'
+    $registryMutex = [Threading.Mutex]::new($false, 'Global\TelephoneLineCursorSessionRegistry')
+    if (-not $registryMutex.WaitOne(30000)) { throw 'Cursor session registry is busy.' }
+    try {
+        $registry = if ([IO.File]::Exists($registryPath)) {
+            Get-Content -Raw -LiteralPath $registryPath | ConvertFrom-Json
+        } else {
+            [pscustomobject]@{ schema_version = 1; sessions = @() }
+        }
+        if ($registry.schema_version -ne 1) { throw 'Cursor session registry schema is unsupported.' }
+        if (@($registry.sessions | Where-Object { $_.session_id -eq $ObservedSessionId }).Count -ne 0) {
+            throw 'Cursor returned a session ID already owned by the registry.'
+        }
+        $now = [DateTimeOffset]::UtcNow.ToString('o')
+        $newRecord = [pscustomobject]@{
+            session_id = $ObservedSessionId
+            model_id = $model
+            workspace = $workspace
+            mode = $mode
+            allowed_write_paths = @($allowed)
+            last_dispatch_id = ''
+            last_normalized_request_sha256 = ''
+            created_at = $now
+            last_used_at = $now
+            acceptance = 'pending'
+            admission_kind = 'partial_observed'
+            continuation_remaining = 1
+        }
+        $registry.sessions = @($registry.sessions) + $newRecord
+        $parent = [IO.Path]::GetDirectoryName($registryPath)
+        if (-not [IO.Directory]::Exists($parent)) { [IO.Directory]::CreateDirectory($parent) | Out-Null }
+        $temporaryPath = $registryPath + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+        $json = ($registry | ConvertTo-Json -Depth 8)
+        $bytes = [Text.UTF8Encoding]::new($false).GetBytes($json)
+        $stream = [IO.FileStream]::new($temporaryPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
+        Move-Item -LiteralPath $temporaryPath -Destination $registryPath -Force
+    } finally {
+        try { $registryMutex.ReleaseMutex() } catch { }
+        $registryMutex.Dispose()
+    }
+
+    return [ordered]@{
+        protocol_version = Get-DirectCursorPartialAdmissionProtocol
+        status = 'provisional'
+        acceptance = 'pending'
+        native_session_id = $ObservedSessionId
+        continuation_remaining = 1
+        original_failure_job_id = [string]$request.job_id
+        admission = $identity
+        accepted_binding_written = $false
+        receipt_fabricated = $false
+        fixture_label = [string]$FixtureLabel
+    }
+}
+
+function Use-DirectCursorPartialContinuation {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$StateRoot,
+        [Parameter(Mandatory = $true)][string]$NativeSessionId,
+        [Parameter(Mandatory = $true)][string]$JobId
+    )
+
+    $path = Get-DirectCursorPartialAdmissionPath -StateRoot $StateRoot -NativeSessionId $NativeSessionId
+    $mutex = [Threading.Mutex]::new($false, 'Global\TelephoneLineDirectCursorPartialAdmission')
+    if (-not $mutex.WaitOne(30000)) { throw 'Direct Cursor partial admission is busy.' }
+    try {
+        $read = Read-DirectJson -Path $path
+        $value = $read.value
+        if ([string]$value.status -cne 'provisional' -or [string]$value.acceptance -cne 'pending') {
+            throw 'Partial admission is not provisional.'
+        }
+        if ([int]$value.continuation_remaining -ne 1) {
+            throw 'Partial admission continuation has already been consumed.'
+        }
+        $value.continuation_remaining = 0
+        $value.continuation_job_id = $JobId
+        $value.consumed_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+        $json = (($value | ConvertTo-Json -Depth 32).Replace("`r`n", "`n") + "`n")
+        $bytes = [Text.UTF8Encoding]::new($false).GetBytes($json)
+        [IO.File]::WriteAllBytes($path, $bytes)
+
+        $registryPath = Join-Path (Get-DirectCanonicalDirectory -Path $StateRoot) 'cursor-sessions\sessions.json'
+        if ([IO.File]::Exists($registryPath)) {
+            $registry = Get-Content -Raw -LiteralPath $registryPath | ConvertFrom-Json
+            $records = @($registry.sessions | Where-Object { $_.session_id -eq $NativeSessionId })
+            if ($records.Count -eq 1) {
+                $records[0].continuation_remaining = 0
+                $records[0].last_dispatch_id = $JobId
+                $json2 = $registry | ConvertTo-Json -Depth 8
+                $bytes2 = [Text.UTF8Encoding]::new($false).GetBytes($json2)
+                [IO.File]::WriteAllBytes($registryPath, $bytes2)
+            }
+        }
+        return $value
+    } finally {
+        try { $mutex.ReleaseMutex() } catch { }
+        $mutex.Dispose()
     }
 }

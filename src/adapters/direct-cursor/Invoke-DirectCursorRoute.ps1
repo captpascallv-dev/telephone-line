@@ -155,18 +155,39 @@ function New-DirectReceipt {
         $expectedAllowed = [string[]]@($request.allowed_write_paths | ForEach-Object { [string]$_ } | Sort-Object -Unique)
         if (($actualAllowed -join "`n") -cne ($expectedAllowed -join "`n")) { throw 'Cursor result write scope differs.' }
         if ($cursorResult.Contains('error') -and -not [string]::IsNullOrWhiteSpace([string]$cursorResult.error)) {
-            if (-not $cursorResult.Contains('public_error')) {
-                $cursorResult['public_error'] = Get-DirectPublicError -Message ([string]$cursorResult.error)
-            }
-            $cursorResult.error = [string]$cursorResult['public_error']
+            $resolvedPublic = Resolve-DirectCursorReceiptPublicError -CursorResult $cursorResult
+            $cursorResult['public_error_code'] = [string]$resolvedPublic.public_error_code
+            $cursorResult['public_error'] = [string]$resolvedPublic.public_error
+            $cursorResult.error = [string]$resolvedPublic.public_error
         }
         $isPolicy = $cursorResult.Contains('failure_kind') -and [string]$cursorResult.failure_kind -ceq 'policy'
         if ([bool]$cursorResult.success -ne $true -and -not $isPolicy) {
-            $transportError = Get-DirectPublicError -Message ([string]$cursorResult.error)
+            $resolvedTransport = Resolve-DirectCursorReceiptPublicError -CursorResult $cursorResult
+            $transportError = [string]$resolvedTransport.transport_error
         }
     } catch {
-        $transportError = Get-DirectPublicError -Message $_.Exception.Message
-        if ($parsedResult -is [Collections.IDictionary]) { $cursorResult = $parsedResult } else { $cursorResult = $null }
+        $projectionClassification = Get-DirectCursorFailureClassification -Message $_.Exception.Message -Stage 'result_projection'
+        $projectionError = Get-DirectPublicError -ErrorCode ([string]$projectionClassification.public_error_code) -Message $_.Exception.Message
+        if ($parsedResult -is [Collections.IDictionary]) {
+            $cursorResult = $parsedResult
+            $resolved = Resolve-DirectCursorReceiptPublicError -CursorResult $cursorResult
+            if ([bool]$resolved.preserve_typed_failure) {
+                $transportError = [string]$resolved.transport_error
+                if (-not $cursorResult.Contains('result_projection_error')) {
+                    $cursorResult['result_projection_error'] = $projectionError
+                }
+            } else {
+                $transportError = $projectionError
+                if (-not $cursorResult.Contains('failure_code') -or [string]::IsNullOrWhiteSpace([string]$cursorResult.failure_code)) {
+                    $cursorResult['failure_code'] = [string]$projectionClassification.failure_code
+                    $cursorResult['failure_stage'] = 'result_projection'
+                    $cursorResult['public_error_code'] = [string]$projectionClassification.public_error_code
+                }
+            }
+        } else {
+            $transportError = $projectionError
+            $cursorResult = $null
+        }
     }
 
     $transportComplete = $null -eq $transportError -and $null -ne $cursorResult
@@ -178,6 +199,8 @@ function New-DirectReceipt {
         transport_error = $transportError
         cursor_success = if ($null -ne $cursorResult) { [bool]$cursorResult.success } else { $null }
         native_session_id = Get-DirectCursorResultSessionId -Result $cursorResult
+        observed_native_session_id = [string](Get-DirectNoteValue -Object (Get-DirectNoteValue -Object $cursorResult -Name 'observed_session') -Name 'session_id')
+        changed_files_availability = Get-DirectNoteValue -Object $cursorResult -Name 'changed_files_availability'
         cursor_result = $cursorResult
         stdout = if ([IO.File]::Exists($Paths.stdout)) { Get-DirectFileIdentity -Path $Paths.stdout } else { $null }
         stderr = if ([IO.File]::Exists($Paths.stderr)) { Get-DirectFileIdentity -Path $Paths.stderr } else { $null }
@@ -266,10 +289,12 @@ function Write-AdapterResult {
         if ($null -ne $prompt) { $result.prompt = $prompt }
         $promptSha256 = [string](Get-DirectNoteValue -Object $cursorResult -Name 'prompt_sha256')
         if (-not [string]::IsNullOrWhiteSpace($promptSha256)) { $result.prompt_sha256 = $promptSha256 }
-        foreach ($field in @('failure_kind', 'failure_code', 'failure_stage', 'exception_type', 'stdout_bytes', 'stderr_bytes', 'native_exit_code', 'violating_paths', 'policy_violation')) {
+        foreach ($field in @('failure_kind', 'failure_code', 'failure_stage', 'exception_type', 'stdout_bytes', 'stderr_bytes', 'native_exit_code', 'violating_paths', 'policy_violation', 'public_error_code', 'changed_files_availability', 'process_failure_class')) {
             $fieldValue = Get-DirectNoteValue -Object $cursorResult -Name $field
             if ($null -ne $fieldValue -and -not [string]::IsNullOrWhiteSpace([string]$fieldValue)) { $result[$field] = $fieldValue }
         }
+        $observedSession = Get-DirectNoteValue -Object $cursorResult -Name 'observed_session'
+        if ($null -ne $observedSession) { $result.observed_session = $observedSession }
         $evidence = Get-DirectNoteValue -Object $cursorResult -Name 'evidence'
         if ($null -ne $evidence) { $result.evidence = $evidence }
         if (-not $result.Contains('failure_kind') -and $result.transport_complete -ne $true) { $result.failure_kind = 'transport' }
@@ -360,6 +385,13 @@ $sessionIndexPath = Join-Path $resolvedStateRoot 'session-index.json'
 if ($Operation -eq 'recover') {
     $job = Resolve-DirectCursorRecoverJobId -StateRoot $resolvedStateRoot -NativeSessionId $NativeSessionId
     if ([string]::IsNullOrWhiteSpace([string]$job)) {
+        $partialForRecover = $null
+        try { $partialForRecover = Read-DirectCursorPartialAdmission -StateRoot $resolvedStateRoot -NativeSessionId $NativeSessionId } catch { }
+        if ($null -ne $partialForRecover) {
+            $job = [string](Get-DirectNoteValue -Object (Get-DirectNoteValue -Object $partialForRecover -Name 'original_failure') -Name 'job_id')
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$job)) {
         $sessionPaths = Get-SessionPaths -Root $resolvedStateRoot -SessionId $NativeSessionId
         if (-not [IO.File]::Exists($sessionPaths.binding)) { throw 'Adapter native session id is missing or unknown.' }
         $binding = (Read-DirectJson -Path $sessionPaths.binding).value
@@ -388,15 +420,30 @@ if ([IO.Directory]::Exists($paths.root)) {
     Complete-DirectCursorAdapterTerminal -Op $Operation -RequestedSessionId $(if ($Operation -eq 'start') { '' } else { $NativeSessionId }) -Terminal $terminal
 }
 
+$consumePartialContinuation = $false
 if ($Operation -eq 'follow_up') {
     $sessionPaths = Get-SessionPaths -Root $resolvedStateRoot -SessionId $NativeSessionId
-    if (-not [IO.File]::Exists($sessionPaths.binding)) { throw 'Adapter native session id is missing or unknown.' }
-    $binding = (Read-DirectJson -Path $sessionPaths.binding).value
-    if ([string]$binding.native_session_id -cne $NativeSessionId) { throw 'Adapter native session id does not match the frozen session.' }
-    if ([string]$binding.mode -cne $Mode) { throw 'Adapter native session id does not match the frozen session.' }
-    $boundScope = [string[]]@($binding.allowed_write_paths | ForEach-Object { [string]$_ } | Sort-Object -Unique)
-    $requestedScope = [string[]]@(ConvertTo-DirectRelativeWritePaths -WorkspacePath ([IO.Path]::GetFullPath($WorkspacePath).TrimEnd('\')) -Paths $AllowedWritePath)
-    if (($boundScope -join "`n") -cne ($requestedScope -join "`n")) { throw 'Adapter native session id does not match the frozen session.' }
+    $partialAdmission = $null
+    try { $partialAdmission = Read-DirectCursorPartialAdmission -StateRoot $resolvedStateRoot -NativeSessionId $NativeSessionId } catch { }
+    if ([IO.File]::Exists($sessionPaths.binding)) {
+        $binding = (Read-DirectJson -Path $sessionPaths.binding).value
+        if ([string]$binding.native_session_id -cne $NativeSessionId) { throw 'Adapter native session id does not match the frozen session.' }
+        if ([string]$binding.mode -cne $Mode) { throw 'Adapter native session id does not match the frozen session.' }
+        $boundScope = [string[]]@($binding.allowed_write_paths | ForEach-Object { [string]$_ } | Sort-Object -Unique)
+        $requestedScope = [string[]]@(ConvertTo-DirectRelativeWritePaths -WorkspacePath ([IO.Path]::GetFullPath($WorkspacePath).TrimEnd('\')) -Paths $AllowedWritePath)
+        if (($boundScope -join "`n") -cne ($requestedScope -join "`n")) { throw 'Adapter native session id does not match the frozen session.' }
+    } elseif ($null -ne $partialAdmission -and [string]$partialAdmission.status -ceq 'provisional' -and [string]$partialAdmission.acceptance -ceq 'pending' -and [int]$partialAdmission.continuation_remaining -eq 1) {
+        if ([string]$partialAdmission.mode -cne $Mode) { throw 'Adapter native session id does not match the frozen session.' }
+        if (-not [IO.Path]::GetFullPath([string]$partialAdmission.workspace).TrimEnd('\').Equals([IO.Path]::GetFullPath($WorkspacePath).TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Adapter native session id does not match the frozen session.'
+        }
+        $boundScope = [string[]]@($partialAdmission.allowed_write_paths | ForEach-Object { [string]$_ } | Sort-Object -Unique)
+        $requestedScope = [string[]]@(ConvertTo-DirectRelativeWritePaths -WorkspacePath ([IO.Path]::GetFullPath($WorkspacePath).TrimEnd('\')) -Paths $AllowedWritePath)
+        if (($boundScope -join "`n") -cne ($requestedScope -join "`n")) { throw 'Adapter native session id does not match the frozen session.' }
+        $consumePartialContinuation = $true
+    } else {
+        throw 'Adapter native session id is missing or unknown.'
+    }
 }
 
 $workspace = Assert-DirectCursorWorkspaceDispatchable -WorkspacePath $WorkspacePath
@@ -478,6 +525,9 @@ $intent = [ordered]@{
     automatic_rerun = $false
 }
 $null = Write-DirectJsonCreateNew -Path $paths.intent -Value $intent
+if ($true -eq $consumePartialContinuation) {
+    $null = Use-DirectCursorPartialContinuation -StateRoot $resolvedStateRoot -NativeSessionId $NativeSessionId -JobId $effectiveJobId
+}
 $hostProcess = Start-DirectHost -PowerShellPath $powerShellPath -HostScript $hostIdentity.path -ConfigPath $configIdentity.path
 try {
     $owner = [ordered]@{
