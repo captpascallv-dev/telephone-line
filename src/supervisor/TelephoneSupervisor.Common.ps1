@@ -2579,7 +2579,7 @@ function Reconcile-TelephoneSupervisorOwnedLeadDrain {
     } elseif (-not [bool]$life.native_turn_complete) {
         $result.refused = 'native_turn_not_complete'
     }
-    $result.drain = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $root -WaitMilliseconds 1500
+    $result.drain = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $root -WaitMilliseconds 20000
     return $result
 }
 

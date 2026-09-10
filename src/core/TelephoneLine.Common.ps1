@@ -4626,6 +4626,7 @@ function Invoke-TelephoneSingleJobWake {
     $lead = $Job.lead
     $leadSessionId = [string]$lead.session_id
     if ([IO.File]::Exists($paths.delivery)) { return }
+    $null = Invoke-TelephoneLeadSessionResidueReconcile -Lead $lead -MailboxPaths $MailboxPaths -JobPaths $paths
     $receiptIdentity = $ReceiptRead.identity
     $receipt = $ReceiptRead.value
     $wakeIdentity = New-TelephoneWakeIdentity -LineJobId ([string]$dispatch.line_job_id) -ReceiptIdentity $receiptIdentity -LeadSessionId $leadSessionId
@@ -4725,6 +4726,7 @@ function Invoke-TelephoneClosedBatchWake {
     $leadSessionId = [string]$Lead.session_id
     $n = [int]$Manifest.n
     $implicit = [bool]$Manifest.implicit
+    $null = Invoke-TelephoneLeadSessionResidueReconcile -Lead $Lead -MailboxPaths $MailboxPaths
     if ($n -eq 1) {
         $item = @($Manifest.items)[0]
         $job = $JobsByPackage[[string]$item.package_id]
@@ -5109,6 +5111,90 @@ function Update-TelephoneLeadBatchCollection {
     }
 }
 
+function Invoke-TelephoneLeadSessionResidueReconcile {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][object]$Lead,
+        [AllowNull()][object]$MailboxPaths = $null,
+        [AllowNull()][object]$JobPaths = $null
+    )
+    $sessionId = ''
+    try { $sessionId = [string]$Lead.session_id } catch { $sessionId = '' }
+    $record = [ordered]@{
+        protocol_version = 'telephone-line-session-residue-reconcile-v1'
+        session_id = $sessionId
+        lead_state_root = ''
+        scanned = 0
+        recovered = 0
+        skipped_foreign = 0
+        skipped_active = 0
+        refused = @()
+        pending = @()
+        recovered_runs = @()
+        provider_replayed = $false
+        source = 'collector_or_wake'
+        error = ''
+        persist_paths = [Collections.Generic.List[string]]::new()
+        recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+    }
+    if ([string]::IsNullOrWhiteSpace($sessionId)) {
+        $record.error = 'missing_session'
+        return $record
+    }
+    $stateHint = ''
+    try {
+        $args = @()
+        if ($null -ne $Lead.launcher -and $null -ne $Lead.launcher.arguments) {
+            $args = @($Lead.launcher.arguments)
+        }
+        $stateHint = Get-TelephoneLeadNamedArgumentValue -Arguments $args -Name 'StateRootOverride'
+    } catch { $stateHint = '' }
+    if ([string]::IsNullOrWhiteSpace($stateHint) -and -not [string]::IsNullOrWhiteSpace([string]$env:TELEPHONE_LINE_LEAD_STATE_ROOT)) {
+        $stateHint = [string]$env:TELEPHONE_LINE_LEAD_STATE_ROOT
+    }
+    $record.lead_state_root = [string]$stateHint
+    $reconcile = $null
+    try {
+        $reconcile = Reconcile-TelephoneLeadCompletedOwnedResidue -LeadStateRoot $stateHint -ExpectedSessionId $sessionId
+    } catch {
+        $record.error = [string]$_.Exception.Message
+        $record.provider_replayed = $false
+    }
+    if ($null -ne $reconcile -and $reconcile -is [Collections.IDictionary]) {
+        foreach ($key in @('scanned', 'recovered', 'skipped_foreign', 'skipped_active', 'provider_replayed', 'persist_path', 'lead_state_root')) {
+            if ($reconcile.Contains($key)) { $record[$key] = $reconcile[$key] }
+        }
+        if ($reconcile.Contains('refused')) { $record.refused = @($reconcile.refused) }
+        if ($reconcile.Contains('pending')) { $record.pending = @($reconcile.pending) }
+        if ($reconcile.Contains('recovered_runs')) { $record.recovered_runs = @($reconcile.recovered_runs) }
+        $record.provider_replayed = $false
+    }
+    $payload = ConvertTo-TelephonePersistableRecord -Value $record
+    $targets = [Collections.Generic.List[string]]::new()
+    if ($null -ne $MailboxPaths -and $MailboxPaths -is [Collections.IDictionary] -and $MailboxPaths.Contains('lead_root') -and -not [string]::IsNullOrWhiteSpace([string]$MailboxPaths.lead_root)) {
+        [void]$targets.Add((Join-Path ([string]$MailboxPaths.lead_root) 'residue-reconcile.json'))
+    }
+    if ($null -ne $JobPaths -and $JobPaths -is [Collections.IDictionary] -and $JobPaths.Contains('root') -and -not [string]::IsNullOrWhiteSpace([string]$JobPaths.root)) {
+        [void]$targets.Add((Join-Path ([string]$JobPaths.root) 'residue-reconcile.json'))
+    }
+    if (-not [string]::IsNullOrWhiteSpace($stateHint) -and [IO.Directory]::Exists($stateHint)) {
+        [void]$targets.Add((Join-Path ([IO.Path]::GetFullPath($stateHint).TrimEnd('\')) ('session-residue-reconcile-' + $sessionId.ToLowerInvariant() + '.json')))
+    }
+    foreach ($path in @($targets)) {
+        try {
+            if ([IO.File]::Exists($path)) { $null = Write-TelephoneJsonReplace -Path $path -Value $payload }
+            else { $null = Write-TelephoneJsonCreateNew -Path $path -Value $payload }
+            [void]$record.persist_paths.Add($path)
+        } catch {
+            try {
+                $null = Write-TelephoneJsonReplace -Path $path -Value $payload
+                [void]$record.persist_paths.Add($path)
+            } catch { }
+        }
+    }
+    return $record
+}
+
 function Invoke-TelephoneLeadCollectorCore {
     [CmdletBinding()]
     param(
@@ -5226,6 +5312,7 @@ function Invoke-TelephoneLeadCollectorCore {
             }
             if ($null -eq $lead) { continue }
             try {
+                $null = Invoke-TelephoneLeadSessionResidueReconcile -Lead $lead -MailboxPaths $mailbox
                 Invoke-TelephoneClosedBatchWake -MailboxPaths $mailbox -BatchPaths $batchPathsWake -Manifest $manifestNow -Lead $lead -JobsByPackage $jobsByPackage
             } catch {
                 $attempted = [IO.File]::Exists($batchPathsWake.wake_attempt) -or [IO.File]::Exists($batchPathsWake.wake_launch_result)

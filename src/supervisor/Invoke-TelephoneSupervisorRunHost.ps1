@@ -120,8 +120,29 @@ try {
         } catch { }
         if ($null -ne $ownedLead) {
             try {
-                $null = Reconcile-TelephoneSupervisorOwnedLeadDrain -RunRoot ([string]$ownedLead.run_root) -ExpectedSessionId ([string]$ownedLead.session_id) -ExpectedRunId ([string]$ownedLead.run_id)
-            } catch { }
+                $ownedDrain = Reconcile-TelephoneSupervisorOwnedLeadDrain -RunRoot ([string]$ownedLead.run_root) -ExpectedSessionId ([string]$ownedLead.session_id) -ExpectedRunId ([string]$ownedLead.run_id)
+                $ownedPersist = ConvertTo-TelephonePersistableRecord -Value $ownedDrain
+                $ownedPath = Join-Path $runDir 'owned-lead-drain-reconcile.json'
+                try {
+                    if ([IO.File]::Exists($ownedPath)) { $null = Write-TelephoneJsonReplace -Path $ownedPath -Value $ownedPersist }
+                    else { $null = Write-TelephoneJsonCreateNew -Path $ownedPath -Value $ownedPersist }
+                } catch {
+                    try { $null = Write-TelephoneJsonReplace -Path $ownedPath -Value $ownedPersist } catch { }
+                }
+            } catch {
+                $ownedFail = [ordered]@{
+                    protocol_version = 'telephone-line-supervisor-owned-drain-reconcile-v1'
+                    run_root = [string]$ownedLead.run_root
+                    session_id = [string]$ownedLead.session_id
+                    run_id = [string]$ownedLead.run_id
+                    recovered = $false
+                    refused = 'owned_drain_reconcile_failed'
+                    error = [string]$_.Exception.Message
+                    provider_replayed = $false
+                    recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+                }
+                try { $null = Write-TelephoneJsonReplace -Path (Join-Path $runDir 'owned-lead-drain-reconcile.json') -Value $ownedFail } catch { }
+            }
         }
         if ([IO.File]::Exists($stopPath)) {
             $null = Stop-TelephoneSupervisorRunJob -Job $job

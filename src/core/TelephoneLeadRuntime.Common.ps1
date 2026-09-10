@@ -44,17 +44,33 @@ public static class TelephoneLeadOwnedReaderCompletion {
         });
     }
 
+    static void CloseReaders(System.Diagnostics.Process process) {
+        try {
+            if (process != null && process.StandardOutput != null && process.StandardOutput.BaseStream != null) {
+                process.StandardOutput.BaseStream.Close();
+            }
+        } catch { }
+        try {
+            if (process != null && process.StandardError != null && process.StandardError.BaseStream != null) {
+                process.StandardError.BaseStream.Close();
+            }
+        } catch { }
+    }
+
     static Task ProcessExited(System.Diagnostics.Process process) {
         var done = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         if (process.HasExited) {
+            CloseReaders(process);
             done.TrySetResult(true);
             return done.Task;
         }
         process.EnableRaisingEvents = true;
         process.Exited += delegate {
+            CloseReaders(process);
             done.TrySetResult(true);
         };
         if (process.HasExited) {
+            CloseReaders(process);
             done.TrySetResult(true);
         }
         return done.Task;
@@ -354,6 +370,135 @@ function Test-TelephoneLeadOwnerIdentityAlive {
     param([AllowNull()][object]$Owner)
     $obs = Get-TelephoneLeadOwnerIdentityObservation -Owner $Owner
     return ([string]$obs.status -ceq 'alive')
+}
+
+function Test-TelephoneLeadWindowsConsoleHostExecutable {
+    [CmdletBinding()]
+    param([string]$Path = '')
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    $name = ''
+    try { $name = [IO.Path]::GetFileName($Path) } catch { return $false }
+    if ([string]::IsNullOrWhiteSpace($name)) { return $false }
+    if ($name -ine 'conhost.exe' -and $name -ine 'openconsole.exe') { return $false }
+    try {
+        $full = [IO.Path]::GetFullPath($Path)
+        $windows = [IO.Path]::GetFullPath($env:WINDIR).TrimEnd('\')
+        if ([string]::IsNullOrWhiteSpace($windows)) { $windows = 'C:\Windows' }
+        $prefix = $windows + '\'
+        return $full.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
+    } catch {
+        return $false
+    }
+}
+
+function Get-TelephoneLeadOwnedDescendantObservation {
+    [CmdletBinding()]
+    param([AllowNull()][object]$Identity)
+    $result = [ordered]@{
+        protocol_version = 'telephone-line-owned-descendant-observation-v1'
+        status = 'none'
+        refused = ''
+        parent_pid = 0
+        children = [Collections.Generic.List[object]]::new()
+        error = ''
+    }
+    if ($null -eq $Identity -or $Identity -isnot [Collections.IDictionary]) {
+        $result.status = 'missing_identity'
+        $result.refused = 'missing_identity'
+        return $result
+    }
+    $ownedPid = 0
+    try {
+        if ($Identity.Contains('pid')) { $ownedPid = [int]$Identity['pid'] }
+        elseif ($Identity.Contains('target_pid')) { $ownedPid = [int]$Identity['target_pid'] }
+    } catch { $ownedPid = 0 }
+    if ($ownedPid -le 0) {
+        $result.status = 'missing_identity'
+        $result.refused = 'missing_identity'
+        return $result
+    }
+    $result.parent_pid = $ownedPid
+    $rows = $null
+    try {
+        $rows = @(Get-CimInstance -ClassName Win32_Process -Filter ('ParentProcessId = {0}' -f $ownedPid) -ErrorAction Stop)
+    } catch {
+        $result.status = 'query_error'
+        $result.refused = 'descendant_query_error'
+        $result.error = [string]$_.Exception.Message
+        return $result
+    }
+    foreach ($row in @($rows)) {
+        if ($null -eq $row) { continue }
+        $childPid = 0
+        try { $childPid = [int]$row.ProcessId } catch { continue }
+        if ($childPid -le 0 -or $childPid -eq $ownedPid) { continue }
+        $obs = Get-TelephoneLeadProcessObservation -ProcessId $childPid
+        if ([string]$obs.status -ceq 'query_error') {
+            $result.status = 'query_error'
+            $result.refused = 'descendant_query_error'
+            $result.error = [string]$obs.error
+            return $result
+        }
+        if ([string]$obs.status -cne 'alive' -or $null -eq $obs.snapshot) { continue }
+        $exePath = ''
+        try {
+            if ($obs.snapshot -is [Collections.IDictionary] -and $obs.snapshot.Contains('executable_path')) {
+                $exePath = [string]$obs.snapshot['executable_path']
+            }
+        } catch { $exePath = '' }
+        if (Test-TelephoneLeadWindowsConsoleHostExecutable -Path $exePath) { continue }
+        $parentNow = 0
+        try {
+            if ($obs.snapshot -is [Collections.IDictionary] -and $obs.snapshot.Contains('parent_process_id')) {
+                $parentNow = [int]$obs.snapshot['parent_process_id']
+            }
+        } catch { $parentNow = 0 }
+        if ($parentNow -ne $ownedPid) { continue }
+        [void]$result.children.Add($obs.snapshot)
+    }
+    if ($result.children.Count -gt 0) {
+        $result.status = 'active_descendant'
+        $result.refused = 'active_descendant'
+    }
+    return $result
+}
+
+function ConvertTo-TelephonePersistableRecord {
+    [CmdletBinding()]
+    param([AllowNull()][object]$Value)
+    if ($null -eq $Value) { return $null }
+    if ($Value -is [string] -or $Value -is [ValueType]) { return $Value }
+    if ($Value -is [Collections.IDictionary]) {
+        $copy = [ordered]@{}
+        foreach ($key in @($Value.Keys)) {
+            $copy[[string]$key] = ConvertTo-TelephonePersistableRecord -Value $Value[$key]
+        }
+        return $copy
+    }
+    if ($Value -is [Collections.IEnumerable]) {
+        $items = [Collections.Generic.List[object]]::new()
+        foreach ($item in @($Value)) { [void]$items.Add((ConvertTo-TelephonePersistableRecord -Value $item)) }
+        if ($items.Count -eq 0) { return [object[]]@() }
+        return [object[]]$items.ToArray()
+    }
+    return $Value
+}
+
+function Write-TelephoneLeadOwnedRecoveryRecord {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$RunRoot,
+        [Parameter(Mandatory = $true)][object]$Record
+    )
+    if ([string]::IsNullOrWhiteSpace($RunRoot) -or -not [IO.Directory]::Exists($RunRoot)) { return }
+    $path = Join-Path ([IO.Path]::GetFullPath($RunRoot).TrimEnd('\')) 'owned-residue-recovery.json'
+    $payload = ConvertTo-TelephonePersistableRecord -Value $Record
+    try {
+        if ([IO.File]::Exists($path)) { $null = Write-TelephoneJsonReplace -Path $path -Value $payload }
+        else { $null = Write-TelephoneJsonCreateNew -Path $path -Value $payload }
+    } catch {
+        try { $null = Write-TelephoneJsonReplace -Path $path -Value $payload } catch { }
+    }
 }
 
 function New-TelephoneLeadCliDiagnostic {
@@ -891,7 +1036,11 @@ function Complete-TelephoneLeadOpenDrain {
         }
         if ($null -ne $process) {
             $exited = [bool]$process.HasExited
-            if ($exited) { $exitCode = [int]$process.ExitCode }
+            if ($exited) {
+                try { $exitCode = [int]$process.ExitCode } catch { $exitCode = -1 }
+                try { if ($null -ne $process.StandardOutput) { $process.StandardOutput.Close() } } catch { }
+                try { if ($null -ne $process.StandardError) { $process.StandardError.Close() } } catch { }
+            }
         }
     } catch {
         $exited = $false
@@ -1322,6 +1471,8 @@ function Wait-TelephoneLeadOwnedDrainTerminal {
         host_observation_status = 'UNKNOWN'
         child_observation_status = 'UNKNOWN'
         child_absence_proven = $false
+        measured_os_exit_code = $null
+        recorded_by = ''
     }
     $sessionId = ''
     $runId = ''
@@ -1386,6 +1537,10 @@ function Wait-TelephoneLeadOwnedDrainTerminal {
                     $hostDone = $true
                     $result.stdout_eof = [bool]$hostDrain.stdout_eof
                     $result.stderr_eof = [bool]$hostDrain.stderr_eof
+                    if ($hostDrain.Contains('exit_code') -and $null -ne $hostDrain['exit_code']) {
+                        $result.measured_os_exit_code = [int]$hostDrain['exit_code']
+                        $result.recorded_by = 'open_drain_completion'
+                    }
                 }
             }
             if (-not $hostDone) {
@@ -1394,6 +1549,14 @@ function Wait-TelephoneLeadOwnedDrainTerminal {
                         $hostDone = $true
                         $result.stdout_eof = $true
                         $result.stderr_eof = $true
+                        if ($doc.Contains('exit_code') -and $null -ne $doc['exit_code']) {
+                            $result.measured_os_exit_code = [int]$doc['exit_code']
+                        }
+                        if ($doc.Contains('recorded_by') -and -not [string]::IsNullOrWhiteSpace([string]$doc['recorded_by'])) {
+                            $result.recorded_by = [string]$doc['recorded_by']
+                        } elseif ([string]::IsNullOrWhiteSpace([string]$result.recorded_by)) {
+                            $result.recorded_by = 'durable_drain_terminal'
+                        }
                         break
                     }
                 }
@@ -1440,6 +1603,9 @@ function Wait-TelephoneLeadOwnedDrainTerminal {
             }
         } elseif ([bool]$result.child_absence_proven) {
             $result.child_observation_status = 'absent_proven'
+            $childDone = $true
+        } elseif (-not [bool]$snap.child_present) {
+            $result.child_observation_status = 'absent_no_cli_identity_docs'
             $childDone = $true
         } else {
             $result.child_observation_status = 'missing_unproven'
@@ -1945,6 +2111,16 @@ function Stop-TelephoneLeadExactOwnedIdentity {
             $record.refused = 'identity_changed_before_stop'
             return $record
         }
+        $descendants = Get-TelephoneLeadOwnedDescendantObservation -Identity $againObs.snapshot
+        $record.descendant_observation = $descendants
+        if ([string]$descendants.status -ceq 'query_error' -or [string]$descendants.refused -ceq 'descendant_query_error') {
+            $record.refused = 'descendant_query_error'
+            return $record
+        }
+        if ([string]$descendants.status -ceq 'active_descendant' -or $descendants.children.Count -gt 0) {
+            $record.refused = 'active_descendant'
+            return $record
+        }
         Stop-Process -Id ([int]$againObs.snapshot.pid) -Force -ErrorAction Stop
         $goneDeadline = [DateTimeOffset]::UtcNow.AddMilliseconds([Math]::Max(1, [int]$WaitGoneMilliseconds))
         $gone = $false
@@ -1976,7 +2152,8 @@ function Stop-TelephoneLeadCompletedOwnProcess {
     param(
         [Parameter(Mandatory = $true)][object]$Lifecycle,
         [Parameter(Mandatory = $true)][string]$ExpectedSessionId,
-        [Parameter(Mandatory = $true)][string]$ExpectedRunId
+        [Parameter(Mandatory = $true)][string]$ExpectedRunId,
+        [int]$DrainWaitMilliseconds = 20000
     )
     $record = [ordered]@{
         protocol_version = 'telephone-line-completed-own-process-recovery-v1'
@@ -1986,6 +2163,12 @@ function Stop-TelephoneLeadCompletedOwnProcess {
         target = $null
         child_stop = $null
         host_stop = $null
+        drain = $null
+        measured_os_exit_code = $null
+        stdout_eof = $false
+        stderr_eof = $false
+        drain_pending = $true
+        provider_replayed = $false
         recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
     }
     if ($Lifecycle -isnot [Collections.IDictionary]) {
@@ -2020,10 +2203,12 @@ function Stop-TelephoneLeadCompletedOwnProcess {
         $childObs = Get-TelephoneLeadOwnerIdentityObservation -Owner $child
         if ([string]$childObs.status -ceq 'query_error') {
             $record.refused = 'owner_query_error'
+            Write-TelephoneLeadOwnedRecoveryRecord -RunRoot $runRoot -Record $record
             return $record
         }
         if ([string]$childObs.status -ceq 'mismatch') {
             $record.refused = 'pid_reuse_or_exe_mismatch'
+            Write-TelephoneLeadOwnedRecoveryRecord -RunRoot $runRoot -Record $record
             return $record
         }
         if ([string]$childObs.status -ceq 'alive') {
@@ -2032,14 +2217,11 @@ function Stop-TelephoneLeadCompletedOwnProcess {
             if ([bool]$childStop.attempted) { $record.attempted = $true }
             if (-not [string]::IsNullOrWhiteSpace([string]$childStop.refused) -and -not [bool]$childStop.stopped) {
                 $record.refused = [string]$childStop.refused
+                Write-TelephoneLeadOwnedRecoveryRecord -RunRoot $runRoot -Record $record
                 return $record
             }
             if ([bool]$childStop.stopped) {
                 $record.target = $childStop.target
-                if (-not [string]::IsNullOrWhiteSpace($runRoot)) {
-                    $null = Write-TelephoneLeadOwnedRecoveredDrainLifecycle -RunRoot $runRoot -Identity $child -SessionId $ExpectedSessionId -RunId $ExpectedRunId -Role 'cli' -NativeTurnComplete ([bool]$Lifecycle.native_turn_complete)
-                }
-                $record.recovered = $true
             }
         }
     }
@@ -2047,15 +2229,31 @@ function Stop-TelephoneLeadCompletedOwnProcess {
     $ownerObs = Get-TelephoneLeadOwnerIdentityObservation -Owner $owner
     if ([string]$ownerObs.status -ceq 'query_error') {
         $record.refused = 'owner_query_error'
+        Write-TelephoneLeadOwnedRecoveryRecord -RunRoot $runRoot -Record $record
         return $record
     }
     if ([string]$ownerObs.status -ceq 'mismatch') {
         $record.refused = 'pid_reuse_or_exe_mismatch'
+        Write-TelephoneLeadOwnedRecoveryRecord -RunRoot $runRoot -Record $record
         return $record
     }
     if ($null -eq $owner -or [string]$ownerObs.status -cne 'alive') {
-        if ([bool]$record.recovered) { return $record }
-        $record.refused = 'owner_not_alive'
+        if ([bool]$record.attempted -and [string]::IsNullOrWhiteSpace([string]$record.refused) -and -not [string]::IsNullOrWhiteSpace($runRoot)) {
+            $drainGone = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $runRoot -WaitMilliseconds $DrainWaitMilliseconds
+            $record.drain = $drainGone
+            if ($null -ne $drainGone -and $drainGone -is [Collections.IDictionary]) {
+                if ($drainGone.Contains('pending')) { $record.drain_pending = [bool]$drainGone['pending'] }
+                if ($drainGone.Contains('stdout_eof')) { $record.stdout_eof = [bool]$drainGone['stdout_eof'] }
+                if ($drainGone.Contains('stderr_eof')) { $record.stderr_eof = [bool]$drainGone['stderr_eof'] }
+                if ($drainGone.Contains('measured_os_exit_code') -and $null -ne $drainGone['measured_os_exit_code']) {
+                    $record.measured_os_exit_code = [int]$drainGone['measured_os_exit_code']
+                }
+                if (-not [bool]$record.drain_pending -and [bool]$drainGone.process_exited) { $record.recovered = $true }
+            }
+        } elseif (-not [bool]$record.attempted) {
+            $record.refused = 'owner_not_alive'
+        }
+        Write-TelephoneLeadOwnedRecoveryRecord -RunRoot $runRoot -Record $record
         return $record
     }
     $hostStop = Stop-TelephoneLeadExactOwnedIdentity -Identity $owner
@@ -2064,14 +2262,31 @@ function Stop-TelephoneLeadCompletedOwnProcess {
     if ($null -ne $hostStop.target) { $record.target = $hostStop.target }
     if (-not [string]::IsNullOrWhiteSpace([string]$hostStop.refused) -and -not [bool]$hostStop.stopped) {
         $record.refused = [string]$hostStop.refused
+        Write-TelephoneLeadOwnedRecoveryRecord -RunRoot $runRoot -Record $record
         return $record
     }
-    if ([bool]$hostStop.stopped) {
-        if (-not [string]::IsNullOrWhiteSpace($runRoot)) {
-            $null = Write-TelephoneLeadOwnedRecoveredDrainLifecycle -RunRoot $runRoot -Identity $owner -SessionId $ExpectedSessionId -RunId $ExpectedRunId -Role 'host' -NativeTurnComplete ([bool]$Lifecycle.native_turn_complete)
+    if ([bool]$hostStop.stopped -and -not [string]::IsNullOrWhiteSpace($runRoot)) {
+        $drain = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $runRoot -WaitMilliseconds $DrainWaitMilliseconds
+        $record.drain = $drain
+        if ($null -ne $drain -and $drain -is [Collections.IDictionary]) {
+            if ($drain.Contains('pending')) { $record.drain_pending = [bool]$drain['pending'] }
+            if ($drain.Contains('stdout_eof')) { $record.stdout_eof = [bool]$drain['stdout_eof'] }
+            if ($drain.Contains('stderr_eof')) { $record.stderr_eof = [bool]$drain['stderr_eof'] }
+            if ($drain.Contains('measured_os_exit_code') -and $null -ne $drain['measured_os_exit_code']) {
+                $record.measured_os_exit_code = [int]$drain['measured_os_exit_code']
+            }
+            if (-not [bool]$record.drain_pending -and [bool]$drain.process_exited -and [bool]$record.stdout_eof -and [bool]$record.stderr_eof) {
+                $record.recovered = $true
+            } elseif ([bool]$drain.process_exited -or -not [bool]$drain.host_alive) {
+                $record.recovered = $true
+                if ([bool]$record.drain_pending) { $record.refused = '' }
+            }
+        } elseif ([bool]$hostStop.stopped) {
+            $record.recovered = $true
+            $record.drain_pending = $true
         }
-        $record.recovered = $true
     }
+    Write-TelephoneLeadOwnedRecoveryRecord -RunRoot $runRoot -Record $record
     return $record
 }
 
@@ -2094,6 +2309,7 @@ function Reconcile-TelephoneLeadCompletedOwnedResidue {
         pending = [Collections.Generic.List[object]]::new()
         recovered_runs = [Collections.Generic.List[object]]::new()
         provider_replayed = $false
+        persist_path = ''
         recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
     }
     if ([string]::IsNullOrWhiteSpace($LeadStateRoot) -or -not [IO.Directory]::Exists($LeadStateRoot)) {
@@ -2135,25 +2351,117 @@ function Reconcile-TelephoneLeadCompletedOwnedResidue {
             $result.skipped_active += 1
             continue
         }
+        $ownerObsAuto = Get-TelephoneLeadOwnerIdentityObservation -Owner $life.owner
+        if ([string]$ownerObsAuto.status -ceq 'mismatch') {
+            [void]$result.refused.Add([ordered]@{
+                run_id = $runId
+                run_root = $runRoot
+                session_id = [string]$ExpectedSessionId
+                reason = 'pid_reuse_or_exe_mismatch'
+                attempted = $false
+                recovered = $false
+            })
+            continue
+        }
+        if ([string]$ownerObsAuto.status -ceq 'query_error') {
+            [void]$result.refused.Add([ordered]@{
+                run_id = $runId
+                run_root = $runRoot
+                session_id = [string]$ExpectedSessionId
+                reason = 'owner_query_error'
+                attempted = $false
+                recovered = $false
+            })
+            [void]$result.pending.Add([ordered]@{
+                run_id = $runId
+                session_id = [string]$ExpectedSessionId
+                identity_status = 'owner_query_error'
+                reason = 'owner_query_error'
+            })
+            continue
+        }
+        if ($null -ne $life.cli_child) {
+            $childObsAuto = Get-TelephoneLeadOwnerIdentityObservation -Owner $life.cli_child
+            if ([string]$childObsAuto.status -ceq 'mismatch') {
+                [void]$result.refused.Add([ordered]@{
+                    run_id = $runId
+                    run_root = $runRoot
+                    session_id = [string]$ExpectedSessionId
+                    reason = 'pid_reuse_or_exe_mismatch'
+                    attempted = $false
+                    recovered = $false
+                })
+                continue
+            }
+        }
         $recovery = $null
         if ([bool]$life.owner_alive -or [bool]$life.cli_child_alive) {
             $recovery = Stop-TelephoneLeadCompletedOwnProcess -Lifecycle $life -ExpectedSessionId $ExpectedSessionId -ExpectedRunId $runId
             if ([bool]$recovery.recovered) {
                 $result.recovered += 1
-                [void]$result.recovered_runs.Add([ordered]@{ run_id = $runId; run_root = $runRoot })
+                [void]$result.recovered_runs.Add([ordered]@{
+                    run_id = $runId
+                    run_root = $runRoot
+                    session_id = [string]$ExpectedSessionId
+                    refused = [string]$recovery.refused
+                    drain_pending = [bool]$recovery.drain_pending
+                    stdout_eof = [bool]$recovery.stdout_eof
+                    stderr_eof = [bool]$recovery.stderr_eof
+                    measured_os_exit_code = $(if ($null -ne $recovery.measured_os_exit_code) { [int]$recovery.measured_os_exit_code } else { $null })
+                    provider_replayed = $false
+                })
             } elseif (-not [string]::IsNullOrWhiteSpace([string]$recovery.refused)) {
-                [void]$result.refused.Add([ordered]@{ run_id = $runId; reason = [string]$recovery.refused })
+                [void]$result.refused.Add([ordered]@{
+                    run_id = $runId
+                    run_root = $runRoot
+                    session_id = [string]$ExpectedSessionId
+                    reason = [string]$recovery.refused
+                    attempted = [bool]$recovery.attempted
+                    recovered = $false
+                })
+                if ([string]$recovery.refused -cin @('active_descendant', 'descendant_query_error', 'owner_query_error', 'pid_reuse_or_exe_mismatch')) {
+                    [void]$result.pending.Add([ordered]@{
+                        run_id = $runId
+                        session_id = [string]$ExpectedSessionId
+                        identity_status = [string]$recovery.refused
+                        host_alive = [bool]$life.owner_alive
+                        child_alive = [bool]$life.cli_child_alive
+                        reason = [string]$recovery.refused
+                    })
+                }
             }
         }
-        $drain = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $runRoot -WaitMilliseconds 1500
+        $drain = $null
+        if ($null -ne $recovery -and $null -ne $recovery.drain) {
+            $drain = $recovery.drain
+        } else {
+            $drain = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $runRoot -WaitMilliseconds 5000
+        }
         if ($null -ne $drain -and $drain -is [Collections.IDictionary] -and [bool]$drain.pending) {
             [void]$result.pending.Add([ordered]@{
                 run_id = $runId
+                session_id = [string]$ExpectedSessionId
                 identity_status = [string]$drain.identity_status
                 host_alive = [bool]$drain.host_alive
                 child_alive = [bool]$drain.child_alive
+                process_exited = [bool]$drain.process_exited
+                stdout_eof = $(if ($drain.Contains('stdout_eof')) { [bool]$drain.stdout_eof } else { $false })
+                stderr_eof = $(if ($drain.Contains('stderr_eof')) { [bool]$drain.stderr_eof } else { $false })
+                measured_os_exit_code = $(if ($drain.Contains('measured_os_exit_code')) { $drain.measured_os_exit_code } else { $null })
+                reason = 'drain_pending'
             })
         }
+    }
+    $persist = ConvertTo-TelephonePersistableRecord -Value $result
+    $persistName = 'session-residue-reconcile-' + ([string]$ExpectedSessionId).ToLowerInvariant() + '.json'
+    $persistPath = Join-Path $rootBase $persistName
+    $result.persist_path = $persistPath
+    $persist['persist_path'] = $persistPath
+    try {
+        if ([IO.File]::Exists($persistPath)) { $null = Write-TelephoneJsonReplace -Path $persistPath -Value $persist }
+        else { $null = Write-TelephoneJsonCreateNew -Path $persistPath -Value $persist }
+    } catch {
+        try { $null = Write-TelephoneJsonReplace -Path $persistPath -Value $persist } catch { }
     }
     return $result
 }

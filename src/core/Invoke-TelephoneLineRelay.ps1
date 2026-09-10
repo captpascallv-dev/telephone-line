@@ -272,8 +272,28 @@ if ([string]::IsNullOrWhiteSpace($leadStateHint) -and -not [string]::IsNullOrWhi
 }
 if (-not [string]::IsNullOrWhiteSpace($leadStateHint) -and -not [string]::IsNullOrWhiteSpace($leadSessionId)) {
     try {
-        $null = Reconcile-TelephoneLeadCompletedOwnedResidue -LeadStateRoot $leadStateHint -ExpectedSessionId $leadSessionId
-    } catch { }
+        $residue = Reconcile-TelephoneLeadCompletedOwnedResidue -LeadStateRoot $leadStateHint -ExpectedSessionId $leadSessionId
+        $residuePersist = ConvertTo-TelephonePersistableRecord -Value $residue
+        $residuePath = Join-Path $paths.root 'residue-reconcile.json'
+        try {
+            if ([IO.File]::Exists($residuePath)) { $null = Write-TelephoneJsonReplace -Path $residuePath -Value $residuePersist }
+            else { $null = Write-TelephoneJsonCreateNew -Path $residuePath -Value $residuePersist }
+        } catch {
+            try { $null = Write-TelephoneJsonReplace -Path $residuePath -Value $residuePersist } catch { }
+        }
+    } catch {
+        $failPersist = [ordered]@{
+            protocol_version = 'telephone-line-completed-owned-residue-reconcile-v1'
+            session_id = $leadSessionId
+            lead_state_root = $leadStateHint
+            scanned = 0
+            recovered = 0
+            provider_replayed = $false
+            error = [string]$_.Exception.Message
+            recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+        }
+        try { $null = Write-TelephoneJsonReplace -Path (Join-Path $paths.root 'residue-reconcile.json') -Value $failPersist } catch { }
+    }
 }
 foreach ($wakeResultPath in @($paths.wake_launch_result, $paths.nested_wake_launch_result, $paths.owner_wake_launch_result)) {
     if (-not [IO.File]::Exists($wakeResultPath)) { continue }
@@ -288,8 +308,23 @@ foreach ($wakeResultPath in @($paths.wake_launch_result, $paths.nested_wake_laun
         elseif ($savedWake.Contains('run_id')) { $savedRun = [string]$savedWake['run_id'] }
         if ([string]::IsNullOrWhiteSpace($savedRoot) -or -not [IO.Directory]::Exists($savedRoot)) { continue }
         $savedParent = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($savedRoot).TrimEnd('\'))
-        $null = Reconcile-TelephoneLeadCompletedOwnedResidue -LeadStateRoot $savedParent -ExpectedSessionId $leadSessionId -ExpectedRunId $savedRun
-    } catch { }
+        $wakeResidue = Reconcile-TelephoneLeadCompletedOwnedResidue -LeadStateRoot $savedParent -ExpectedSessionId $leadSessionId -ExpectedRunId $savedRun
+        $wakePersist = ConvertTo-TelephonePersistableRecord -Value $wakeResidue
+        $wakeResiduePath = Join-Path $paths.root ('residue-reconcile-' + $savedRun + '.json')
+        try {
+            if ([IO.File]::Exists($wakeResiduePath)) { $null = Write-TelephoneJsonReplace -Path $wakeResiduePath -Value $wakePersist }
+            else { $null = Write-TelephoneJsonCreateNew -Path $wakeResiduePath -Value $wakePersist }
+        } catch { }
+    } catch {
+        $wakeFail = [ordered]@{
+            protocol_version = 'telephone-line-completed-owned-residue-reconcile-v1'
+            session_id = $leadSessionId
+            provider_replayed = $false
+            error = [string]$_.Exception.Message
+            recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+        }
+        try { $null = Write-TelephoneJsonReplace -Path (Join-Path $paths.root 'residue-reconcile-error.json') -Value $wakeFail } catch { }
+    }
 }
 try {
     $null = Ensure-TelephoneLeadCollector -StateRoot $stateRoot -LeadKey $leadKey -RelayScript $relayScript
