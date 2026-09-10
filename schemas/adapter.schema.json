@@ -62,6 +62,9 @@
         },
         "exact_native_session": {
           "type": "boolean"
+        },
+        "partial_session_admission": {
+          "type": "boolean"
         }
       }
     },
