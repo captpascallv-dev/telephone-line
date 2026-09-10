@@ -2938,6 +2938,8 @@ function Register-DirectCursorPartialSessionAdmission {
     }
 }
 
+. (Join-Path $PSScriptRoot 'DirectCursor.Migration.ps1')
+
 function Use-DirectCursorPartialContinuation {
     [CmdletBinding()]
     param(

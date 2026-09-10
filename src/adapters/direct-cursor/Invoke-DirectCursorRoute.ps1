@@ -5,6 +5,8 @@ param(
     [Parameter(ParameterSetName = 'Run')]
     [Parameter(ParameterSetName = 'Preflight')]
     [string]$NativeSessionId,
+    [Parameter(ParameterSetName = 'Run')]
+    [string]$MigrationGrantPath = '',
     [Parameter(ParameterSetName = 'Run', Mandatory = $true)]
     [Parameter(ParameterSetName = 'Preflight', Mandatory = $true)]
     [string]$StateRoot,
@@ -421,11 +423,20 @@ if ([IO.Directory]::Exists($paths.root)) {
 }
 
 $consumePartialContinuation = $false
+$migrationArgs = $null
+if (-not [string]::IsNullOrWhiteSpace($MigrationGrantPath)) {
+    if ($Operation -cne 'follow_up' -or [string]::IsNullOrWhiteSpace($JobId)) { throw 'Migration grant requires explicit follow_up and JobId.' }
+    $migrationArgs = @{ GrantPath = $MigrationGrantPath; StateRoot = $resolvedStateRoot; NativeSessionId = $NativeSessionId; JobId = $effectiveJobId; WorkspacePath = $WorkspacePath; Mode = $Mode; AllowedWritePath = $AllowedWritePath }
+    $null = Assert-DirectCursorMigrationContinuation @migrationArgs
+}
 if ($Operation -eq 'follow_up') {
     $sessionPaths = Get-SessionPaths -Root $resolvedStateRoot -SessionId $NativeSessionId
     $partialAdmission = $null
     try { $partialAdmission = Test-DirectCursorPartialAdmissionUsable -StateRoot $resolvedStateRoot -NativeSessionId $NativeSessionId } catch { }
-    if ([IO.File]::Exists($sessionPaths.binding)) {
+    if ($null -ne $migrationArgs) {
+        # Explicit migration proof substitutes only for the unavailable admission.
+        # It never creates an accepted binding or replenishes the old counter.
+    } elseif ([IO.File]::Exists($sessionPaths.binding)) {
         $binding = (Read-DirectJson -Path $sessionPaths.binding).value
         if ([string]$binding.native_session_id -cne $NativeSessionId) { throw 'Adapter native session id does not match the frozen session.' }
         if ([string]$binding.mode -cne $Mode) { throw 'Adapter native session id does not match the frozen session.' }
@@ -528,6 +539,7 @@ $null = Write-DirectJsonCreateNew -Path $paths.intent -Value $intent
 if ($true -eq $consumePartialContinuation) {
     $null = Use-DirectCursorPartialContinuation -StateRoot $resolvedStateRoot -NativeSessionId $NativeSessionId -JobId $effectiveJobId
 }
+if ($null -ne $migrationArgs) { $null = Assert-DirectCursorMigrationContinuation @migrationArgs -Consume }
 $hostProcess = Start-DirectHost -PowerShellPath $powerShellPath -HostScript $hostIdentity.path -ConfigPath $configIdentity.path
 try {
     $owner = [ordered]@{

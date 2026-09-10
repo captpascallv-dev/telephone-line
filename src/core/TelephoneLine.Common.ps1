@@ -2790,6 +2790,89 @@ function ConvertTo-TelephoneFrozenLauncherNamedArguments {
 
 . (Join-Path $PSScriptRoot 'TelephoneLeadRuntime.Common.ps1')
 
+function Invoke-TelephonePriorOwnerHandoff {
+    [CmdletBinding()]
+    param(
+        [string]$LauncherPath, [object[]]$ExtraArguments, [string]$Worktree,
+        [string]$PromptFile, [string]$SessionId, [string]$RunId,
+        [object]$Captured = $null
+    )
+    $folder = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($PromptFile))
+    $recordPath = Join-Path $folder ('prior-owner-handoff-' + $RunId + '.json')
+    $claimPath = Join-Path $folder ('prior-owner-handoff-' + $RunId + '-launch.json')
+    $resultPath = Join-Path $folder ('prior-owner-handoff-' + $RunId + '-result.json')
+    if (-not [IO.File]::Exists($recordPath)) {
+        if ($null -eq $Captured -or -not [bool]$Captured.process_exited -or [int]$Captured.exit_code -eq 0 -or
+            [bool]$Captured.native_turn_complete -or -not [string]::IsNullOrWhiteSpace([string]$Captured.stdout)) { return $null }
+        $plain = [regex]::Replace([string]$Captured.stderr, '(?m)^\s*\|\s?', '')
+        $match = [regex]::Match($plain, 'This isolated Wired Lead root already has an active run:\s*([A-Za-z]:\\[^\r\n]+)')
+        if (-not $match.Success -or -not $plain.Contains($LauncherPath)) { return $null }
+        $priorRoot = [IO.Path]::GetFullPath($match.Groups[1].Value.Trim()).TrimEnd('\')
+        $priorRecord = (Read-TelephoneJson -Path (Join-Path $priorRoot 'lead-run.json')).value
+        if ([string]$priorRecord.resume_session_id -cne $SessionId -or
+            -not [IO.Path]::GetFullPath([string]$priorRecord.worktree).TrimEnd('\').Equals([IO.Path]::GetFullPath($Worktree).TrimEnd('\'),[StringComparison]::OrdinalIgnoreCase)) { return $null }
+        $targetRoot = Join-Path ([IO.Path]::GetDirectoryName($priorRoot)) $RunId
+        # This supported refusal precedes any new run directory or native process.
+        if ([IO.Directory]::Exists($targetRoot)) { return $null }
+        $ownerRead = Read-TelephoneJson -Path (Join-Path $priorRoot 'owner.json')
+        $owners = @($ownerRead.value)
+        $childPath = Join-Path $priorRoot 'cli-child.json'
+        if ([IO.File]::Exists($childPath)) { $owners += (Read-TelephoneJson -Path $childPath).value }
+        foreach ($owner in $owners) {
+            if ([int]$owner.pid -le 0 -or [int64]$owner.start_time_utc_ticks -le 0) { return $null }
+        }
+        $record = [ordered]@{
+            protocol_version = 'telephone-line-prior-owner-handoff-v1'
+            session_id = $SessionId; run_id = $RunId
+            launcher = Get-TelephoneFileIdentity -Path $LauncherPath
+            prompt = Get-TelephoneFileIdentity -Path $PromptFile
+            extra_arguments = @($ExtraArguments)
+            worktree = [IO.Path]::GetFullPath($Worktree).TrimEnd('\')
+            prior_run_root = $priorRoot; target_run_root = $targetRoot
+            prior_record = Get-TelephoneFileIdentity -Path (Join-Path $priorRoot 'lead-run.json')
+            prior_owners = $owners
+            refusal = $Captured
+            new_turn_started = $false; provider_rerun = $false
+            recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+        }
+        try { $null = Write-TelephoneJsonCreateNew -Path $recordPath -Value $record } catch [IO.IOException] { }
+    }
+    $record = (Read-TelephoneJson -Path $recordPath).value
+    if ([string]$record.protocol_version -cne 'telephone-line-prior-owner-handoff-v1' -or [string]$record.session_id -cne $SessionId -or [string]$record.run_id -cne $RunId -or
+        -not [IO.Path]::GetFullPath($Worktree).TrimEnd('\').Equals([string]$record.worktree,[StringComparison]::OrdinalIgnoreCase) -or
+        ((@($record.extra_arguments) -join "`n") -cne (@($ExtraArguments) -join "`n"))) { throw 'LEAD_WAKE_AMBIGUOUS' }
+    foreach ($pair in @(@($record.launcher,$LauncherPath),@($record.prompt,$PromptFile),@($record.prior_record,(Join-Path ([string]$record.prior_run_root) 'lead-run.json')))) {
+        $actual = Get-TelephoneFileIdentity -Path ([string]$pair[1])
+        if ([string]$pair[0].sha256 -cne [string]$actual.sha256 -or [int64]$pair[0].bytes -ne [int64]$actual.bytes -or [string]$pair[0].path -cne [string]$actual.path) { throw 'LEAD_WAKE_AMBIGUOUS' }
+    }
+    if ([IO.File]::Exists($resultPath)) { return (Read-TelephoneJson -Path $resultPath).value.launch }
+    if ([IO.File]::Exists($claimPath)) {
+        # A crash after the launch claim is ambiguous. Never manufacture a retry.
+        throw 'LEAD_WAKE_AMBIGUOUS'
+    }
+    while ($true) {
+        if (Test-TelephoneSupervisorRunStopRequested) { throw 'LEAD_WAKE_FAILED' }
+        $alive = $false
+        foreach ($owner in @($record.prior_owners)) { if (Test-TelephoneOwnerAlive -Owner $owner) { $alive = $true } }
+        if (-not $alive) { break }
+        Start-Sleep -Milliseconds 200
+    }
+    if ([IO.Directory]::Exists([string]$record.target_run_root)) { throw 'LEAD_WAKE_AMBIGUOUS' }
+    # CreateNew is the single launch claim, also across collector restarts.
+    try { $null = Write-TelephoneJsonCreateNew -Path $claimPath -Value ([ordered]@{
+        protocol_version = 'telephone-line-prior-owner-launch-v1'
+        session_id = $SessionId; run_id = $RunId; prior_owners_released = $true
+        executor_rerun = $false; recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+    }) } catch [IO.IOException] { throw 'LEAD_WAKE_AMBIGUOUS' }
+    $launch = Invoke-TelephoneFrozenLeadLauncher -LauncherPath $LauncherPath -ExtraArguments $ExtraArguments -Worktree $Worktree -PromptFile $PromptFile -SessionId $SessionId -RunId $RunId -PriorOwnerRetry
+    $null = Write-TelephoneJsonCreateNew -Path $resultPath -Value ([ordered]@{
+        protocol_version = 'telephone-line-prior-owner-handoff-result-v1'
+        session_id = $SessionId; run_id = $RunId; launch = $launch
+        executor_rerun = $false; recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+    })
+    return $launch
+}
+
 function Invoke-TelephoneFrozenLeadLauncher {
     [CmdletBinding()]
     param(
@@ -2798,10 +2881,15 @@ function Invoke-TelephoneFrozenLeadLauncher {
         [Parameter(Mandatory = $true)][string]$Worktree,
         [Parameter(Mandatory = $true)][string]$PromptFile,
         [Parameter(Mandatory = $true)][string]$SessionId,
-        [Parameter(Mandatory = $true)][string]$RunId
+        [Parameter(Mandatory = $true)][string]$RunId,
+        [switch]$PriorOwnerRetry
     )
     $null = ConvertTo-TelephoneFrozenLauncherNamedArguments -Arguments $ExtraArguments
     Set-TelephoneLastLeadLaunchDiagnostic -Diagnostic $null
+    if (-not $PriorOwnerRetry) {
+        $handoff = Invoke-TelephonePriorOwnerHandoff -LauncherPath $LauncherPath -ExtraArguments $ExtraArguments -Worktree $Worktree -PromptFile $PromptFile -SessionId $SessionId -RunId $RunId
+        if ($null -ne $handoff) { return $handoff }
+    }
     $extraForLaunch = @($ExtraArguments)
     $frozenCmd = Get-TelephoneLeadNamedArgumentValue -Arguments $ExtraArguments -Name 'CodexCommand'
     $stablePolicy = Get-TelephoneLeadStableCliPolicy
@@ -2894,6 +2982,10 @@ function Invoke-TelephoneFrozenLeadLauncher {
             pid = [int]$captured.pid
             executable_path = [string]$captured.executable_path
         }
+    }
+    if (-not $PriorOwnerRetry) {
+        $handoff = Invoke-TelephonePriorOwnerHandoff -LauncherPath $LauncherPath -ExtraArguments $ExtraArguments -Worktree $Worktree -PromptFile $PromptFile -SessionId $SessionId -RunId $RunId -Captured $captured
+        if ($null -ne $handoff) { return $handoff }
     }
     if ([int]$captured.exit_code -ne 0 -or [string]::IsNullOrWhiteSpace([string]$captured.stdout)) {
         $code = 'LEAD_WAKE_FAILED'
