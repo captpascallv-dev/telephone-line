@@ -2120,6 +2120,12 @@ function Write-TelephoneLifecycleStatus {
         [bool]$Idle = $false
     )
 
+    # The relay and collector both publish this status after delivery. Serialize
+    # their read/replace cycle so File.Replace cannot move the other's target
+    # out from under it while creating its temporary backup.
+    $statusGate = Open-TelephoneExclusiveGate -Path ([string]$Paths.lifecycle_status + '.lock') -WaitMilliseconds 10000
+    if ($null -eq $statusGate) { throw 'Lifecycle status writer is still owned.' }
+    try {
     $jobId = ''
     $project = ''
     $session = ''
@@ -2153,6 +2159,9 @@ function Write-TelephoneLifecycleStatus {
         }
     } catch { }
     return $written
+    } finally {
+        $statusGate.Dispose()
+    }
 }
 
 function Test-TelephoneLifecycleIdleGap {
