@@ -2781,10 +2781,10 @@ function Register-DirectCursorPartialSessionAdmission {
         if ($null -eq $extraOwners) { $extraOwners = Get-DirectNoteValue -Object $expectedDoc -Name 'activation_recheck_owners' }
         foreach ($extra in @($extraOwners)) {
             if ($null -eq $extra) { continue }
-            $pid = [int](Get-DirectNoteValue -Object $extra -Name 'pid')
+            $extraOwnerPid = [int](Get-DirectNoteValue -Object $extra -Name 'pid')
             $ticks = [int64](Get-DirectNoteValue -Object $extra -Name 'start_time_utc_ticks')
-            if ($pid -le 0 -or $ticks -le 0) { throw 'Expected dead owner identity is incomplete.' }
-            $null = $deadOwners.Add((Confirm-DirectCursorOwnerDead -Owner ([ordered]@{ pid = $pid; start_time_utc_ticks = $ticks }) -Source ([string](Get-DirectNoteValue -Object $extra -Name 'role'))))
+            if ($extraOwnerPid -le 0 -or $ticks -le 0) { throw 'Expected dead owner identity is incomplete.' }
+            $null = $deadOwners.Add((Confirm-DirectCursorOwnerDead -Owner ([ordered]@{ pid = $extraOwnerPid; start_time_utc_ticks = $ticks }) -Source ([string](Get-DirectNoteValue -Object $extra -Name 'role'))))
         }
 
         $existingAdmission = $null
