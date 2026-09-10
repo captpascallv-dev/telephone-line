@@ -303,6 +303,29 @@ function Test-TelephoneLeadDrainMatchesExpectedProducer {
     return (Test-TelephoneLeadProcessIdentityMatch -Expected $ExpectedIdentity -Actual $Doc)
 }
 
+function Test-TelephoneLeadDrainMatchesIndependentProducer {
+    [CmdletBinding()]
+    param(
+        [AllowNull()][object]$Doc,
+        [AllowNull()][object]$ExpectedIdentity,
+        [string]$SessionId = '',
+        [string]$RunId = '',
+        [string]$ExpectedRole = ''
+    )
+    if ($null -eq $ExpectedIdentity) { return $false }
+    if (-not (Test-TelephoneLeadDrainMatchesExpectedProducer -Doc $Doc -ExpectedIdentity $ExpectedIdentity -SessionId $SessionId -RunId $RunId)) { return $false }
+    $role = ''
+    try {
+        if ($Doc.Contains('role')) { $role = [string]$Doc['role'] }
+    } catch {
+        $role = ''
+    }
+    if (-not [string]::IsNullOrWhiteSpace($role) -and -not [string]::IsNullOrWhiteSpace($ExpectedRole) -and $role -cne $ExpectedRole) {
+        return $false
+    }
+    return $true
+}
+
 function Get-TelephoneLeadOwnerIdentityObservation {
     [CmdletBinding()]
     param([AllowNull()][object]$Owner)
@@ -1805,10 +1828,13 @@ function Get-TelephoneLeadRunLifecycle {
             $life.owner_alive = Test-TelephoneLeadOwnerIdentityAlive -Owner $life.owner
         } catch { }
     }
+    $independentHostOwner = $life.owner
+    $independentCliChild = $null
     if ([IO.File]::Exists($childPath)) {
         try {
             $life.cli_child = (Read-TelephoneJson -Path $childPath).value
             $life.cli_child_alive = Test-TelephoneLeadOwnerIdentityAlive -Owner $life.cli_child
+            $independentCliChild = $life.cli_child
         } catch { }
     } elseif ([IO.File]::Exists($cliDrainPath)) {
         try {
@@ -1835,14 +1861,18 @@ function Get-TelephoneLeadRunLifecycle {
     $life.current_turn_id = [string]$native.current_turn_id
     $life.complete_kind = [string]$native.complete_kind
     $hostDrain = $null
+    $hostDrainSidecarPresent = $false
     foreach ($path in @($hostDrainPath, $drainPath)) {
         if (-not [IO.File]::Exists($path)) { continue }
+        $hostDrainSidecarPresent = $true
         try {
             $candidate = (Read-TelephoneJson -Path $path).value
-            if ($candidate -is [Collections.IDictionary] -and (Test-TelephoneLeadDrainIdentityComplete -Doc $candidate -SessionId $ExpectedSessionId -RunId $ExpectedRunId)) {
-                $hostDrain = $candidate
-                break
+            if ($candidate -isnot [Collections.IDictionary]) { continue }
+            if (-not (Test-TelephoneLeadDrainMatchesIndependentProducer -Doc $candidate -ExpectedIdentity $independentHostOwner -SessionId $ExpectedSessionId -RunId $ExpectedRunId -ExpectedRole 'host')) {
+                continue
             }
+            $hostDrain = $candidate
+            break
         } catch { }
     }
     if ($null -ne $hostDrain -and $hostDrain -is [Collections.IDictionary]) {
@@ -1856,10 +1886,10 @@ function Get-TelephoneLeadRunLifecycle {
             $life.owner = $hostDrain
             $life.owner_alive = Test-TelephoneLeadOwnerIdentityAlive -Owner $hostDrain
         }
-    } elseif ([IO.File]::Exists($cliDrainPath)) {
+    } elseif (-not $hostDrainSidecarPresent -and [IO.File]::Exists($cliDrainPath)) {
         try {
             $cliOnly = (Read-TelephoneJson -Path $cliDrainPath).value
-            if ($cliOnly -is [Collections.IDictionary] -and (Test-TelephoneLeadDrainIdentityComplete -Doc $cliOnly -SessionId $ExpectedSessionId -RunId $ExpectedRunId)) {
+            if ($cliOnly -is [Collections.IDictionary] -and (Test-TelephoneLeadDrainMatchesIndependentProducer -Doc $cliOnly -ExpectedIdentity $independentCliChild -SessionId $ExpectedSessionId -RunId $ExpectedRunId -ExpectedRole 'cli')) {
                 if ($cliOnly.Contains('process_exited')) { $life.process_exited = [bool]$cliOnly.process_exited }
                 if ($cliOnly.Contains('stdout_eof')) { $life.stdout_eof = [bool]$cliOnly.stdout_eof }
                 if ($cliOnly.Contains('stderr_eof')) { $life.stderr_eof = [bool]$cliOnly.stderr_eof }
