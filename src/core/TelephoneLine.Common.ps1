@@ -3552,16 +3552,29 @@ function Restore-TelephoneExactJobRelay {
     $scriptPath = $RelayScript
     if ([string]::IsNullOrWhiteSpace($scriptPath)) { $scriptPath = Join-Path $PSScriptRoot 'Invoke-TelephoneLineRelay.ps1' }
     if (-not [IO.File]::Exists($scriptPath)) { $result.reason = 'relay_script_missing'; return $result }
-    $newRelay = Start-TelephoneHiddenPowerShell -ScriptPath $scriptPath -Arguments @('-JobRoot', $root)
-    $attemptPath = Join-Path $root ('relay-resume-' + [DateTimeOffset]::UtcNow.ToString('yyyyMMddTHHmmssfffffffZ') + '.json')
-    try { $null = Write-TelephoneJsonCreateNew -Path $attemptPath -Value $newRelay } catch { }
-    try { $null = Write-TelephoneJsonReplace -Path $paths.relay_owner -Value $newRelay } catch {
-        try { $null = Write-TelephoneJsonCreateNew -Path $paths.relay_owner -Value $newRelay } catch { }
+    $gate = $null
+    try {
+        $gate = Open-TelephoneExclusiveGate -Path (Join-Path $root 'relay-restore.lock') -WaitMilliseconds 8000
+        if ($null -eq $gate) { $result.reason = 'restore_lock_busy'; return $result }
+        $relayOwner = $null
+        if ([IO.File]::Exists($paths.relay_owner)) {
+            try { $relayOwner = (Read-TelephoneJson -Path $paths.relay_owner).value } catch { $relayOwner = $null }
+        }
+        if (Test-TelephoneOwnerAlive -Owner $relayOwner) { $result.reason = 'relay_alive'; $result.owner = $relayOwner; return $result }
+        if ([IO.File]::Exists($paths.delivery)) { $result.reason = 'already_delivered'; return $result }
+        $newRelay = Start-TelephoneHiddenPowerShell -ScriptPath $scriptPath -Arguments @('-JobRoot', $root)
+        $attemptPath = Join-Path $root ('relay-resume-' + [DateTimeOffset]::UtcNow.ToString('yyyyMMddTHHmmssfffffffZ') + '.json')
+        try { $null = Write-TelephoneJsonCreateNew -Path $attemptPath -Value $newRelay } catch { }
+        try { $null = Write-TelephoneJsonReplace -Path $paths.relay_owner -Value $newRelay } catch {
+            try { $null = Write-TelephoneJsonCreateNew -Path $paths.relay_owner -Value $newRelay } catch { }
+        }
+        $result.restored = $true
+        $result.reason = 'relay_restored'
+        $result.owner = $newRelay
+        return $result
+    } finally {
+        if ($null -ne $gate) { $gate.Dispose() }
     }
-    $result.restored = $true
-    $result.reason = 'relay_restored'
-    $result.owner = $newRelay
-    return $result
 }
 
 function Get-TelephoneNextMailboxSequence {

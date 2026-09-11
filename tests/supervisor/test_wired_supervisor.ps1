@@ -27,6 +27,7 @@ $noOrphanAfterComplete = 0
 $earlyLeadExitJobSurvives = 0
 $callbackResumedChild = 0
 $runHostDeathNegative = 0
+$automaticRelayRestore = 0
 $guiCancelOne = 0
 $productionChainActivation = 0
 $mailboxSixResult = 0
@@ -630,18 +631,134 @@ try {
     $null = Invoke-SupScript -Relative 'src\supervisor\Invoke-TelephoneSupervisor.ps1' -Arguments @('-InstallRoot', $repoRoot, '-StateRoot', $script:supState)
     $outHost = Get-TelephoneSupervisorRecordPath -StateRoot $script:supState -Kind outbox -RunId $runHost
     Assert-Sup (-not [IO.File]::Exists($outHost)) 'Run-host death failed the run while a surviving descendant was still working.'
-    Stop-Process -Id ([int]$childHostEv.pid) -Force -ErrorAction SilentlyContinue
+    $stopHost = Stop-TelephoneSupervisorExactRun -StateRoot $script:supState -RunId $runHost
+    Assert-Sup ([bool]$stopHost.stopped) ('Supported cancel after host death failed: ' + [string]$stopHost.reason)
     Assert-Sup (Wait-Sup {
         $cp = Get-Process -Id ([int]$childHostEv.pid) -ErrorAction SilentlyContinue
         try { return ($null -eq $cp) } finally { if ($null -ne $cp) { $cp.Dispose() } }
-    } -Milliseconds 10000) 'Surviving descendant did not exit after test stop.'
+    } -Milliseconds 10000) 'Supported cancel after host death did not terminate descendants.'
     $null = Invoke-SupScript -Relative 'src\supervisor\Invoke-TelephoneSupervisor.ps1' -Arguments @('-InstallRoot', $repoRoot, '-StateRoot', $script:supState)
-    Assert-Sup (Wait-Sup { [IO.File]::Exists($outHost) } -Milliseconds 10000) 'Run-host death was not reconciled after descendants exited.'
+    Assert-Sup (Wait-Sup { [IO.File]::Exists($outHost) } -Milliseconds 10000) 'Run-host death was not reconciled after owned cancel.'
     $outHostRec = (Read-TelephoneJson -Path $outHost).value
-    Assert-Sup ([string]$outHostRec.terminal -ceq 'failed') 'Run-host death invented success.'
-    Assert-Sup ([string]$outHostRec.error_code -ceq 'SUPERVISOR_OWNER_DEAD_NO_RERUN') 'Run-host death used the wrong error code.'
+    Assert-Sup ([string]$outHostRec.terminal -ceq 'cancelled') 'Cancel after host death used the wrong terminal.'
     Stop-Process -Id ([int]$childHostEv.pid) -Force -ErrorAction SilentlyContinue
     $script:runHostDeathNegative = 1
+
+    $autoRoot = Join-Path $testRoot 'auto-recover'
+    $autoTel = Join-Path $autoRoot 'line'
+    $autoWork = Join-Path $autoRoot 'work'
+    $autoLeadLog = Join-Path $autoRoot 'lead.log'
+    $autoLeadRuns = Join-Path $autoRoot 'lead-runs'
+    $autoHoldRoute = Join-Path $autoRoot 'hold-route.ps1'
+    $autoHold = Join-Path $autoRoot 'hold.release'
+    $autoSpec = Join-Path $autoRoot 'batch-spec.json'
+    $autoCounter = Join-Path $autoRoot 'count.txt'
+    $autoMarker = Join-Path $autoRoot 'markers'
+    foreach ($dir in @($autoRoot, $autoTel, $autoWork, $autoLeadRuns, $autoMarker)) { [IO.Directory]::CreateDirectory($dir) | Out-Null }
+    Write-SupHoldRoute -Path $autoHoldRoute
+    $autoBinding = [ordered]@{
+        protocol_version = 'telephone-line-lead-binding-v1'
+        session_id = 'auto-recover-session-001'
+        worktree = $autoWork
+        launcher = [ordered]@{ path = (Join-Path $repoRoot 'tests\core\fixtures\mock-lead-launcher.ps1'); arguments = @() }
+    }
+    $autoLeadKey = [string](Get-TelephoneLeadCanonicalIdentity -Lead $autoBinding).identity_sha256
+    $autoBatchId = [guid]::NewGuid().ToString('D').ToLowerInvariant()
+    $autoSpecDoc = [ordered]@{
+        tel_state = $autoTel
+        starter = (Join-Path $repoRoot 'src\core\Start-TelephoneLineJob.ps1')
+        mock_route = (Join-Path $repoRoot 'tests\core\fixtures\mock-route.ps1')
+        hold_route = $autoHoldRoute
+        worktree = $autoWork
+        project = 'auto-recover'
+        lead_log = $autoLeadLog
+        lead_runs = $autoLeadRuns
+        collector_idle_ms = '8000'
+        binding = $autoBinding
+        batch_id = $autoBatchId
+        package_ids = @('pkg-hold')
+        packages = @(@{ id = 'pkg-hold'; exit = 0; fail = $false; counter = $autoCounter; hold_path = $autoHold })
+    }
+    Write-SupJson -Path $autoSpec -Value $autoSpecDoc
+    $previousAutoState = [string]$env:TELEPHONE_LINE_STATE_ROOT
+    $previousAutoLog = [string]$env:TELEPHONE_TEST_LEAD_LOG
+    $previousAutoRuns = [string]$env:TELEPHONE_TEST_LEAD_RUNS
+    $previousAutoIdle = [string]$env:TELEPHONE_TEST_COLLECTOR_IDLE_MS
+    $script:automaticRelayRestore = 0
+    try {
+        $env:TELEPHONE_LINE_STATE_ROOT = $autoTel
+        $env:TELEPHONE_TEST_LEAD_LOG = $autoLeadLog
+        $env:TELEPHONE_TEST_LEAD_RUNS = $autoLeadRuns
+        $env:TELEPHONE_TEST_COLLECTOR_IDLE_MS = '8000'
+        $runAuto = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee40'
+        $reqAuto = New-SupRequest -RunId $runAuto -MarkerDir $autoMarker -HoldMilliseconds 1000 -Project 'auto-recover' -Session 'auto-recover-session-001' -BatchFanIn -BatchSpecFile $autoSpec
+        $pathAuto = Join-Path $autoRoot 'req-auto.json'
+        Write-SupJson -Path $pathAuto -Value $reqAuto
+        $startAuto = Invoke-SupScript -Relative 'src\supervisor\Start-TelephoneWiredRun.ps1' -Arguments @('-RequestFile', $pathAuto, '-StateRoot', $script:supState, '-InstallRoot', $repoRoot)
+        Assert-Sup ($startAuto.exit_code -eq 0) ('Automatic recovery start failed: ' + $startAuto.stderr + $startAuto.stdout)
+        $leadAuto = Join-Path $autoMarker ('lead-' + $runAuto + '.json')
+        Assert-Sup (Wait-Sup {
+            if (-not [IO.File]::Exists($leadAuto)) { return $false }
+            try {
+                $ev = (Read-TelephoneJson -Path $leadAuto).value
+                return ($ev.Contains('jobs') -and $null -ne $ev.jobs)
+            } catch { return $false }
+        } -Milliseconds 30000) 'Automatic recovery Lead jobs were not published.'
+        $leadAutoEv = (Read-TelephoneJson -Path $leadAuto).value
+        $autoJobRoot = [string]$leadAutoEv.jobs['pkg-hold'].job_root
+        $autoJobPaths = Get-TelephoneJobPaths -JobRoot $autoJobRoot
+        Assert-Sup (Wait-Sup { [IO.File]::Exists($autoJobPaths.relay_owner) -and [IO.File]::Exists($autoJobPaths.command_owner) } -Milliseconds 20000) 'Automatic recovery job owners were missing.'
+        $origRelay = (Read-TelephoneJson -Path $autoJobPaths.relay_owner).value
+        $origCommand = (Read-TelephoneJson -Path $autoJobPaths.command_owner).value
+        $origRelayPid = [int]$origRelay.pid
+        Assert-Sup (Test-TelephoneOwnerAlive -Owner $origCommand) 'Original command was not running before relay loss.'
+        Stop-Process -Id $origRelayPid -Force -ErrorAction Stop
+        Assert-Sup (Wait-Sup {
+            $restored = $null
+            try { $restored = (Read-TelephoneJson -Path $autoJobPaths.relay_owner).value } catch { return $false }
+            if (-not (Test-TelephoneOwnerAlive -Owner $restored)) { return $false }
+            return ([int]$restored.pid -ne $origRelayPid)
+        } -Milliseconds 20000) 'Automatic RunHost/Sync did not restore one exact relay.'
+        $autoRelayAfter = (Read-TelephoneJson -Path $autoJobPaths.relay_owner).value
+        $compete1 = Start-Process -FilePath $pwsh -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-Command', ". '" + (Join-Path $repoRoot 'src\core\TelephoneLine.Common.ps1') + "'; Restore-TelephoneExactJobRelay -JobRoot '" + $autoJobRoot + "' | ConvertTo-Json -Compress") -PassThru -WindowStyle Hidden
+        $compete2 = Start-Process -FilePath $pwsh -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-Command', ". '" + (Join-Path $repoRoot 'src\core\TelephoneLine.Common.ps1') + "'; Restore-TelephoneExactJobRelay -JobRoot '" + $autoJobRoot + "' | ConvertTo-Json -Compress") -PassThru -WindowStyle Hidden
+        $null = $compete1.WaitForExit(15000)
+        $null = $compete2.WaitForExit(15000)
+        $afterCompete = (Read-TelephoneJson -Path $autoJobPaths.relay_owner).value
+        Assert-Sup (Test-TelephoneOwnerAlive -Owner $afterCompete) 'Competing restore lost the exact relay.'
+        Assert-Sup (Test-TelephoneOwnerAlive -Owner $origCommand) 'Original command died during competing restore.'
+        $ownerAutoPath = Join-Path (Join-Path $script:supState ('runs\' + $runAuto)) 'owner.json'
+        $ownerAuto = (Read-TelephoneJson -Path $ownerAutoPath -SchemaName 'wired-supervisor-owner').value
+        Stop-Process -Id ([int]$ownerAuto.pid) -Force -ErrorAction SilentlyContinue
+        Assert-Sup (Wait-Sup {
+            $hp = Get-Process -Id ([int]$ownerAuto.pid) -ErrorAction SilentlyContinue
+            try { return ($null -eq $hp) } finally { if ($null -ne $hp) { $hp.Dispose() } }
+        } -Milliseconds 10000) 'Automatic-recovery run host did not die.'
+        Assert-Sup (Test-TelephoneOwnerAlive -Owner $origCommand) 'Original command was killed by host-handle close.'
+        $null = Invoke-SupScript -Relative 'src\supervisor\Invoke-TelephoneSupervisor.ps1' -Arguments @('-InstallRoot', $repoRoot, '-StateRoot', $script:supState)
+        $outAuto = Get-TelephoneSupervisorRecordPath -StateRoot $script:supState -Kind outbox -RunId $runAuto
+        Assert-Sup (-not [IO.File]::Exists($outAuto)) 'Supervisor failed the still-running recovered command.'
+        Assert-Sup (Wait-Sup {
+            try {
+                $rel = (Read-TelephoneJson -Path $autoJobPaths.relay_owner).value
+                return (Test-TelephoneOwnerAlive -Owner $rel)
+            } catch { return $false }
+        } -Milliseconds 15000) 'Automatic supervisor recovery did not retain one exact relay after host death.'
+        [IO.File]::WriteAllText($autoHold, "release`n", [Text.UTF8Encoding]::new($false))
+        Assert-Sup (Wait-Sup { [IO.File]::Exists($autoJobPaths.receipt) } -Milliseconds 30000) 'Recovered command did not publish one receipt.'
+        Assert-Sup (Wait-Sup { [IO.File]::Exists($autoJobPaths.delivery) } -Milliseconds 30000) 'Recovered relay did not publish one delivery.'
+        Assert-Sup ((Get-SupCounterCount -Path $autoCounter) -eq 1) 'Automatic recovery reran the original command.'
+        $null = Invoke-SupScript -Relative 'src\supervisor\Invoke-TelephoneSupervisor.ps1' -Arguments @('-InstallRoot', $repoRoot, '-StateRoot', $script:supState)
+        Assert-Sup (Wait-Sup { [IO.File]::Exists($outAuto) } -Milliseconds 15000) 'Settled recovered run did not publish a terminal.'
+        $outAutoRec = (Read-TelephoneJson -Path $outAuto).value
+        Assert-Sup ([string]$outAutoRec.terminal -ceq 'completed') 'Automatic recovery invented failure after one original receipt/delivery.'
+        $script:automaticRelayRestore = 1
+    } finally {
+        $env:TELEPHONE_LINE_STATE_ROOT = $previousAutoState
+        $env:TELEPHONE_TEST_LEAD_LOG = $previousAutoLog
+        $env:TELEPHONE_TEST_LEAD_RUNS = $previousAutoRuns
+        $env:TELEPHONE_TEST_COLLECTOR_IDLE_MS = $previousAutoIdle
+    }
 
     $runB = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee02'
     $runC = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee03'
@@ -1428,6 +1545,7 @@ try {
         supervisor_early_lead_exit = $earlyLeadExitJobSurvives
         supervisor_callback_continuity = $callbackResumedChild
         supervisor_run_host_death = $runHostDeathNegative
+        supervisor_automatic_relay_restore = $automaticRelayRestore
         supervisor_gui_cancel_one = $guiCancelOne
         supervisor_production_idle_activation = $productionChainActivation
         supervisor_mailbox_six_result = $mailboxSixResult
@@ -1464,6 +1582,7 @@ try {
         supervisor_early_lead_exit = $earlyLeadExitJobSurvives
         supervisor_callback_continuity = $callbackResumedChild
         supervisor_run_host_death = $runHostDeathNegative
+        supervisor_automatic_relay_restore = $automaticRelayRestore
         supervisor_gui_cancel_one = $guiCancelOne
         supervisor_production_idle_activation = $productionChainActivation
         supervisor_mailbox_six_result = $mailboxSixResult

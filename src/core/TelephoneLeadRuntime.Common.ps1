@@ -1704,7 +1704,8 @@ function Wait-TelephoneLeadOwnedDrainTerminal {
             $result.host_observation_status = [string]$hostObs.status
             $result.host_alive = ([string]$hostObs.status -ceq 'alive')
             if ($hostPid -gt 0) {
-                $hostDrain = Complete-TelephoneLeadOpenDrain -ProcessId $hostPid -Identity $hostIdentity -SessionId $sessionId -RunId $runId -Wait:($slice -gt 0) -WaitMilliseconds $slice
+                $hostDrainWait = ($slice -gt 0) -and -not [bool]$result.host_alive
+                $hostDrain = Complete-TelephoneLeadOpenDrain -ProcessId $hostPid -Identity $hostIdentity -SessionId $sessionId -RunId $runId -Wait:$hostDrainWait -WaitMilliseconds $(if ($hostDrainWait) { $slice } else { 0 })
             }
             if ($null -ne $hostDrain -and [bool]$hostDrain.found -and [bool]$hostDrain.process_exited -and [bool]$hostDrain.stdout_eof -and [bool]$hostDrain.stderr_eof) {
                 $recheck = Test-TelephoneLeadExactProcessObservation -Doc $hostIdentity
@@ -1806,14 +1807,19 @@ function Wait-TelephoneLeadOwnedDrainTerminal {
             $result.child_observation_status = 'missing_unproven'
         }
         $childMeasured = [bool]$result.stdout_eof -and [bool]$result.stderr_eof -and $null -ne $result.measured_os_exit_code
-        if ($childMeasured) {
-            $hostDone = $true
-            $result.process_exited = $true
-            if ([string]::IsNullOrWhiteSpace([string]$result.recorded_by)) { $result.recorded_by = 'measured_child_drain' }
+        if ([bool]$result.host_alive) { $hostDone = $false }
+        if ($childMeasured -and [string]::IsNullOrWhiteSpace([string]$result.recorded_by)) {
+            $result.recorded_by = 'measured_child_drain'
         }
         $result.host_terminal = [bool]$hostDone
         $result.child_terminal = [bool]$childDone
         $result.process_exited = [bool]($hostDone -and $childDone)
+        if ([bool]$result.host_alive -and ($childDone -or $childMeasured -or [bool]$result.child_absence_proven)) {
+            $result.pending = $true
+            $result.host_terminal = $false
+            $result.process_exited = $false
+            return $result
+        }
         if ($null -ne $hostIdentity) {
             $result.identity_status = 'BOUND'
         } elseif ($childMeasured) {
@@ -2482,8 +2488,9 @@ function Stop-TelephoneLeadCompletedOwnProcess {
         if ($drain.Contains('measured_os_exit_code') -and $null -ne $drain['measured_os_exit_code']) {
             $record.measured_os_exit_code = [int]$drain['measured_os_exit_code']
         }
-        if (-not [bool]$record.drain_pending -and [bool]$drain.process_exited -and [bool]$record.stdout_eof -and [bool]$record.stderr_eof -and $null -ne $record.measured_os_exit_code) {
+        if ([bool]$drain.child_terminal -and [bool]$record.stdout_eof -and [bool]$record.stderr_eof -and $null -ne $record.measured_os_exit_code) {
             $record.recovered = $true
+            $record.drain_pending = $false
         }
     }
     if (-not [bool]$record.recovered -and [string]::IsNullOrWhiteSpace([string]$record.refused)) {

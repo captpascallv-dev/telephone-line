@@ -1728,6 +1728,35 @@ function Test-TelephoneDashboardJobHasObservedContinuation {
     return $false
 }
 
+function Get-TelephoneDashboardJobLaneSession {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][object]$Job)
+    $session = Get-TelephoneDashboardMapText -Map $Job -Name 'session_id'
+    if ([string]::IsNullOrWhiteSpace($session)) {
+        $session = Get-TelephoneDashboardMapText -Map $Job -Name 'lead_session_id'
+    }
+    return $session
+}
+
+function Test-TelephoneDashboardJobsShareContinuationLane {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][object]$Job,
+        [Parameter(Mandatory = $true)][object]$Other,
+        [AllowNull()][object]$Descriptor = $null
+    )
+    if ($null -ne $Descriptor -and (Test-TelephoneDashboardExactSuccessorJob -Candidate $Other -Descriptor $Descriptor)) {
+        return $true
+    }
+    $project = Get-TelephoneDashboardMapText -Map $Job -Name 'project'
+    $otherProject = Get-TelephoneDashboardMapText -Map $Other -Name 'project'
+    if ([string]::IsNullOrWhiteSpace($project) -or $project -cne $otherProject) { return $false }
+    $left = Get-TelephoneDashboardJobLaneSession -Job $Job
+    $right = Get-TelephoneDashboardJobLaneSession -Job $Other
+    if ([string]::IsNullOrWhiteSpace($left) -or $left -cne $right) { return $false }
+    return $true
+}
+
 function Test-TelephoneDashboardJobSupersededByLiveSuccessor {
     [CmdletBinding()]
     param(
@@ -1751,11 +1780,7 @@ function Test-TelephoneDashboardJobSupersededByLiveSuccessor {
         if ($null -eq $other) { continue }
         if ([string]$other.job_root -ceq [string]$Job.job_root) { continue }
         if (-not [string]::IsNullOrWhiteSpace($project) -and -not [string]::IsNullOrWhiteSpace([string]$other.project) -and [string]$other.project -cne $project) { continue }
-        $otherWorktree = Get-TelephoneDashboardJobWorktreeKey -Job $other
-        $sameLane = $false
-        if (-not [string]::IsNullOrWhiteSpace($worktree) -and $worktree -ceq $otherWorktree -and -not [string]::IsNullOrWhiteSpace($project) -and [string]$other.project -ceq $project) {
-            $sameLane = $true
-        }
+        $sameLane = Test-TelephoneDashboardJobsShareContinuationLane -Job $Job -Other $other -Descriptor $Descriptor
         if (-not $sameLane) { continue }
         $otherCreated = Get-TelephoneDashboardJobCreatedAt -Job $other
         if ($created -gt [DateTimeOffset]::MinValue -and $otherCreated -gt [DateTimeOffset]::MinValue -and $otherCreated -le $created) { continue }

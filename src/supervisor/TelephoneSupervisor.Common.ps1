@@ -2323,6 +2323,151 @@ function Test-TelephoneSupervisorLiveExactMembers {
     return $false
 }
 
+function Get-TelephoneSupervisorBoundLineStateRoots {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$StateRoot,
+        [Parameter(Mandatory = $true)][string]$RunId
+    )
+    $roots = [Collections.Generic.List[string]]::new()
+    $runDir = Join-Path (Get-TelephoneSupervisorPaths -StateRoot $StateRoot).runs $RunId
+    $boundPath = Join-Path $runDir 'bound-line-state-roots.json'
+    if ([IO.File]::Exists($boundPath)) {
+        try {
+            $bound = (Read-TelephoneJson -Path $boundPath).value
+            if ($bound -is [Collections.IDictionary] -and $bound.Contains('state_roots')) {
+                foreach ($item in @($bound.state_roots)) {
+                    $one = [string]$item
+                    if ([string]::IsNullOrWhiteSpace($one) -or -not [IO.Directory]::Exists($one)) { continue }
+                    $full = [IO.Path]::GetFullPath($one).TrimEnd('\')
+                    if (-not $roots.Contains($full)) { [void]$roots.Add($full) }
+                }
+            }
+        } catch { }
+    }
+    $envState = [string]$env:TELEPHONE_LINE_STATE_ROOT
+    if (-not [string]::IsNullOrWhiteSpace($envState) -and [IO.Directory]::Exists($envState)) {
+        $full = [IO.Path]::GetFullPath($envState).TrimEnd('\')
+        if (-not $roots.Contains($full)) { [void]$roots.Add($full) }
+    }
+    return @($roots)
+}
+
+function Get-TelephoneSupervisorLiveSurvivorPids {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$StateRoot,
+        [Parameter(Mandatory = $true)][string]$RunId,
+        [AllowNull()][object]$MemberRecord
+    )
+    $pids = [Collections.Generic.List[int]]::new()
+    $seen = [Collections.Generic.HashSet[int]]::new()
+    $owners = [Collections.Generic.List[object]]::new()
+    $value = if ($MemberRecord -is [Collections.IDictionary] -and $MemberRecord.Contains('value')) { $MemberRecord.value } else { $MemberRecord }
+    if ($value -is [Collections.IDictionary]) {
+        if ($value.Contains('members')) {
+            foreach ($row in @($value.members)) { if ($row -is [Collections.IDictionary]) { [void]$owners.Add($row) } }
+        }
+        if ($value.Contains('lead_pid') -and [int]$value.lead_pid -gt 0) {
+            $lead = [ordered]@{ pid = [int]$value.lead_pid }
+            if ($value.Contains('lead_start_time_utc_ticks') -and [int64]$value.lead_start_time_utc_ticks -gt 0) {
+                $lead.start_time_utc_ticks = [int64]$value.lead_start_time_utc_ticks
+            }
+            [void]$owners.Add($lead)
+        }
+    }
+    foreach ($oneState in @(Get-TelephoneSupervisorBoundLineStateRoots -StateRoot $StateRoot -RunId $RunId)) {
+        $jobsRoot = Join-Path $oneState 'jobs'
+        if (-not [IO.Directory]::Exists($jobsRoot)) { continue }
+        foreach ($dir in @([IO.Directory]::GetDirectories($jobsRoot))) {
+            $lineagePath = Join-Path $dir 'supervisor-lineage.json'
+            if (-not [IO.File]::Exists($lineagePath)) { continue }
+            try {
+                $lineage = (Read-TelephoneJson -Path $lineagePath).value
+                if ($lineage -isnot [Collections.IDictionary] -or [string]$lineage.supervisor_run_id -cne [string]$RunId) { continue }
+            } catch { continue }
+            $jobPaths = Get-TelephoneJobPaths -JobRoot $dir
+            foreach ($ownerPath in @($jobPaths.command_owner, $jobPaths.relay_owner)) {
+                if (-not [IO.File]::Exists($ownerPath)) { continue }
+                try {
+                    $owner = (Read-TelephoneJson -Path $ownerPath).value
+                    if ($owner -is [Collections.IDictionary]) { [void]$owners.Add($owner) }
+                } catch { }
+            }
+        }
+    }
+    foreach ($owner in $owners) {
+        $memberPid = 0
+        if ($owner.Contains('pid')) { $memberPid = [int]$owner.pid }
+        if ($memberPid -le 0 -or -not $seen.Add($memberPid)) { continue }
+        $alive = $false
+        if ($owner.Contains('start_time_utc_ticks')) { $alive = Test-TelephoneOwnerAlive -Owner $owner }
+        else {
+            try { $proc = Get-Process -Id $memberPid -ErrorAction Stop; $proc.Dispose(); $alive = $true } catch { $alive = $false }
+        }
+        if ($alive) { [void]$pids.Add($memberPid) }
+    }
+    return @($pids)
+}
+
+function Test-TelephoneSupervisorBoundJobsSettled {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$StateRoot,
+        [Parameter(Mandatory = $true)][string]$RunId
+    )
+    $seen = 0
+    $pending = 0
+    foreach ($oneState in @(Get-TelephoneSupervisorBoundLineStateRoots -StateRoot $StateRoot -RunId $RunId)) {
+        $jobsRoot = Join-Path $oneState 'jobs'
+        if (-not [IO.Directory]::Exists($jobsRoot)) { continue }
+        foreach ($dir in @([IO.Directory]::GetDirectories($jobsRoot))) {
+            $lineagePath = Join-Path $dir 'supervisor-lineage.json'
+            if (-not [IO.File]::Exists($lineagePath)) { continue }
+            try {
+                $lineage = (Read-TelephoneJson -Path $lineagePath).value
+                if ($lineage -isnot [Collections.IDictionary] -or [string]$lineage.supervisor_run_id -cne [string]$RunId) { continue }
+            } catch { continue }
+            $seen += 1
+            $jobPaths = Get-TelephoneJobPaths -JobRoot $dir
+            if ([IO.File]::Exists($jobPaths.delivery) -or [IO.File]::Exists($jobPaths.relay_error)) { continue }
+            $pending += 1
+        }
+    }
+    return [ordered]@{ seen = [int]$seen; pending = [int]$pending; settled = ($seen -gt 0 -and $pending -eq 0) }
+}
+
+function Get-TelephoneSupervisorRelayScriptPath {
+    [CmdletBinding()]
+    param([AllowNull()][object]$Request)
+    $fromCommon = Join-Path $PSScriptRoot '..\core\Invoke-TelephoneLineRelay.ps1'
+    if ($Request -is [Collections.IDictionary] -and $Request.Contains('installed_version') -and $Request.installed_version -is [Collections.IDictionary]) {
+        $root = ''
+        if ($Request.installed_version.Contains('install_root')) { $root = [string]$Request.installed_version.install_root }
+        if (-not [string]::IsNullOrWhiteSpace($root)) {
+            $cand = Join-Path $root 'src\core\Invoke-TelephoneLineRelay.ps1'
+            if ([IO.File]::Exists($cand)) { return $cand }
+        }
+    }
+    return $fromCommon
+}
+
+function Repair-TelephoneSupervisorOrphanedRunJob {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$StateRoot,
+        [Parameter(Mandatory = $true)][string]$RunId,
+        [Parameter(Mandatory = $true)][object]$Job
+    )
+    $memberRead = Read-TelephoneSupervisorJobMembers -StateRoot $StateRoot -RunId $RunId
+    $pids = @(Get-TelephoneSupervisorLiveSurvivorPids -StateRoot $StateRoot -RunId $RunId -MemberRecord $memberRead)
+    $attached = 0
+    foreach ($memberPid in $pids) {
+        try { if (Add-TelephoneSupervisorPidToRunJob -Job $Job -ProcessId ([int]$memberPid)) { $attached += 1 } } catch { }
+    }
+    return [ordered]@{ live_pids = @($pids); attached = [int]$attached }
+}
+
 function Stop-TelephoneSupervisorExactRun {
     [CmdletBinding()]
     param(
@@ -2351,6 +2496,13 @@ function Stop-TelephoneSupervisorExactRun {
     try {
         $jobOpen = ($null -ne $job -and [IntPtr]$job.handle -ne [IntPtr]::Zero)
         if (-not $jobOpen) {
+            $survivors = @(Get-TelephoneSupervisorLiveSurvivorPids -StateRoot $StateRoot -RunId $RunId -MemberRecord $memberRead)
+            if ($survivors.Count -gt 0) {
+                $job = New-TelephoneSupervisorRunJob -RunId $RunId
+                $jobOpen = ($null -ne $job -and [IntPtr]$job.handle -ne [IntPtr]::Zero)
+                if ($jobOpen) { $null = Repair-TelephoneSupervisorOrphanedRunJob -StateRoot $StateRoot -RunId $RunId -Job $job }
+            }
+            if (-not $jobOpen) {
             if (-not $hostAlive) {
                 return [ordered]@{ stopped = $false; reason = 'job-missing-and-owner-dead' }
             }
@@ -2360,6 +2512,7 @@ function Stop-TelephoneSupervisorExactRun {
                 return [ordered]@{ stopped = $true; reason = 'stop-signaled'; owner = $owner }
             }
             return [ordered]@{ stopped = $false; reason = 'job-missing' }
+            }
         }
         $expectedName = Get-TelephoneSupervisorJobName -RunId $RunId
         if ($owner.Contains('job_name') -and -not [string]::IsNullOrWhiteSpace([string]$owner.job_name) -and [string]$owner.job_name -cne $expectedName) {
@@ -2754,11 +2907,37 @@ function Reconcile-TelephoneSupervisorClaimed {
         if (Test-TelephoneSupervisorExactOwner -Owner $ownerRead.value) { continue }
         $memberRead = Read-TelephoneSupervisorJobMembers -StateRoot $StateRoot -RunId $runId
         $job = Open-TelephoneSupervisorRunJob -RunId $runId -WaitMilliseconds 0
+        $createdJob = $false
         try {
-            if (Test-TelephoneSupervisorLiveExactMembers -MemberRecord $memberRead -Job $job) { continue }
-            if ($null -ne $job -and [IntPtr]$job.handle -ne [IntPtr]::Zero) {
-                $left = @(Get-TelephoneSupervisorJobProcessIds -Job $job)
-                if ($left.Count -gt 0) { continue }
+            $survivors = @(Get-TelephoneSupervisorLiveSurvivorPids -StateRoot $StateRoot -RunId $runId -MemberRecord $memberRead)
+            $liveMembers = Test-TelephoneSupervisorLiveExactMembers -MemberRecord $memberRead -Job $job
+            $left = @()
+            if ($null -ne $job -and [IntPtr]$job.handle -ne [IntPtr]::Zero) { $left = @(Get-TelephoneSupervisorJobProcessIds -Job $job) }
+            $boundSettled = Test-TelephoneSupervisorBoundJobsSettled -StateRoot $StateRoot -RunId $runId
+            if (($liveMembers -or $survivors.Count -gt 0 -or $left.Count -gt 0) -and -not [bool]$boundSettled.settled) {
+                if ($null -eq $job -or [IntPtr]$job.handle -eq [IntPtr]::Zero) {
+                    $job = New-TelephoneSupervisorRunJob -RunId $runId
+                    $createdJob = $true
+                }
+                $null = Repair-TelephoneSupervisorOrphanedRunJob -StateRoot $StateRoot -RunId $runId -Job $job
+                $relayScript = Get-TelephoneSupervisorRelayScriptPath -Request $claimed.value
+                try { $null = Sync-TelephoneSupervisorMailboxBinding -StateRoot $StateRoot -RunId $runId -Job $job -RelayScript $relayScript } catch { }
+                $memberPath = Join-Path $runDir 'job-members.json'
+                try { $null = Write-TelephoneSupervisorJobMembers -Path $memberPath -RunId $runId -Job $job -LeadIdentity $null } catch { }
+                $retainPath = Join-Path $runDir 'claimed-reconcile.json'
+                try {
+                    $null = Write-TelephoneJsonReplace -Path $retainPath -Value ([ordered]@{
+                        protocol_version = 'telephone-line-supervisor-claimed-reconcile-v1'
+                        run_id = $runId
+                        decision = 'owner_dead_retained'
+                        error_code = ''
+                        replay = $false
+                        silent_skip = $false
+                        launch_intent_present = [bool]$hasIntent
+                        recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+                    })
+                } catch { }
+                continue
             }
         } finally {
             Close-TelephoneSupervisorRunJob -Job $job
@@ -2788,6 +2967,18 @@ function Reconcile-TelephoneSupervisorClaimed {
             }
             try { $null = Write-TelephoneJsonReplace -Path $reconcilePath -Value $record } catch { }
             [void]$reconciled.Add([ordered]@{ run_id = $runId; terminal = ''; decision = $nestedDecision })
+            continue
+        }
+        $stopPath = Join-Path $runDir 'stop.requested'
+        if ([IO.File]::Exists($stopPath)) {
+            $null = Write-TelephoneSupervisorOutbox -StateRoot $StateRoot -RunId $runId -Terminal 'cancelled' -Request $claimed.value
+            [void]$reconciled.Add([ordered]@{ run_id = $runId; terminal = 'cancelled' })
+            continue
+        }
+        $settled = Test-TelephoneSupervisorBoundJobsSettled -StateRoot $StateRoot -RunId $runId
+        if ([bool]$settled.settled) {
+            $null = Write-TelephoneSupervisorOutbox -StateRoot $StateRoot -RunId $runId -Terminal 'completed' -Request $claimed.value
+            [void]$reconciled.Add([ordered]@{ run_id = $runId; terminal = 'completed' })
             continue
         }
         $null = Write-TelephoneSupervisorOutbox -StateRoot $StateRoot -RunId $runId -Terminal 'failed' -Request $claimed.value -ErrorCode 'SUPERVISOR_OWNER_DEAD_NO_RERUN'

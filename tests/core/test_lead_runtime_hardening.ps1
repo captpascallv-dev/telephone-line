@@ -532,6 +532,46 @@ exit 0
     Assert-Hardening ((Read-HardeningSharedText -Path $sepErr).Contains('LATE-STDERR-SEPARATE-PARENT')) 'Separate-parent Stop truncated late stderr.'
     Assert-Hardening ([int]$sepStop.measured_os_exit_code -eq 17) 'Separate-parent collector did not keep the OS exit.'
 
+    $aliveRoot = Join-Path $testRoot 'host-alive-child-exit'
+    [IO.Directory]::CreateDirectory($aliveRoot) | Out-Null
+    $aliveHost = Join-Path $aliveRoot 'host.ps1'
+    [IO.File]::WriteAllText($aliveHost, @"
+param([string]`$Root,[string]`$Core)
+`$ErrorActionPreference='Stop'
+. `$Core
+function SaveJ(`$P,`$V){[IO.File]::WriteAllText(`$P,(`$V|ConvertTo-Json -Depth 30),[Text.UTF8Encoding]::new(`$false))}
+`$me=[Diagnostics.Process]::GetCurrentProcess()
+SaveJ (Join-Path `$Root 'lead-run.json') @{session_id='bound-test-session';run_id='bound-test-run'}
+SaveJ (Join-Path `$Root 'host-owner.json') @{pid=`$PID;start_time_utc_ticks=`$me.StartTime.ToUniversalTime().Ticks;executable_path=`$me.MainModule.FileName;session_id='bound-test-session';run_id='bound-test-run'}
+`$r=Invoke-TelephoneLeadDrainedProcess -FileName `$me.MainModule.FileName -Arguments @('-NoProfile','-NonInteractive','-Command',"[Console]::Out.WriteLine('REAL-TAIL');[Console]::Error.WriteLine('REAL-ERR');exit 7") -StdoutPath (Join-Path `$Root 'stdout.txt') -StderrPath (Join-Path `$Root 'stderr.txt') -LifecyclePath (Join-Path `$Root 'cli-drain-lifecycle.json') -OwnerPath (Join-Path `$Root 'cli-child.json') -SessionId 'bound-test-session' -RunId 'bound-test-run' -Role cli
+SaveJ (Join-Path `$Root 'child-return.json') `$r
+[IO.File]::WriteAllText((Join-Path `$Root 'ready'),'ready')
+`$deadline=[DateTime]::UtcNow.AddSeconds(35)
+while(-not [IO.File]::Exists((Join-Path `$Root 'release')) -and [DateTime]::UtcNow -lt `$deadline){Start-Sleep -Milliseconds 100}
+exit 0
+"@, [Text.UTF8Encoding]::new($false))
+    $coreCommon = Join-Path $repoRoot 'src\core\TelephoneLine.Common.ps1'
+    $aliveProc = Start-Process -FilePath $pwsh -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$aliveHost,'-Root',$aliveRoot,'-Core',$coreCommon) -PassThru -WindowStyle Hidden
+    Add-HardeningTracked -Owner ([ordered]@{ pid = [int]$aliveProc.Id; start_time_utc_ticks = [int64]$aliveProc.StartTime.ToUniversalTime().Ticks })
+    $aliveReady = $false
+    $aliveDeadline = [DateTimeOffset]::UtcNow.AddSeconds(20)
+    while ([DateTimeOffset]::UtcNow -lt $aliveDeadline) {
+        if ([IO.File]::Exists((Join-Path $aliveRoot 'ready'))) { $aliveReady = $true; break }
+        if ($aliveProc.HasExited) { break }
+        Start-Sleep -Milliseconds 100
+    }
+    Assert-Hardening $aliveReady 'Host-alive fixture did not reach measured child terminal.'
+    $aliveObs = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $aliveRoot -WaitMilliseconds 0
+    $aliveProc.Refresh()
+    Assert-Hardening (-not $aliveProc.HasExited) 'Host-alive fixture host exited before the Wait observation.'
+    Assert-Hardening ([bool]$aliveObs.host_alive) 'Wait did not observe the still-alive reader host.'
+    Assert-Hardening (-not [bool]$aliveObs.host_terminal) 'Wait inferred host terminal from child EOF.'
+    Assert-Hardening (-not [bool]$aliveObs.process_exited) 'Wait treated child exit as host OS exit.'
+    Assert-Hardening ([bool]$aliveObs.pending) 'Child EOF while host alive was treated as terminal.'
+    [IO.File]::WriteAllText((Join-Path $aliveRoot 'release'), 'release', [Text.UTF8Encoding]::new($false))
+    Assert-Hardening ($aliveProc.WaitForExit(10000)) 'Host-alive fixture host did not exit after release.'
+    $host_alive_child_eof_nonterminal = 1
+
     $foreignHold = Join-Path $testRoot 'foreign-hold.ps1'
     [IO.File]::WriteAllText($foreignHold, "Start-Sleep -Seconds 30`n", [Text.UTF8Encoding]::new($false))
     $foreignProc = Start-Process -FilePath $pwsh -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$foreignHold) -PassThru -WindowStyle Hidden
@@ -550,6 +590,7 @@ exit 0
         success = $true
         assertions = [int]$assertions
         test_root = $testRoot
+        host_alive_child_eof_nonterminal = $host_alive_child_eof_nonterminal
     } | ConvertTo-Json -Compress))
 }
 finally {

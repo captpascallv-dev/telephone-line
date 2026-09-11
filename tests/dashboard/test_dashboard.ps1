@@ -577,7 +577,7 @@ try {
     $liveGroups = @($liveProj.groups | Where-Object { [string]$_.project -ceq 'live-succ-project' })
     $deadVisible = @($liveGroups | Where-Object { [string]$_.line_job_id -ceq $deadJobId })
     $liveVisible = @($liveGroups | Where-Object { [string]$_.line_job_id -ceq $liveJobId })
-    Assert-Dash ($deadVisible.Count -eq 0) 'Live successor on the same worktree did not hide the ended interrupt.'
+    Assert-Dash ($deadVisible.Count -eq 1) 'Independent live Lead on the same worktree hid the other Lead failure.'
     Assert-Dash ($liveVisible.Count -eq 1) 'Current live successor was not shown.'
     $zipPath = Join-Path $testRoot 'packaged-windows.zip'
     $extractRoot = Join-Path $testRoot 'windows-extract'
@@ -604,7 +604,7 @@ try {
     $packLive = @($packProj.groups | Where-Object { [string]$_.project -ceq 'live-succ-project' -and [string]$_.line_job_id -ceq $liveJobId })
     $packDead = @($packProj.groups | Where-Object { [string]$_.project -ceq 'live-succ-project' -and [string]$_.line_job_id -ceq $deadJobId })
     Assert-Dash ($packLive.Count -eq 1) 'Packaged Windows dashboard hid the live successor.'
-    Assert-Dash ($packDead.Count -eq 0) 'Packaged Windows dashboard still listed the superseded interrupt.'
+    Assert-Dash ($packDead.Count -eq 1) 'Packaged Windows dashboard hid an independent Lead failure.'
     $packaged_windows_dashboard_current_state = 1
     Write-DashUtf8 -Path (Join-Path $liveJob 'command-owner.json') -Value $deadOwner
     $failReceipt = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'tests\contracts\fixtures\valid\receipt.json') | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
@@ -618,6 +618,49 @@ try {
     $currentFail = @($failGroups | Where-Object { [string]$_.line_job_id -ceq $liveJobId })
     Assert-Dash ($currentFail.Count -eq 1) 'Current-task failure after recovery was hidden.'
     $live_successor_hides_ended = 1
+    $sameSessRoot = Join-Path $testRoot 'same-session-succ'
+    $sameDeadId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee18'
+    $sameLiveId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee19'
+    $sameDeadJob = Join-Path $sameSessRoot ('jobs\' + $sameDeadId)
+    $sameLiveJob = Join-Path $sameSessRoot ('jobs\' + $sameLiveId)
+    [IO.Directory]::CreateDirectory($sameDeadJob) | Out-Null
+    [IO.Directory]::CreateDirectory($sameLiveJob) | Out-Null
+    $dispSameDead = $dispatch | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $dispSameLive = $dispatch | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $bindSameDead = $binding | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $bindSameLive = $binding | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $dispSameDead.project = 'same-session-succ'; $dispSameLive.project = 'same-session-succ'
+    $dispSameDead.line_job_id = $sameDeadId; $dispSameLive.line_job_id = $sameLiveId
+    $dispSameDead.created_at_utc = [DateTimeOffset]::UtcNow.AddMinutes(-8).ToString('o')
+    $dispSameLive.created_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+    $bindSameDead.session_id = 'session-shared-succ'
+    $bindSameLive.session_id = 'session-shared-succ'
+    $bindSameDead.worktree = $sameSessRoot
+    $bindSameLive.worktree = $sameSessRoot
+    $dispSameDead.lead = $bindSameDead
+    $dispSameLive.lead = $bindSameLive
+    $sameFailRec = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'tests\contracts\fixtures\valid\receipt.json') | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $sameFailRec.project = 'same-session-succ'
+    $sameFailRec.line_job_id = $sameDeadId
+    $sameFailRec.command_exit_code = 1
+    Write-DashUtf8 -Path (Join-Path $sameDeadJob 'dispatch.json') -Value $dispSameDead
+    Write-DashUtf8 -Path (Join-Path $sameDeadJob 'lead-binding.json') -Value $bindSameDead
+    Write-DashUtf8 -Path (Join-Path $sameDeadJob 'command-owner.json') -Value $deadOwner
+    Write-DashUtf8 -Path (Join-Path $sameDeadJob 'receipt.json') -Value $sameFailRec
+    Write-DashUtf8 -Path (Join-Path $sameDeadJob 'relay-error.json') -Value ([ordered]@{ protocol_version = 'telephone-line-relay-error-v1'; retrying = $false; error_code = 'LEAD_WAKE_FAILED' })
+    Write-DashUtf8 -Path (Join-Path $sameLiveJob 'dispatch.json') -Value $dispSameLive
+    Write-DashUtf8 -Path (Join-Path $sameLiveJob 'lead-binding.json') -Value $bindSameLive
+    Write-DashUtf8 -Path (Join-Path $sameLiveJob 'command-owner.json') -Value $liveOwner
+    $sameDesc = Join-Path $testRoot 'same-session-desc.json'
+    $sameCfg = Join-Path $testRoot 'same-session-config.json'
+    Write-DashUtf8 -Path $sameDesc -Value ([ordered]@{ protocol_version = 'telephone-line-dashboard-project-descriptor-v1'; project = 'same-session-succ'; state_root = $sameSessRoot; terminal_state = 'active' })
+    Write-DashUtf8 -Path $sameCfg -Value ([ordered]@{ protocol_version = 'telephone-line-dashboard-config-v1'; projects = @(@{ descriptor_file = $sameDesc }) })
+    $sameProj = Get-TelephoneDashboardProjection -ConfigPath $sameCfg
+    $sameDeadVisible = @($sameProj.groups | Where-Object { [string]$_.line_job_id -ceq $sameDeadId })
+    $sameLiveVisible = @($sameProj.groups | Where-Object { [string]$_.line_job_id -ceq $sameLiveId })
+    Assert-Dash ($sameDeadVisible.Count -eq 0) 'Same-Lead live successor did not hide the ended interrupt.'
+    Assert-Dash ($sameLiveVisible.Count -eq 1) 'Same-Lead live successor was not shown.'
+    $same_lead_live_successor_hides_ended = 1
     try { Stop-Process -Id ([int]$succProc.Id) -Force -ErrorAction SilentlyContinue } catch { }
 
     $prepRoot = Join-Path $testRoot 'prepared-only'
@@ -665,6 +708,47 @@ try {
     Assert-Dash ($prepOldVisible.Count -eq 1) 'Prepared-only later dispatch hid the unresolved old failure.'
     Assert-Dash ($prepNewVisible.Count -eq 1) 'Prepared-only later job was omitted from current state.'
     $prepared_only_does_not_hide_old = 1
+    $indepRoot = Join-Path $testRoot 'independent-receipt'
+    $indepOldId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee10'
+    $indepNewId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee11'
+    $indepOld = Join-Path $indepRoot ('jobs\' + $indepOldId)
+    $indepNew = Join-Path $indepRoot ('jobs\' + $indepNewId)
+    [IO.Directory]::CreateDirectory($indepOld) | Out-Null
+    [IO.Directory]::CreateDirectory($indepNew) | Out-Null
+    $dispIndOld = $dispatch | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $dispIndNew = $dispatch | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $bindIndOld = $binding | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $bindIndNew = $binding | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $dispIndOld.project = 'negative-current-test'; $dispIndNew.project = 'negative-current-test'
+    $dispIndOld.line_job_id = $indepOldId; $dispIndNew.line_job_id = $indepNewId
+    $dispIndOld.created_at_utc = [DateTimeOffset]::UtcNow.AddMinutes(-10).ToString('o')
+    $dispIndNew.created_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+    $bindIndOld.session_id = 'old-current'; $bindIndNew.session_id = 'prepared-only'
+    $bindIndOld.worktree = $indepRoot; $bindIndNew.worktree = $indepRoot
+    $dispIndOld.lead = $bindIndOld; $dispIndNew.lead = $bindIndNew
+    Write-DashUtf8 -Path (Join-Path $indepOld 'dispatch.json') -Value $dispIndOld
+    Write-DashUtf8 -Path (Join-Path $indepOld 'lead-binding.json') -Value $bindIndOld
+    Write-DashUtf8 -Path (Join-Path $indepOld 'command-owner.json') -Value $deadOwner
+    $indepOldRec = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'tests\contracts\fixtures\valid\receipt.json') | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $indepOldRec.project = 'negative-current-test'; $indepOldRec.line_job_id = $indepOldId; $indepOldRec.command_exit_code = 1
+    Write-DashUtf8 -Path (Join-Path $indepOld 'receipt.json') -Value $indepOldRec
+    Write-DashUtf8 -Path (Join-Path $indepOld 'relay-error.json') -Value ([ordered]@{ protocol_version = 'telephone-line-relay-error-v1'; retrying = $false; error_code = 'LEAD_WAKE_FAILED' })
+    Write-DashUtf8 -Path (Join-Path $indepOld 'delivery.json') -Value ([ordered]@{ transport_complete = $true })
+    Write-DashUtf8 -Path (Join-Path $indepNew 'dispatch.json') -Value $dispIndNew
+    Write-DashUtf8 -Path (Join-Path $indepNew 'lead-binding.json') -Value $bindIndNew
+    $indepNewRec = $indepOldRec | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $indepNewRec.line_job_id = $indepNewId; $indepNewRec.command_exit_code = 0
+    Write-DashUtf8 -Path (Join-Path $indepNew 'receipt.json') -Value $indepNewRec
+    $indepDesc = Join-Path $testRoot 'independent-receipt-desc.json'
+    $indepCfg = Join-Path $testRoot 'independent-receipt-config.json'
+    Write-DashUtf8 -Path $indepDesc -Value ([ordered]@{ protocol_version = 'telephone-line-dashboard-project-descriptor-v1'; project = 'negative-current-test'; state_root = $indepRoot; terminal_state = 'active' })
+    Write-DashUtf8 -Path $indepCfg -Value ([ordered]@{ protocol_version = 'telephone-line-dashboard-config-v1'; projects = @(@{ descriptor_file = $indepDesc }) })
+    $indepProj = Get-TelephoneDashboardProjection -ConfigPath $indepCfg
+    $indepOldVisible = @($indepProj.groups | Where-Object { [string]$_.line_job_id -ceq $indepOldId })
+    $indepNewVisible = @($indepProj.groups | Where-Object { [string]$_.line_job_id -ceq $indepNewId })
+    Assert-Dash ($indepOldVisible.Count -eq 1) 'Independent Lead receipt hid the other Lead delivered failure.'
+    Assert-Dash ($indepNewVisible.Count -eq 1) 'Independent later Lead receipt was omitted.'
+    $independent_other_lead_receipt_keeps_old = 1
     $watchState = Join-Path $testRoot 'watch-interval-state'
     [IO.Directory]::CreateDirectory($watchState) | Out-Null
     $watchScript = Join-Path $repoRoot 'src\dashboard\Watch-TelephoneDashboard.ps1'
@@ -726,6 +810,7 @@ try {
     $prodWatch = $null
     $failDoc = $null
     $liveDoc = $null
+    $indepDoc = $null
     try {
     $prodWatch = Start-Process -FilePath $pwsh -ArgumentList @(
         '-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$packWatch,
@@ -734,7 +819,8 @@ try {
     $null = Register-DashClaimedWatcher -PidHint ([int]$prodWatch.Id) -StateRoot $producerDash
     $prodProjPath = Join-Path $producerDash 'projection.json'
     function New-DashProducerRequest {
-        param([string]$JobId, [int]$DelayMilliseconds, [int]$ExitCode)
+        param([string]$JobId, [int]$DelayMilliseconds, [int]$ExitCode, [string]$Session = '')
+        if ([string]::IsNullOrWhiteSpace($Session)) { $Session = $prodSession }
         $reqPath = Join-Path $producerRoot ('request-' + $JobId + '.json')
         $req = [ordered]@{
             protocol_version = 'telephone-line-dispatch-v1'
@@ -746,7 +832,7 @@ try {
             summary = 'producer refresh'
             lead = [ordered]@{
                 protocol_version = 'telephone-line-lead-binding-v1'
-                session_id = $prodSession
+                session_id = $Session
                 worktree = $producerWork
                 launcher = [ordered]@{ path = $mockLead; arguments = @() }
             }
@@ -812,6 +898,16 @@ try {
     $failSeen = Wait-DashProducerRow -JobId $failJob -ExpectVisible $true -RequireCode 'RECEIPT_FAILED' -After $tFailReceipt
     Assert-Dash ($null -ne $failSeen) 'Continuous watcher never rendered the producer failure.'
     $tFailRendered = Get-DashProjectionStamp -Proj $failSeen
+    $indepProdId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee32'
+    $indepStart = & $pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $packStarter -RequestFile (New-DashProducerRequest -JobId $indepProdId -DelayMilliseconds 200 -ExitCode 1 -Session '01a00000-0000-7000-8000-00000000indp') -StateRoot $producerState
+    $indepDoc = ($indepStart -join "`n") | ConvertFrom-Json -AsHashtable
+    Assert-Dash ($null -ne $indepDoc) 'Independent-lane producer job did not start.'
+    $indepReceipt = Join-Path ([string]$indepDoc.job_root) 'receipt.json'
+    $indepDeadline = [DateTimeOffset]::UtcNow.AddSeconds(20)
+    while (-not [IO.File]::Exists($indepReceipt) -and [DateTimeOffset]::UtcNow -lt $indepDeadline) { Start-Sleep -Milliseconds 100 }
+    Assert-Dash ([IO.File]::Exists($indepReceipt)) 'Independent-lane producer job did not publish a receipt.'
+    $indepSeen = Wait-DashProducerRow -JobId $indepProdId -ExpectVisible $true -RequireCode 'RECEIPT_FAILED'
+    Assert-Dash ($null -ne $indepSeen) 'Continuous watcher never rendered the independent-lane failure.'
     $prodLiveId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee31'
     $tLiveEvent = [DateTimeOffset]::UtcNow
     $liveStart = & $pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $packStarter -RequestFile (New-DashProducerRequest -JobId $prodLiveId -DelayMilliseconds 12000 -ExitCode 1) -StateRoot $producerState
@@ -834,10 +930,11 @@ try {
         if ($null -ne $proj) {
             $liveRows = @($proj.groups | Where-Object { [string]$_.project -ceq 'producer-refresh' -and [string]$_.line_job_id -ceq $prodLiveId })
             $oldRows = @($proj.groups | Where-Object { [string]$_.project -ceq 'producer-refresh' -and [string]$_.line_job_id -ceq $failJob })
+            $indepRows = @($proj.groups | Where-Object { [string]$_.project -ceq 'producer-refresh' -and [string]$_.line_job_id -ceq $indepProdId })
             $liveCodes = @()
             if ($liveRows.Count -eq 1) { $liveCodes = @($liveRows[0].findings | ForEach-Object { [string]$_.code }) }
             $stamp = Get-DashProjectionStamp -Proj $proj
-            if ($liveRows.Count -eq 1 -and $oldRows.Count -eq 0 -and $liveCodes -contains 'RECEIPT_FAILED' -and $null -ne $stamp -and $stamp -gt $tRecurEvent) { $recurSeen = $proj; break }
+            if ($liveRows.Count -eq 1 -and $oldRows.Count -eq 0 -and $indepRows.Count -eq 1 -and $liveCodes -contains 'RECEIPT_FAILED' -and $null -ne $stamp -and $stamp -gt $tRecurEvent) { $recurSeen = $proj; break }
         }
         Start-Sleep -Milliseconds 150
     }
@@ -874,7 +971,7 @@ try {
         Write-DashUtf8 -Path (Join-Path $pubEv 'event-to-render.json') -Value $producer_event_to_render
     }
     } finally {
-    foreach ($doc in @($failDoc, $liveDoc)) {
+    foreach ($doc in @($failDoc, $liveDoc, $indepDoc)) {
         if ($null -eq $doc -or $doc -isnot [Collections.IDictionary]) { continue }
         foreach ($key in @('command_owner', 'relay_owner')) {
             if (-not $doc.Contains($key) -or $null -eq $doc[$key]) { continue }
@@ -2679,6 +2776,8 @@ try {
         durable_duplicate_restart = $durable_duplicate_restart
         historical_successor_retires = $historical_successor_retires
         live_successor_hides_ended = $live_successor_hides_ended
+        same_lead_live_successor_hides_ended = $same_lead_live_successor_hides_ended
+        independent_other_lead_receipt_keeps_old = $independent_other_lead_receipt_keeps_old
         watcher_interval_remainder = $watcher_interval_remainder
         packaged_windows_dashboard_current_state = $packaged_windows_dashboard_current_state
         prepared_only_does_not_hide_old = $prepared_only_does_not_hide_old
