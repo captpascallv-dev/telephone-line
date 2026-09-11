@@ -1814,18 +1814,18 @@ function Wait-TelephoneLeadOwnedDrainTerminal {
         $result.host_terminal = [bool]$hostDone
         $result.child_terminal = [bool]$childDone
         $result.process_exited = [bool]($hostDone -and $childDone)
-        if ([bool]$result.host_alive -and ($childDone -or $childMeasured -or [bool]$result.child_absence_proven)) {
-            $result.pending = $true
-            $result.host_terminal = $false
-            $result.process_exited = $false
-            return $result
-        }
         if ($null -ne $hostIdentity) {
             $result.identity_status = 'BOUND'
         } elseif ($childMeasured) {
             $result.identity_status = 'BOUND'
         } else {
             $result.identity_status = 'UNKNOWN'
+        }
+        if ([bool]$result.host_alive -and ($childDone -or $childMeasured -or [bool]$result.child_absence_proven)) {
+            $result.pending = $true
+            $result.host_terminal = $false
+            $result.process_exited = $false
+            return $result
         }
         $measured = [bool]$result.stdout_eof -and [bool]$result.stderr_eof -and $null -ne $result.measured_os_exit_code
         if ($hostDone -and $childDone -and [string]$result.identity_status -ceq 'BOUND' -and $measured -and [string]$result.host_observation_status -cne 'query_error') {
