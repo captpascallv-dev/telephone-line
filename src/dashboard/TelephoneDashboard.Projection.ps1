@@ -45,7 +45,9 @@ function Get-TelephoneDashboardGroupKey {
     if ([string]::IsNullOrWhiteSpace($sessionPart) -and -not [string]::IsNullOrWhiteSpace($LineJobId)) {
         $sessionPart = 'line-job:' + [string]$LineJobId
     }
-    return ([string]$Project + '|' + $sessionPart + '|' + [string]$RunId)
+    $key = ([string]$Project + '|' + $sessionPart + '|' + [string]$RunId)
+    if (-not [string]::IsNullOrWhiteSpace($LineJobId)) { $key = $key + '|' + [string]$LineJobId }
+    return $key
 }
 
 function Read-TelephoneDashboardOptionalJson {
@@ -1738,6 +1740,22 @@ function Get-TelephoneDashboardJobLaneSession {
     return $session
 }
 
+function Get-TelephoneDashboardJobPackageIdentity {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][object]$Job)
+    $stage = Get-TelephoneDashboardMapText -Map $Job -Name 'stage'
+    if ([string]::IsNullOrWhiteSpace($stage) -and $Job -is [Collections.IDictionary] -and $Job.Contains('dispatch') -and $null -ne $Job.dispatch) {
+        $disp = $Job.dispatch
+        if ($disp -is [Collections.IDictionary] -and $disp.Contains('value') -and $null -ne $disp.value) {
+            $stage = Get-TelephoneDashboardMapText -Map $disp.value -Name 'stage'
+        }
+        if ([string]::IsNullOrWhiteSpace($stage)) {
+            $stage = Get-TelephoneDashboardMapText -Map $disp -Name 'stage'
+        }
+    }
+    return $stage
+}
+
 function Test-TelephoneDashboardJobsShareContinuationLane {
     [CmdletBinding()]
     param(
@@ -1748,12 +1766,18 @@ function Test-TelephoneDashboardJobsShareContinuationLane {
     if ($null -ne $Descriptor -and (Test-TelephoneDashboardExactSuccessorJob -Candidate $Other -Descriptor $Descriptor)) {
         return $true
     }
+    if ($null -ne $Descriptor -and (Test-TelephoneDashboardExactSuccessorJob -Candidate $Job -Descriptor $Descriptor)) {
+        return $true
+    }
     $project = Get-TelephoneDashboardMapText -Map $Job -Name 'project'
     $otherProject = Get-TelephoneDashboardMapText -Map $Other -Name 'project'
     if ([string]::IsNullOrWhiteSpace($project) -or $project -cne $otherProject) { return $false }
     $left = Get-TelephoneDashboardJobLaneSession -Job $Job
     $right = Get-TelephoneDashboardJobLaneSession -Job $Other
     if ([string]::IsNullOrWhiteSpace($left) -or $left -cne $right) { return $false }
+    $leftPkg = Get-TelephoneDashboardJobPackageIdentity -Job $Job
+    $rightPkg = Get-TelephoneDashboardJobPackageIdentity -Job $Other
+    if ([string]::IsNullOrWhiteSpace($leftPkg) -or [string]::IsNullOrWhiteSpace($rightPkg) -or $leftPkg -cne $rightPkg) { return $false }
     return $true
 }
 
@@ -1771,7 +1795,7 @@ function Test-TelephoneDashboardJobSupersededByLiveSuccessor {
         $code = ''
         if ($finding -is [Collections.IDictionary] -and $finding.Contains('code')) { $code = [string]$finding['code'] }
         elseif ($null -ne $finding.PSObject.Properties['code']) { $code = [string]$finding.code }
-        if ($code -cin @('CALLBACK_PENDING', 'CALLBACK_MISSING', 'RECEIPT_AWAITING_DELIVERY')) { return $false }
+        if ($code -ceq 'CALLBACK_PENDING') { return $false }
     }
     $project = Get-TelephoneDashboardMapText -Map $Job -Name 'project'
     $worktree = Get-TelephoneDashboardJobWorktreeKey -Job $Job
@@ -2503,6 +2527,28 @@ function Get-TelephoneDashboardProjection {
             [void]$proofJobIds.Add([string]$exactId)
             if (-not [string]::IsNullOrWhiteSpace($exactSid)) { [void]$proofDirectSessions.Add($exactSid) }
         }
+        $execStagesBySession = @{}
+        foreach ($preJob in $jobScans) {
+            if (Test-TelephoneDashboardJobSupersededByLiveSuccessor -Job $preJob -AllJobs @($jobScans) -Descriptor $descriptor) { continue }
+            if (Test-TelephoneDashboardSupersededFailure -Job $preJob -AllJobs @($jobScans) -Descriptor $descriptor -StateRoot $root -Closure $closure) { continue }
+            if (Test-TelephoneDashboardDirectHistoryRetired -Job $preJob -AllJobs @($jobScans) -Descriptor $descriptor -DirectByJobId $directByJobId -ProofJobIds @($proofJobIds) -ProofDirectSessions @($proofDirectSessions)) { continue }
+            $preSession = Get-TelephoneDashboardCorrelatedLeadSession -Job $preJob -TelephoneByJobId $telephoneByJobId -Descriptor $descriptor -FilterSession $filterSession
+            if (-not [string]::IsNullOrWhiteSpace($filterSession) -and $preSession -cne $filterSession) { continue }
+            $preTel = $preJob
+            if (-not [string]::IsNullOrWhiteSpace([string]$preJob.job_id) -and $null -ne $telephoneByJobId -and $telephoneByJobId.Contains([string]$preJob.job_id)) {
+                $preTel = $telephoneByJobId[[string]$preJob.job_id]
+            }
+            $preRole = Get-TelephoneDashboardMapText -Map $preTel -Name 'role'
+            $prePkg = Get-TelephoneDashboardJobPackageIdentity -Job $preTel
+            if ([string]::IsNullOrWhiteSpace($preRole) -or $preRole -ceq 'execution') {
+                if (-not [string]::IsNullOrWhiteSpace($prePkg)) {
+                    if (-not $execStagesBySession.Contains($preSession)) {
+                        $execStagesBySession[$preSession] = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+                    }
+                    [void]$execStagesBySession[$preSession].Add($prePkg)
+                }
+            }
+        }
         foreach ($job in $jobScans) {
             if (Test-TelephoneDashboardJobSupersededByLiveSuccessor -Job $job -AllJobs @($jobScans) -Descriptor $descriptor) {
                 continue
@@ -2553,7 +2599,17 @@ function Get-TelephoneDashboardProjection {
                 if ($runKeys.Count -eq 0) { [void]$runKeys.Add('') }
             }
             foreach ($runId in @($runKeys)) {
-                $key = Get-TelephoneDashboardGroupKey -Project ([string]$descriptor.project) -SessionId $session -RunId $runId -LineJobId ([string]$job.job_id)
+                $pkgJob = $job
+                if (-not [string]::IsNullOrWhiteSpace([string]$job.job_id) -and $null -ne $telephoneByJobId -and $telephoneByJobId.Contains([string]$job.job_id)) {
+                    $pkgJob = $telephoneByJobId[[string]$job.job_id]
+                }
+                $pkg = Get-TelephoneDashboardJobPackageIdentity -Job $pkgJob
+                $pkgRole = Get-TelephoneDashboardMapText -Map $pkgJob -Name 'role'
+                $disc = ''
+                if (([string]::IsNullOrWhiteSpace($pkgRole) -or $pkgRole -ceq 'execution') -and -not [string]::IsNullOrWhiteSpace($pkg) -and $execStagesBySession.Contains($session) -and $execStagesBySession[$session].Count -ge 2) {
+                    $disc = $pkg
+                }
+                $key = Get-TelephoneDashboardGroupKey -Project ([string]$descriptor.project) -SessionId $session -RunId $runId -LineJobId $disc
                 if (-not $bucket.Contains($key)) {
                     $bucket[$key] = [ordered]@{ project = [string]$descriptor.project; session = $session; run = $runId; jobs = [Collections.Generic.List[object]]::new(); runs = [Collections.Generic.List[object]]::new(); events = [Collections.Generic.List[object]]::new() }
                 }

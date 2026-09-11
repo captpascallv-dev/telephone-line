@@ -713,15 +713,24 @@ try {
         $origRelayPid = [int]$origRelay.pid
         Assert-Sup (Test-TelephoneOwnerAlive -Owner $origCommand) 'Original command was not running before relay loss.'
         Stop-Process -Id $origRelayPid -Force -ErrorAction Stop
+        $syncCommon = (Join-Path $repoRoot 'src\core\TelephoneLine.Common.ps1').Replace("'", "''")
+        $syncSup = (Join-Path $repoRoot 'src\supervisor\TelephoneSupervisor.Common.ps1').Replace("'", "''")
+        $syncState = ([string]$script:supState).Replace("'", "''")
+        $syncBody = @"
+`$ErrorActionPreference='Stop'
+. '$syncCommon'
+. '$syncSup'
+`$job = Open-TelephoneSupervisorRunJob -RunId '$runAuto'
+try { `$null = Sync-TelephoneSupervisorMailboxBinding -StateRoot '$syncState' -RunId '$runAuto' -Job `$job } finally { Close-TelephoneSupervisorRunJob -Job `$job }
+"@
+        $compete1 = Start-Process -FilePath $pwsh -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-Command',$syncBody) -PassThru -WindowStyle Hidden
+        $compete2 = Start-Process -FilePath $pwsh -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-Command',$syncBody) -PassThru -WindowStyle Hidden
         Assert-Sup (Wait-Sup {
             $restored = $null
             try { $restored = (Read-TelephoneJson -Path $autoJobPaths.relay_owner).value } catch { return $false }
             if (-not (Test-TelephoneOwnerAlive -Owner $restored)) { return $false }
             return ([int]$restored.pid -ne $origRelayPid)
-        } -Milliseconds 20000) 'Automatic RunHost/Sync did not restore one exact relay.'
-        $autoRelayAfter = (Read-TelephoneJson -Path $autoJobPaths.relay_owner).value
-        $compete1 = Start-Process -FilePath $pwsh -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-Command', ". '" + (Join-Path $repoRoot 'src\core\TelephoneLine.Common.ps1') + "'; Restore-TelephoneExactJobRelay -JobRoot '" + $autoJobRoot + "' | ConvertTo-Json -Compress") -PassThru -WindowStyle Hidden
-        $compete2 = Start-Process -FilePath $pwsh -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-Command', ". '" + (Join-Path $repoRoot 'src\core\TelephoneLine.Common.ps1') + "'; Restore-TelephoneExactJobRelay -JobRoot '" + $autoJobRoot + "' | ConvertTo-Json -Compress") -PassThru -WindowStyle Hidden
+        } -Milliseconds 20000) 'Automatic RunHost/Sync did not restore one exact relay during the missing-relay race.'
         $null = $compete1.WaitForExit(15000)
         $null = $compete2.WaitForExit(15000)
         $afterCompete = (Read-TelephoneJson -Path $autoJobPaths.relay_owner).value

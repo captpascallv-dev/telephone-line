@@ -749,6 +749,63 @@ try {
     Assert-Dash ($indepOldVisible.Count -eq 1) 'Independent Lead receipt hid the other Lead delivered failure.'
     Assert-Dash ($indepNewVisible.Count -eq 1) 'Independent later Lead receipt was omitted.'
     $independent_other_lead_receipt_keeps_old = 1
+    $parRoot = Join-Path $testRoot 'same-lead-parallel'
+    $parOldId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee30'
+    $parNewId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee31'
+    $parOld = Join-Path $parRoot ('jobs\' + $parOldId)
+    $parNew = Join-Path $parRoot ('jobs\' + $parNewId)
+    [IO.Directory]::CreateDirectory($parOld) | Out-Null
+    [IO.Directory]::CreateDirectory($parNew) | Out-Null
+    $dispParOld = $dispatch | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $dispParNew = $dispatch | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $bindPar = $binding | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $dispParOld.project = 'same-lead-parallel'; $dispParNew.project = 'same-lead-parallel'
+    $dispParOld.line_job_id = $parOldId; $dispParNew.line_job_id = $parNewId
+    $dispParOld.stage = 'FULL_PRODUCT_CANDIDATE_CORRECTION_2'
+    $dispParNew.stage = 'FABLE_F3_REAL_HOST_EXIT_IMPLEMENTATION'
+    $dispParOld.created_at_utc = [DateTimeOffset]::UtcNow.AddMinutes(-10).ToString('o')
+    $dispParNew.created_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+    $bindPar.session_id = 'same-original-lead'
+    $bindPar.worktree = $parRoot
+    $dispParOld.lead = $bindPar; $dispParNew.lead = $bindPar
+    Write-DashUtf8 -Path (Join-Path $parOld 'dispatch.json') -Value $dispParOld
+    Write-DashUtf8 -Path (Join-Path $parOld 'lead-binding.json') -Value $bindPar
+    Write-DashUtf8 -Path (Join-Path $parOld 'command-owner.json') -Value $deadOwner
+    $parOldRec = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'tests\contracts\fixtures\valid\receipt.json') | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $parOldRec.project = 'same-lead-parallel'; $parOldRec.line_job_id = $parOldId; $parOldRec.command_exit_code = 1
+    Write-DashUtf8 -Path (Join-Path $parOld 'receipt.json') -Value $parOldRec
+    Write-DashUtf8 -Path (Join-Path $parOld 'relay-error.json') -Value ([ordered]@{ protocol_version = 'telephone-line-relay-error-v1'; retrying = $false; error_code = 'LEAD_WAKE_FAILED' })
+    Write-DashUtf8 -Path (Join-Path $parOld 'delivery.json') -Value ([ordered]@{ transport_complete = $true })
+    Write-DashUtf8 -Path (Join-Path $parNew 'dispatch.json') -Value $dispParNew
+    Write-DashUtf8 -Path (Join-Path $parNew 'lead-binding.json') -Value $bindPar
+    $parNewRec = $parOldRec | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $parNewRec.line_job_id = $parNewId; $parNewRec.command_exit_code = 0
+    Write-DashUtf8 -Path (Join-Path $parNew 'receipt.json') -Value $parNewRec
+    $parDesc = Join-Path $testRoot 'same-lead-parallel-desc.json'
+    $parCfg = Join-Path $testRoot 'same-lead-parallel-config.json'
+    Write-DashUtf8 -Path $parDesc -Value ([ordered]@{ protocol_version = 'telephone-line-dashboard-project-descriptor-v1'; project = 'same-lead-parallel'; state_root = $parRoot; terminal_state = 'active' })
+    Write-DashUtf8 -Path $parCfg -Value ([ordered]@{ protocol_version = 'telephone-line-dashboard-config-v1'; projects = @(@{ descriptor_file = $parDesc }) })
+    $parProj = Get-TelephoneDashboardProjection -ConfigPath $parCfg
+    $parOldVisible = @($parProj.groups | Where-Object { [string]$_.line_job_id -ceq $parOldId })
+    $parNewVisible = @($parProj.groups | Where-Object { [string]$_.line_job_id -ceq $parNewId })
+    Assert-Dash ($parOldVisible.Count -eq 1) 'Same-Lead independent later package hid the original failed package.'
+    Assert-Dash ($parNewVisible.Count -eq 1) 'Same-Lead independent later package was omitted.'
+    $parSummary = Format-TelephoneDashboardSummary -Projection $parProj
+    Assert-Dash ($parSummary.Contains($parOldId)) 'Same-Lead parallel summary omitted the original failed job.'
+    Assert-Dash ($parSummary.Contains($parNewId)) 'Same-Lead parallel summary omitted the independent later job.'
+    $parPackState = Join-Path $testRoot 'same-lead-parallel-pack'
+    [IO.Directory]::CreateDirectory($parPackState) | Out-Null
+    $parPackOnce = Start-Process -FilePath $pwsh -ArgumentList @(
+        '-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$packWatch,
+        '-StateRoot',$parPackState,'-ConfigPath',$parCfg,'-Headless','-Once'
+    ) -PassThru -WindowStyle Hidden
+    $null = Register-DashClaimedWatcher -PidHint ([int]$parPackOnce.Id) -StateRoot $parPackState
+    Assert-Dash ($parPackOnce.WaitForExit(30000)) 'Packaged same-Lead parallel watcher did not exit.'
+    Assert-Dash ([int]$parPackOnce.ExitCode -eq 0) 'Packaged same-Lead parallel watcher failed.'
+    $parPackProj = Get-Content -LiteralPath (Join-Path $parPackState 'projection.json') -Raw | ConvertFrom-Json -AsHashtable
+    Assert-Dash ((@($parPackProj.groups | Where-Object { [string]$_.line_job_id -ceq $parOldId })).Count -eq 1) 'Extracted bundle hid the original same-Lead failed package.'
+    Assert-Dash ((@($parPackProj.groups | Where-Object { [string]$_.line_job_id -ceq $parNewId })).Count -eq 1) 'Extracted bundle omitted the independent same-Lead package.'
+    $same_lead_parallel_distinct_stages_keeps_old = 1
     $watchState = Join-Path $testRoot 'watch-interval-state'
     [IO.Directory]::CreateDirectory($watchState) | Out-Null
     $watchScript = Join-Path $repoRoot 'src\dashboard\Watch-TelephoneDashboard.ps1'
@@ -2778,6 +2835,7 @@ try {
         live_successor_hides_ended = $live_successor_hides_ended
         same_lead_live_successor_hides_ended = $same_lead_live_successor_hides_ended
         independent_other_lead_receipt_keeps_old = $independent_other_lead_receipt_keeps_old
+        same_lead_parallel_distinct_stages_keeps_old = $same_lead_parallel_distinct_stages_keeps_old
         watcher_interval_remainder = $watcher_interval_remainder
         packaged_windows_dashboard_current_state = $packaged_windows_dashboard_current_state
         prepared_only_does_not_hide_old = $prepared_only_does_not_hide_old

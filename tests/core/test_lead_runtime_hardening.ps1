@@ -497,7 +497,9 @@ exit 17
 Set-StrictMode -Version Latest
 `$ErrorActionPreference = 'Stop'
 . '$($repoRoot.Replace('\','\\'))\src\core\TelephoneLine.Common.ps1'
-`$captured = Invoke-TelephoneLeadDrainedProcess -FileName '$($pwsh.Replace('\','\\'))' -Arguments @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File','$($sepChild.Replace('\','\\'))') -WorkingDirectory '$($sepRoot.Replace('\','\\'))' -StdoutPath '$($sepEvents.Replace('\','\\'))' -StderrPath '$($sepErr.Replace('\','\\'))' -LifecyclePath '$($sepLife.Replace('\','\\'))' -OwnerPath '$((Join-Path $sepRunRoot 'owner.json').Replace('\','\\'))' -EventsPath '$($sepEvents.Replace('\','\\'))' -SessionId '$sepSession' -RunId '$sepRun' -Role 'cli' -ReturnOnNativeComplete
+`$meH=[Diagnostics.Process]::GetCurrentProcess()
+[IO.File]::WriteAllText('$((Join-Path $sepRunRoot 'host-owner.json').Replace('\','\\'))', ((@{pid=`$PID;start_time_utc_ticks=`$meH.StartTime.ToUniversalTime().Ticks;executable_path=`$meH.MainModule.FileName;session_id='$sepSession';run_id='$sepRun';role='host'} | ConvertTo-Json -Compress) + [Environment]::NewLine), [Text.UTF8Encoding]::new(`$false))
+`$captured = Invoke-TelephoneLeadDrainedProcess -FileName '$($pwsh.Replace('\','\\'))' -Arguments @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File','$($sepChild.Replace('\','\\'))') -WorkingDirectory '$($sepRoot.Replace('\','\\'))' -StdoutPath '$($sepEvents.Replace('\','\\'))' -StderrPath '$($sepErr.Replace('\','\\'))' -LifecyclePath '$($sepLife.Replace('\','\\'))' -OwnerPath '$((Join-Path $sepRunRoot 'cli-child.json').Replace('\','\\'))' -EventsPath '$($sepEvents.Replace('\','\\'))' -SessionId '$sepSession' -RunId '$sepRun' -Role 'cli' -ReturnOnNativeComplete
 if (`$captured -is [Collections.IDictionary] -and ((`$captured.Contains('returned_on_native_complete') -and [bool]`$captured.returned_on_native_complete) -or (`$captured.Contains('drain_handoff_pending') -and [bool]`$captured.drain_handoff_pending))) {
     `$measured = Wait-TelephoneLeadOpenDrainUntilMeasured -ProcessId ([int]`$captured.pid) -SessionId '$sepSession' -RunId '$sepRun' -LifecyclePath '$($sepLife.Replace('\','\\'))'
     if (`$null -ne `$measured -and `$measured -is [Collections.IDictionary]) {
@@ -508,6 +510,7 @@ if (`$captured -is [Collections.IDictionary] -and ((`$captured.Contains('returne
     }
 }
 [IO.File]::WriteAllText('$($sepOut.Replace('\','\\'))', ((`$captured | ConvertTo-Json -Depth 8 -Compress) + [Environment]::NewLine), [Text.UTF8Encoding]::new(`$false))
+[IO.File]::WriteAllText('$((Join-Path $sepRunRoot 'host-terminal.json').Replace('\','\\'))', ((@{run_id='$sepRun';exit_code=0;completed_at_utc=[DateTimeOffset]::UtcNow.ToString('o')} | ConvertTo-Json -Compress) + [Environment]::NewLine), [Text.UTF8Encoding]::new(`$false))
 exit 0
 "@, [Text.UTF8Encoding]::new($false))
     $sepProc = Start-Process -FilePath $pwsh -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$sepHolder) -PassThru -WindowStyle Hidden
@@ -523,14 +526,25 @@ exit 0
     try {
         Assert-Hardening ($null -ne $holderAlive -and -not $holderAlive.HasExited) 'Reader host exited before the separate-parent collector waited.'
     } finally { if ($null -ne $holderAlive) { $holderAlive.Dispose() } }
+    $sepWaitLive = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $sepRunRoot -WaitMilliseconds 0
+    Assert-Hardening ([bool]$sepWaitLive.host_alive) 'Wait did not observe the live separate-parent reader.'
+    Assert-Hardening (-not [bool]$sepWaitLive.host_terminal) 'Wait marked the live separate-parent reader terminal.'
     $sepLifeDoc = Get-TelephoneLeadRunLifecycle -RunRoot $sepRunRoot -ExpectedSessionId $sepSession -ExpectedRunId $sepRun
     $sepStop = Stop-TelephoneLeadCompletedOwnProcess -Lifecycle $sepLifeDoc -ExpectedSessionId $sepSession -ExpectedRunId $sepRun
+    Assert-Hardening (-not [bool]$sepStop.recovered) 'Production collector claimed recovered while the reader stayed alive.'
+    Assert-Hardening ([bool]$sepStop.drain_pending) 'Production collector cleared drain_pending while the reader stayed alive.'
+    $sepProc.Refresh()
+    Assert-Hardening (-not $sepProc.HasExited) 'Production collector waited for or killed the live reader host.'
     Assert-Hardening ($sepProc.WaitForExit(30000)) 'Separate-parent reader host did not exit after genuine child drain.'
     Assert-Hardening ([int]$sepProc.ExitCode -eq 0) 'Separate-parent Stop killed the reader host instead of waiting for persisted drain.'
-    Assert-Hardening ([bool]$sepStop.recovered) 'Production collector did not record the measured drain while the reader stayed alive.'
+    $sepWaitDead = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $sepRunRoot -WaitMilliseconds 0
+    $sepLifeAfter = Get-TelephoneLeadRunLifecycle -RunRoot $sepRunRoot -ExpectedSessionId $sepSession -ExpectedRunId $sepRun
+    $sepStop2 = Stop-TelephoneLeadCompletedOwnProcess -Lifecycle $sepLifeAfter -ExpectedSessionId $sepSession -ExpectedRunId $sepRun
+    Assert-Hardening ([bool]$sepWaitDead.host_terminal -and -not [bool]$sepWaitDead.pending) 'After reader exit, Wait did not observe host terminal.'
+    Assert-Hardening ([bool]$sepStop2.recovered -and -not [bool]$sepStop2.drain_pending) 'After reader exit, collector did not record completed recovery.'
     Assert-Hardening ((Read-HardeningSharedText -Path $sepEvents).Contains('LATE-STDOUT-SEPARATE-PARENT')) 'Separate-parent Stop truncated late stdout.'
     Assert-Hardening ((Read-HardeningSharedText -Path $sepErr).Contains('LATE-STDERR-SEPARATE-PARENT')) 'Separate-parent Stop truncated late stderr.'
-    Assert-Hardening ([int]$sepStop.measured_os_exit_code -eq 17) 'Separate-parent collector did not keep the OS exit.'
+    Assert-Hardening ([int]$sepStop2.measured_os_exit_code -eq 17) 'Separate-parent collector did not keep the OS exit.'
 
     $aliveRoot = Join-Path $testRoot 'host-alive-child-exit'
     [IO.Directory]::CreateDirectory($aliveRoot) | Out-Null
@@ -568,9 +582,41 @@ exit 0
     Assert-Hardening (-not [bool]$aliveObs.host_terminal) 'Wait inferred host terminal from child EOF.'
     Assert-Hardening (-not [bool]$aliveObs.process_exited) 'Wait treated child exit as host OS exit.'
     Assert-Hardening ([bool]$aliveObs.pending) 'Child EOF while host alive was treated as terminal.'
+    $aliveLife = Get-TelephoneLeadRunLifecycle -RunRoot $aliveRoot -ExpectedSessionId 'bound-test-session' -ExpectedRunId 'bound-test-run'
+    $aliveStop = Stop-TelephoneLeadCompletedOwnProcess -Lifecycle $aliveLife -ExpectedSessionId 'bound-test-session' -ExpectedRunId 'bound-test-run' -DrainWaitMilliseconds 0
+    $aliveProc.Refresh()
+    Assert-Hardening (-not $aliveProc.HasExited) 'Stop waited for the live host-alive fixture.'
+    Assert-Hardening (-not [bool]$aliveStop.recovered) 'Stop claimed recovered while the host-alive fixture was live.'
+    Assert-Hardening ([bool]$aliveStop.drain_pending) 'Stop cleared drain_pending while the host-alive fixture was live.'
     [IO.File]::WriteAllText((Join-Path $aliveRoot 'release'), 'release', [Text.UTF8Encoding]::new($false))
     Assert-Hardening ($aliveProc.WaitForExit(10000)) 'Host-alive fixture host did not exit after release.'
     $host_alive_child_eof_nonterminal = 1
+
+    $unknownRoot = Join-Path $testRoot 'seven-unknown-residue'
+    [IO.Directory]::CreateDirectory($unknownRoot) | Out-Null
+    $unknownSession = '00000000-0000-4000-8000-00000000unkn'
+    for ($ui = 1; $ui -le 7; $ui++) {
+        $one = Join-Path $unknownRoot ('unknown-' + $ui)
+        [IO.Directory]::CreateDirectory($one) | Out-Null
+        $null = Write-TelephoneJsonCreateNew -Path (Join-Path $one 'lead-run.json') -Value ([ordered]@{
+            protocol_version = 'huhu-concerto-cli-lead-run-v1'
+            run_id = ('unknown-' + $ui)
+            requested_run_id = ('unknown-' + $ui)
+            worktree = $unknownRoot
+            resume_session_id = $unknownSession
+            events_path = (Join-Path $one 'codex-events.jsonl')
+            created_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+        })
+        [IO.File]::WriteAllText((Join-Path $one 'codex-events.jsonl'), '{"type":"thread.started","thread_id":"' + $unknownSession + '"}' + "`n" + '{"type":"turn.started","turn_id":"t1","session_id":"' + $unknownSession + '","run_id":"unknown-' + $ui + '"}' + "`n" + '{"type":"turn.completed","turn_id":"t1","session_id":"' + $unknownSession + '","run_id":"unknown-' + $ui + '"}' + "`n", [Text.UTF8Encoding]::new($false))
+        $null = Write-TelephoneJsonCreateNew -Path (Join-Path $one 'host-owner.json') -Value ([ordered]@{ pid = 1; start_time_utc_ticks = 1; started_at_utc = '2026-01-01T00:00:00Z'; session_id = $unknownSession; run_id = ('unknown-' + $ui); role = 'host' })
+    }
+    $unknownSw = [Diagnostics.Stopwatch]::StartNew()
+    $unknownResidue = Reconcile-TelephoneLeadCompletedOwnedResidue -LeadStateRoot $unknownRoot -ExpectedSessionId $unknownSession
+    $unknownSw.Stop()
+    Assert-Hardening ([int]$unknownResidue.scanned -eq 7) 'Seven UNKNOWN residue rows were not scanned.'
+    Assert-Hardening ([int]$unknownResidue.recovered -eq 0) 'Seven UNKNOWN residue rows were fabricated recovered.'
+    Assert-Hardening ($unknownSw.ElapsedMilliseconds -lt 8000) 'Callback residue spent repeated 20s waits on unresolved UNKNOWN rows.'
+    $unknown_residue_bounded_ms = [int]$unknownSw.ElapsedMilliseconds
 
     $foreignHold = Join-Path $testRoot 'foreign-hold.ps1'
     [IO.File]::WriteAllText($foreignHold, "Start-Sleep -Seconds 30`n", [Text.UTF8Encoding]::new($false))
@@ -591,6 +637,7 @@ exit 0
         assertions = [int]$assertions
         test_root = $testRoot
         host_alive_child_eof_nonterminal = $host_alive_child_eof_nonterminal
+        unknown_residue_bounded_ms = $unknown_residue_bounded_ms
     } | ConvertTo-Json -Compress))
 }
 finally {

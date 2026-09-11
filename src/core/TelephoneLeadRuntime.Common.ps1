@@ -1650,6 +1650,8 @@ function Wait-TelephoneLeadOwnedDrainTerminal {
         child_absence_proven = $false
         measured_os_exit_code = $null
         recorded_by = ''
+        reader_ready = $false
+        child_measured = $false
     }
     $sessionId = ''
     $runId = ''
@@ -1766,7 +1768,6 @@ function Wait-TelephoneLeadOwnedDrainTerminal {
                     $childDone = $true
                     $result.stdout_eof = [bool]$childDrain.stdout_eof
                     $result.stderr_eof = [bool]$childDrain.stderr_eof
-                    $result.process_exited = $true
                     if ($childDrain.Contains('exit_code') -and $null -ne $childDrain['exit_code']) {
                         $result.measured_os_exit_code = [int]$childDrain['exit_code']
                         $result.recorded_by = 'open_drain_completion'
@@ -1779,7 +1780,6 @@ function Wait-TelephoneLeadOwnedDrainTerminal {
                         $childDone = $true
                         $result.stdout_eof = $true
                         $result.stderr_eof = $true
-                        $result.process_exited = $true
                         if ($doc.Contains('exit_code') -and $null -ne $doc['exit_code']) {
                             $result.measured_os_exit_code = [int]$doc['exit_code']
                         }
@@ -1807,10 +1807,12 @@ function Wait-TelephoneLeadOwnedDrainTerminal {
             $result.child_observation_status = 'missing_unproven'
         }
         $childMeasured = [bool]$result.stdout_eof -and [bool]$result.stderr_eof -and $null -ne $result.measured_os_exit_code
+        $result.child_measured = [bool]$childMeasured
         if ([bool]$result.host_alive) { $hostDone = $false }
         if ($childMeasured -and [string]::IsNullOrWhiteSpace([string]$result.recorded_by)) {
             $result.recorded_by = 'measured_child_drain'
         }
+        $result.reader_ready = [bool](($childDone -or $childMeasured) -and -not $hostDone)
         $result.host_terminal = [bool]$hostDone
         $result.child_terminal = [bool]$childDone
         $result.process_exited = [bool]($hostDone -and $childDone)
@@ -1825,7 +1827,35 @@ function Wait-TelephoneLeadOwnedDrainTerminal {
             $result.pending = $true
             $result.host_terminal = $false
             $result.process_exited = $false
+            $result.reader_ready = $true
             return $result
+        }
+        if (-not $hostDone -and -not [bool]$result.host_alive -and [string]$result.host_observation_status -cin @('not_found', 'mismatch')) {
+            $hostTermPath = Join-Path $root 'host-terminal.json'
+            if ([IO.File]::Exists($hostTermPath)) {
+                try {
+                    $hostTerm = (Read-TelephoneJson -Path $hostTermPath).value
+                    $termRun = ''
+                    if ($hostTerm -is [Collections.IDictionary] -and $hostTerm.Contains('run_id')) { $termRun = [string]$hostTerm['run_id'] }
+                    if ($hostTerm -is [Collections.IDictionary] -and ([string]::IsNullOrWhiteSpace($runId) -or [string]::IsNullOrWhiteSpace($termRun) -or $termRun -ceq $runId) -and $hostTerm.Contains('exit_code') -and $null -ne $hostTerm['exit_code']) {
+                        $hostDone = $true
+                        $result.host_terminal = $true
+                        if ($null -eq $result.measured_os_exit_code) { $result.measured_os_exit_code = [int]$hostTerm['exit_code'] }
+                        if ([string]::IsNullOrWhiteSpace([string]$result.recorded_by)) { $result.recorded_by = 'host_terminal_record' }
+                    }
+                } catch { }
+            }
+        }
+        $result.reader_ready = [bool](($childDone -or $childMeasured) -and -not $hostDone)
+        $result.host_terminal = [bool]$hostDone
+        $result.child_terminal = [bool]$childDone
+        $result.process_exited = [bool]($hostDone -and $childDone)
+        if (-not [bool]$result.host_alive -and [string]$result.host_observation_status -cin @('not_found', 'mismatch') -and -not $hostDone -and ($childDone -or $childMeasured)) {
+            $result.pending = $true
+            $result.host_terminal = $false
+            $result.process_exited = $false
+            $result.reader_ready = $true
+            if ($first -or [int]$WaitMilliseconds -le 0) { return $result }
         }
         $measured = [bool]$result.stdout_eof -and [bool]$result.stderr_eof -and $null -ne $result.measured_os_exit_code
         if ($hostDone -and $childDone -and [string]$result.identity_status -ceq 'BOUND' -and $measured -and [string]$result.host_observation_status -cne 'query_error') {
@@ -2479,7 +2509,12 @@ function Stop-TelephoneLeadCompletedOwnProcess {
         $record.refused = 'drain_records_absent'
         return $record
     }
-    $drain = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $runRoot -WaitMilliseconds $DrainWaitMilliseconds
+    $waitMs = [int]$DrainWaitMilliseconds
+    if ([string]$ownerObs.status -ceq 'alive') { $waitMs = 0 }
+    $drain = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $runRoot -WaitMilliseconds 0
+    if ($null -ne $drain -and $drain -is [Collections.IDictionary] -and [bool]$drain.pending -and $waitMs -gt 0 -and -not [bool]$drain.host_alive -and -not [bool]$drain.reader_ready) {
+        $drain = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $runRoot -WaitMilliseconds $waitMs
+    }
     $record.drain = $drain
     if ($null -ne $drain -and $drain -is [Collections.IDictionary]) {
         if ($drain.Contains('pending')) { $record.drain_pending = [bool]$drain['pending'] }
@@ -2488,7 +2523,19 @@ function Stop-TelephoneLeadCompletedOwnProcess {
         if ($drain.Contains('measured_os_exit_code') -and $null -ne $drain['measured_os_exit_code']) {
             $record.measured_os_exit_code = [int]$drain['measured_os_exit_code']
         }
-        if ([bool]$drain.child_terminal -and [bool]$record.stdout_eof -and [bool]$record.stderr_eof -and $null -ne $record.measured_os_exit_code) {
+        $hostAlive = $false
+        $hostTerminal = $false
+        $childTerminal = $false
+        $pending = $true
+        if ($drain.Contains('host_alive')) { $hostAlive = [bool]$drain['host_alive'] }
+        if ($drain.Contains('host_terminal')) { $hostTerminal = [bool]$drain['host_terminal'] }
+        if ($drain.Contains('child_terminal')) { $childTerminal = [bool]$drain['child_terminal'] }
+        if ($drain.Contains('pending')) { $pending = [bool]$drain['pending'] }
+        if ($hostAlive -or $pending -or -not $hostTerminal) {
+            $record.recovered = $false
+            $record.drain_pending = $true
+            if ([bool]$drain.reader_ready) { $record.refused = 'reader_ready' }
+        } elseif ($hostTerminal -and $childTerminal -and -not $pending -and [bool]$record.stdout_eof -and [bool]$record.stderr_eof -and $null -ne $record.measured_os_exit_code) {
             $record.recovered = $true
             $record.drain_pending = $false
         }
@@ -2611,8 +2658,8 @@ function Reconcile-TelephoneLeadCompletedOwnedResidue {
         }
         $recovery = $null
         if ([bool]$life.owner_alive -or [bool]$life.cli_child_alive) {
-            $recovery = Stop-TelephoneLeadCompletedOwnProcess -Lifecycle $life -ExpectedSessionId $ExpectedSessionId -ExpectedRunId $runId
-            if ([bool]$recovery.recovered) {
+            $recovery = Stop-TelephoneLeadCompletedOwnProcess -Lifecycle $life -ExpectedSessionId $ExpectedSessionId -ExpectedRunId $runId -DrainWaitMilliseconds 0
+            if ([bool]$recovery.recovered -and -not [bool]$recovery.drain_pending) {
                 $result.recovered += 1
                 [void]$result.recovered_runs.Add([ordered]@{
                     run_id = $runId
@@ -2634,7 +2681,7 @@ function Reconcile-TelephoneLeadCompletedOwnedResidue {
                     attempted = [bool]$recovery.attempted
                     recovered = $false
                 })
-                if ([string]$recovery.refused -cin @('active_descendant', 'descendant_query_error', 'owner_query_error', 'pid_reuse_or_exe_mismatch')) {
+                if ([string]$recovery.refused -cin @('active_descendant', 'descendant_query_error', 'owner_query_error', 'pid_reuse_or_exe_mismatch', 'reader_ready', 'drain_pending')) {
                     [void]$result.pending.Add([ordered]@{
                         run_id = $runId
                         session_id = [string]$ExpectedSessionId
@@ -2650,7 +2697,7 @@ function Reconcile-TelephoneLeadCompletedOwnedResidue {
         if ($null -ne $recovery -and $null -ne $recovery.drain) {
             $drain = $recovery.drain
         } else {
-            $drain = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $runRoot -WaitMilliseconds 5000
+            $drain = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $runRoot -WaitMilliseconds 0
         }
         if ($null -ne $drain -and $drain -is [Collections.IDictionary] -and [bool]$drain.pending) {
             [void]$result.pending.Add([ordered]@{
@@ -2749,27 +2796,23 @@ function Invoke-TelephoneLeadWakeReconcile {
     }
     if ([bool]$life.owner_alive) {
         if ([bool]$life.native_turn_complete -and ([bool]$life.owner_alive -or [bool]$life.cli_child_alive)) {
-            $recovery = Stop-TelephoneLeadCompletedOwnProcess -Lifecycle $life -ExpectedSessionId $SessionId -ExpectedRunId $RunId
+            $recovery = Stop-TelephoneLeadCompletedOwnProcess -Lifecycle $life -ExpectedSessionId $SessionId -ExpectedRunId $RunId -DrainWaitMilliseconds 0
             $result.recovery = $recovery
             $life = Get-TelephoneLeadRunLifecycle -RunRoot $runRoot -ExpectedSessionId $SessionId -ExpectedRunId $RunId
             $result.lifecycle = $life
-            if ([bool]$recovery.recovered -or -not [bool]$life.owner_alive) {
-                $state = $(if ([bool]$life.host_terminal_present) { 'recovered' } else { 'recovered_native_complete_host_incomplete' })
+            if ([bool]$recovery.recovered -and [bool]$life.host_terminal_present -and -not [bool]$recovery.drain_pending) {
                 $result.decision = 'recovered_attach'
                 $result.error_code = ''
-                $result.launch = New-TelephoneLeadLaunchFromRunRoot -RunRoot $runRoot -RunId $RunId -State $state
-                $result.reason = $state
+                $result.launch = New-TelephoneLeadLaunchFromRunRoot -RunRoot $runRoot -RunId $RunId -State 'recovered'
+                $result.reason = 'recovered'
                 return $result
             }
-        }
-        while (Test-TelephoneLeadOwnerIdentityAlive -Owner $life.owner) {
-            Start-Sleep -Milliseconds 200
-            $life = Get-TelephoneLeadRunLifecycle -RunRoot $runRoot -ExpectedSessionId $SessionId -ExpectedRunId $RunId
-            $result.lifecycle = $life
-            if ([bool]$life.native_turn_complete -and ([bool]$life.owner_alive -or [bool]$life.cli_child_alive)) {
-                $recovery = Stop-TelephoneLeadCompletedOwnProcess -Lifecycle $life -ExpectedSessionId $SessionId -ExpectedRunId $RunId
-                $result.recovery = $recovery
-                if ([bool]$recovery.recovered) { break }
+            if ([bool]$life.owner_alive -or [bool]$recovery.drain_pending -or [string]$recovery.refused -ceq 'reader_ready') {
+                $result.decision = 'attached'
+                $result.error_code = ''
+                $result.launch = New-TelephoneLeadLaunchFromRunRoot -RunRoot $runRoot -RunId $RunId -State 'reader_ready_host_pending'
+                $result.reason = 'reader_ready_host_pending'
+                return $result
             }
         }
         $life = Get-TelephoneLeadRunLifecycle -RunRoot $runRoot -ExpectedSessionId $SessionId -ExpectedRunId $RunId

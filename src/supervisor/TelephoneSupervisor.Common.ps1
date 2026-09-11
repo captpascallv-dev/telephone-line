@@ -2304,14 +2304,8 @@ function Test-TelephoneSupervisorLiveExactMembers {
     }
     foreach ($row in $rows) {
         $alive = $false
-        if ($row.Contains('start_time_utc_ticks')) {
+        if ($row.Contains('start_time_utc_ticks') -and [int64]$row.start_time_utc_ticks -gt 0) {
             $alive = Test-TelephoneOwnerAlive -Owner $row
-        } else {
-            try {
-                $proc = Get-Process -Id ([int]$row.pid) -ErrorAction Stop
-                $proc.Dispose()
-                $alive = $true
-            } catch { $alive = $false }
         }
         if (-not $alive) { continue }
         if ($null -ne $Job -and $null -ne $Job.handle -and [IntPtr]$Job.handle -ne [IntPtr]::Zero) {
@@ -2401,13 +2395,51 @@ function Get-TelephoneSupervisorLiveSurvivorPids {
         if ($owner.Contains('pid')) { $memberPid = [int]$owner.pid }
         if ($memberPid -le 0 -or -not $seen.Add($memberPid)) { continue }
         $alive = $false
-        if ($owner.Contains('start_time_utc_ticks')) { $alive = Test-TelephoneOwnerAlive -Owner $owner }
-        else {
-            try { $proc = Get-Process -Id $memberPid -ErrorAction Stop; $proc.Dispose(); $alive = $true } catch { $alive = $false }
+        if ($owner.Contains('start_time_utc_ticks') -and [int64]$owner.start_time_utc_ticks -gt 0) {
+            $alive = Test-TelephoneOwnerAlive -Owner $owner
         }
         if ($alive) { [void]$pids.Add($memberPid) }
     }
     return @($pids)
+}
+
+function Test-TelephoneSupervisorBoundJobCommandAlive {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$JobRoot)
+    $jobPaths = Get-TelephoneJobPaths -JobRoot $JobRoot
+    foreach ($ownerPath in @($jobPaths.command_owner, $jobPaths.relay_owner)) {
+        if (-not [IO.File]::Exists($ownerPath)) { continue }
+        try {
+            $owner = (Read-TelephoneJson -Path $ownerPath).value
+            if ($owner -is [Collections.IDictionary] -and (Test-TelephoneOwnerAlive -Owner $owner)) { return $true }
+        } catch { }
+    }
+    return $false
+}
+
+function Test-TelephoneSupervisorBoundJobValidCompletedDelivery {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$JobRoot)
+    $jobPaths = Get-TelephoneJobPaths -JobRoot $JobRoot
+    if (-not [IO.File]::Exists($jobPaths.delivery)) { return $false }
+    try { $delivery = (Read-TelephoneJson -Path $jobPaths.delivery).value } catch { return $false }
+    if ($delivery -isnot [Collections.IDictionary]) { return $false }
+    if ([string]$delivery.protocol_version -cne 'telephone-line-delivery-v1') { return $false }
+    $dispId = ''
+    if ([IO.File]::Exists($jobPaths.dispatch)) {
+        try {
+            $disp = (Read-TelephoneJson -Path $jobPaths.dispatch).value
+            if ($disp -is [Collections.IDictionary] -and $disp.Contains('line_job_id')) { $dispId = [string]$disp.line_job_id }
+        } catch { return $false }
+    }
+    if ($delivery.Contains('line_job_id') -and -not [string]::IsNullOrWhiteSpace([string]$delivery.line_job_id) -and -not [string]::IsNullOrWhiteSpace($dispId) -and [string]$delivery.line_job_id -cne $dispId) {
+        return $false
+    }
+    if (Test-TelephoneMailboxItemConsumed -Item $delivery) { return $true }
+    $transport = $false
+    if ($delivery.Contains('transport_complete')) { $transport = [bool]$delivery.transport_complete }
+    elseif ($delivery.Contains('delivered')) { $transport = [bool]$delivery.delivered }
+    return [bool]$transport
 }
 
 function Test-TelephoneSupervisorBoundJobsSettled {
@@ -2430,7 +2462,20 @@ function Test-TelephoneSupervisorBoundJobsSettled {
             } catch { continue }
             $seen += 1
             $jobPaths = Get-TelephoneJobPaths -JobRoot $dir
-            if ([IO.File]::Exists($jobPaths.delivery) -or [IO.File]::Exists($jobPaths.relay_error)) { continue }
+            if (Test-TelephoneSupervisorBoundJobValidCompletedDelivery -JobRoot $dir) { continue }
+            if (Test-TelephoneSupervisorBoundJobCommandAlive -JobRoot $dir) { $pending += 1; continue }
+            if ([IO.File]::Exists($jobPaths.relay_error)) {
+                $retrying = $false
+                $malformed = $false
+                try {
+                    $err = (Read-TelephoneJson -Path $jobPaths.relay_error).value
+                    if ($err -isnot [Collections.IDictionary] -or [string]$err.protocol_version -cne 'telephone-line-relay-error-v1') { $malformed = $true }
+                    elseif ($err.Contains('retrying')) { $retrying = [bool]$err.retrying }
+                } catch { $malformed = $true }
+                if ($retrying -or $malformed) { $pending += 1; continue }
+                $pending += 1
+                continue
+            }
             $pending += 1
         }
     }
@@ -2981,6 +3026,22 @@ function Reconcile-TelephoneSupervisorClaimed {
             [void]$reconciled.Add([ordered]@{ run_id = $runId; terminal = 'completed' })
             continue
         }
+        $commandAlive = $false
+        foreach ($oneState in @(Get-TelephoneSupervisorBoundLineStateRoots -StateRoot $StateRoot -RunId $runId)) {
+            $jobsRoot = Join-Path $oneState 'jobs'
+            if (-not [IO.Directory]::Exists($jobsRoot)) { continue }
+            foreach ($dir in @([IO.Directory]::GetDirectories($jobsRoot))) {
+                $lineagePath = Join-Path $dir 'supervisor-lineage.json'
+                if (-not [IO.File]::Exists($lineagePath)) { continue }
+                try {
+                    $lineage = (Read-TelephoneJson -Path $lineagePath).value
+                    if ($lineage -isnot [Collections.IDictionary] -or [string]$lineage.supervisor_run_id -cne [string]$runId) { continue }
+                } catch { continue }
+                if (Test-TelephoneSupervisorBoundJobCommandAlive -JobRoot $dir) { $commandAlive = $true; break }
+            }
+            if ($commandAlive) { break }
+        }
+        if ($commandAlive) { continue }
         $null = Write-TelephoneSupervisorOutbox -StateRoot $StateRoot -RunId $runId -Terminal 'failed' -Request $claimed.value -ErrorCode 'SUPERVISOR_OWNER_DEAD_NO_RERUN'
         [void]$reconciled.Add([ordered]@{ run_id = $runId; terminal = 'failed' })
     }
