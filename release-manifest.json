@@ -62,8 +62,8 @@
     },
     {
       "path": ".github/workflows/windows-lifecycle.yml",
-      "bytes": 9142,
-      "sha256": "286b7c473532b40c5edab6b64cd1fc598cbe58d73c2cd58906074b0165534342"
+      "bytes": 9377,
+      "sha256": "e36d489b865c78c2aec1fcd7c38845676ad201fc5068494e79e0ac2d3f443797"
     },
     {
       "path": "CONTRIBUTING.md",
@@ -1122,8 +1122,8 @@
     },
     {
       "path": "tests/ci/Test-PublicWindowsLifecycle.ps1",
-      "bytes": 35869,
-      "sha256": "160eab522558b9272a07bb4a62a5af400835e946c9c6c8e975e60d2b0897a483"
+      "bytes": 43233,
+      "sha256": "90e9c6cdbb60373490afc4ee0e85c4614fb989c5e63b933e69deff3c38719cce"
     },
     {
       "path": "tests/compatibility/compatibility-contract.json",
@@ -1613,7 +1613,7 @@
   ],
   "counts": {
     "files": 316,
-    "bytes": 4774742
+    "bytes": 4782341
   },
   "excluded": [
     ".control/**",

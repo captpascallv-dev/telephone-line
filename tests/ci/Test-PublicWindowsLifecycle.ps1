@@ -153,12 +153,10 @@ function Invoke-Product {
     $info.Environment['TELEPHONE_LINE_SUPERVISOR_STATE_ROOT'] = $supervisorState
     $info.Environment['TELEPHONE_LINE_SOURCE_ROOT'] = $extract
     $info.Environment['TELEPHONE_LINE_DESKTOP_ROOT'] = $desktopRoot
-    $info.Environment['TELEPHONE_LINE_TASK_BACKEND'] = ''
-    $info.Environment['TELEPHONE_LINE_TASK_STORE'] = ''
     if ($null -ne $ExtraEnvironment) {
         foreach ($k in $ExtraEnvironment.Keys) { $info.Environment[[string]$k] = [string]$ExtraEnvironment[$k] }
     }
-    foreach ($a in @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $File)) {
+    foreach ($a in @('-Sta', '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $File)) {
         [void]$info.ArgumentList.Add($a)
     }
     foreach ($a in @($ArgumentList)) { [void]$info.ArgumentList.Add([string]$a) }
@@ -228,7 +226,7 @@ $foreignKept = $false
 
 try {
     Assert-IndependentRoots
-    foreach ($dir in @($jobHome, $installRoot, $secondRoot, $lineState, $supervisorState, $foreignState, $workRoot, $desktopRoot)) {
+    foreach ($dir in @($jobHome, $secondRoot, $lineState, $foreignState, $workRoot, $desktopRoot)) {
         [IO.Directory]::CreateDirectory($dir) | Out-Null
     }
     $foreignMarker = Join-Path $foreignState 'foreign-marker.txt'
@@ -242,10 +240,146 @@ try {
         throw 'Windows ZIP extract unexpectedly contains tests/.'
     }
 
+    $hostFacts = [ordered]@{
+        apartment = [string][Threading.Thread]::CurrentThread.GetApartmentState()
+        ansi_codepage = [int][Text.Encoding]::Default.CodePage
+        culture = [string][Globalization.CultureInfo]::CurrentCulture.Name
+        ui_culture = [string][Globalization.CultureInfo]::CurrentUICulture.Name
+    }
+    Write-Utf8Json -Path (Join-Path $evidence 'command-results\host-com-facts.json') -Value $hostFacts
+
+    $desktopProbe = [ordered]@{ ascii = [ordered]@{ ok = $false }; product_names = [ordered]@{ ok = $false } }
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+        $asciiPath = Join-Path $desktopRoot 'lifecycle-desktop-probe.lnk'
+        $shortcut = $shell.CreateShortcut($asciiPath)
+        $shortcut.TargetPath = $pwsh
+        $shortcut.WorkingDirectory = $workRoot
+        $shortcut.Save()
+        $desktopProbe.ascii.ok = [IO.File]::Exists($asciiPath)
+        $desktopProbe.ascii.path = $asciiPath
+    } catch {
+        $desktopProbe.ascii.ok = $false
+        $desktopProbe.ascii.exception = [string]$_.Exception.ToString()
+    }
+    $staProbe = Join-Path $workRoot 'Invoke-StaDesktopProbe.ps1'
+    $staProbeOut = Join-Path $evidence 'command-results\desktop-sta-probe.json'
+    $staProbeText = @'
+# SPDX-License-Identifier: MPL-2.0
+param([string]$DesktopRoot, [string]$WorkingDirectory, [string]$Pwsh, [string]$OutFile)
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$result = [ordered]@{
+    apartment = [string][Threading.Thread]::CurrentThread.GetApartmentState()
+    ascii = [ordered]@{ ok = $false }
+    product_names = [ordered]@{ ok = $false }
+}
+try {
+    $shell = New-Object -ComObject WScript.Shell
+    $asciiPath = Join-Path $DesktopRoot 'lifecycle-sta-ascii.lnk'
+    $sc = $shell.CreateShortcut($asciiPath)
+    $sc.TargetPath = $Pwsh
+    $sc.WorkingDirectory = $WorkingDirectory
+    $sc.Save()
+    $result.ascii.ok = [IO.File]::Exists($asciiPath)
+    $result.ascii.path = $asciiPath
+    foreach ($name in @('有线电话｜紧急停止.lnk', '有线电话｜控制台.lnk')) {
+        $path = Join-Path $DesktopRoot $name
+        $sc = $shell.CreateShortcut($path)
+        $sc.TargetPath = $Pwsh
+        $sc.Arguments = '-NoLogo -NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $WorkingDirectory 'missing-control.ps1') + '" -Mode Emergency'
+        $sc.WorkingDirectory = $WorkingDirectory
+        $sc.WindowStyle = 1
+        $sc.Save()
+        if (-not [IO.File]::Exists($path)) { throw ('STA shortcut missing: ' + $name) }
+    }
+    $result.product_names.ok = $true
+} catch {
+    $result.exception = [string]$_.Exception.ToString()
+    $result.message = [string]$_.Exception.Message
+}
+[IO.File]::WriteAllBytes($OutFile, [Text.UTF8Encoding]::new($false).GetBytes((($result | ConvertTo-Json -Depth 8) + [char]10)))
+'@
+    [IO.File]::WriteAllText($staProbe, $staProbeText.Replace("`n", "`r`n"), [Text.UTF8Encoding]::new($false))
+    $staInfo = [Diagnostics.ProcessStartInfo]::new()
+    $staInfo.FileName = $pwsh
+    $staInfo.UseShellExecute = $false
+    $staInfo.RedirectStandardOutput = $true
+    $staInfo.RedirectStandardError = $true
+    $staInfo.CreateNoWindow = $true
+    foreach ($a in @('-Sta', '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $staProbe, '-DesktopRoot', $desktopRoot, '-WorkingDirectory', $workRoot, '-Pwsh', $pwsh, '-OutFile', $staProbeOut)) {
+        [void]$staInfo.ArgumentList.Add($a)
+    }
+    $staProc = [Diagnostics.Process]::Start($staInfo)
+    $null = $staProc.StandardOutput.ReadToEnd()
+    $staErr = $staProc.StandardError.ReadToEnd()
+    $staProc.WaitForExit()
+    $desktopProbe.sta_probe_exit = [int]$staProc.ExitCode
+    $desktopProbe.sta_probe_stderr = $staErr
+    $desktopProbe.sta_probe = Read-JsonOrNull -Path $staProbeOut
+    Write-Utf8Json -Path (Join-Path $evidence 'command-results\desktop-com-probe.json') -Value $desktopProbe
+
+    $env:TELEPHONE_LINE_INSTALL_ROOT = $installRoot
+    $env:TELEPHONE_LINE_STATE_ROOT = $lineState
+    $env:TELEPHONE_LINE_SUPERVISOR_STATE_ROOT = $supervisorState
+    $env:TELEPHONE_LINE_SOURCE_ROOT = $extract
+    $env:TELEPHONE_LINE_DESKTOP_ROOT = $desktopRoot
+    Remove-Item Env:TELEPHONE_LINE_TASK_BACKEND -ErrorAction SilentlyContinue
+    Remove-Item Env:TELEPHONE_LINE_TASK_STORE -ErrorAction SilentlyContinue
     $install = Invoke-Product -File (Join-Path $extract 'src\install\Install-TelephoneLine.ps1') -WorkingDirectory $extract -ArgumentList @(
         '-InstallRoot', $installRoot, '-SourceRoot', $extract
     )
     Write-Utf8Json -Path (Join-Path $evidence 'command-results\install.json') -Value $install
+    $leftover = [ordered]@{
+        install_present = [IO.Directory]::Exists($installRoot)
+        has_manifest = [IO.File]::Exists((Join-Path $installRoot 'install-manifest.json'))
+        has_current = [IO.File]::Exists((Join-Path $installRoot 'current.json'))
+        has_control = [IO.File]::Exists((Join-Path $installRoot 'src\supervisor\Show-TelephoneSupervisorControl.ps1'))
+        files = @()
+        desktop_files = @()
+    }
+    if ([IO.Directory]::Exists($installRoot)) {
+        $leftover.files = @(Get-ChildItem -LiteralPath $installRoot -Recurse -File -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName.Substring($installRoot.Length).TrimStart('\').Replace('\', '/') } | Sort-Object)
+    }
+    if ([IO.Directory]::Exists($desktopRoot)) {
+        $leftover.desktop_files = @(Get-ChildItem -LiteralPath $desktopRoot -File -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.Name } | Sort-Object)
+    }
+    Write-Utf8Json -Path (Join-Path $evidence 'command-results\leftover-install.json') -Value $leftover
+    if ([bool]$leftover.has_manifest) {
+        Copy-Item -LiteralPath (Join-Path $installRoot 'install-manifest.json') -Destination (Join-Path $evidence 'command-results\install-manifest.json') -Force
+    }
+    if ([bool]$leftover.has_current) {
+        Copy-Item -LiteralPath (Join-Path $installRoot 'current.json') -Destination (Join-Path $evidence 'command-results\current.json') -Force
+    }
+    if (-not [bool]$install.ok) {
+        $diagOut = Join-Path $evidence 'command-results\desktop-register-diag.json'
+        $diagScript = Join-Path $workRoot 'Invoke-DesktopRegisterDiag.ps1'
+        $diagText = @'
+# SPDX-License-Identifier: MPL-2.0
+param([string]$ExtractRoot, [string]$InstallRoot, [string]$DesktopRoot, [string]$OutFile)
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$env:TELEPHONE_LINE_DESKTOP_ROOT = $DesktopRoot
+. (Join-Path $ExtractRoot 'src\install\TelephoneLineInstall.Common.ps1')
+$result = [ordered]@{ apartment = [string][Threading.Thread]::CurrentThread.GetApartmentState(); ok = $false }
+try {
+    Import-TelephoneSupervisorCommon
+    $control = Join-Path $InstallRoot 'src\supervisor\Show-TelephoneSupervisorControl.ps1'
+    $null = Register-TelephoneSupervisorDesktopShortcuts -InstallRoot $InstallRoot -ControlScript $control
+    $result.ok = $true
+} catch {
+    $result.ok = $false
+    $result.message = [string]$_.Exception.Message
+    $result.exception = [string]$_.Exception.ToString()
+    if ($Error.Count -gt 0) { $result.script_stack = [string]$Error[0].ScriptStackTrace }
+}
+[IO.File]::WriteAllBytes($OutFile, [Text.UTF8Encoding]::new($false).GetBytes((($result | ConvertTo-Json -Depth 8) + [char]10)))
+'@
+        [IO.File]::WriteAllText($diagScript, $diagText.Replace("`n", "`r`n"), [Text.UTF8Encoding]::new($false))
+        $null = Invoke-Product -File $diagScript -WorkingDirectory $workRoot -ArgumentList @(
+            '-ExtractRoot', $extract, '-InstallRoot', $installRoot, '-DesktopRoot', $desktopRoot, '-OutFile', $diagOut
+        )
+    }
     $stages.install = [ordered]@{ ok = [bool]$install.ok; code = [string]$install.code; exit_code = [int]$install.exit_code }
     if (-not [bool]$install.ok -or [string]$install.code -cnotin @('INSTALLED', 'ALREADY_CURRENT')) {
         $blocked = $true

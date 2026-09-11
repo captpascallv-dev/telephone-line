@@ -40,6 +40,9 @@ jobs:
             user_sid = [string]([Security.Principal.WindowsIdentity]::GetCurrent().User)
             interactive = [bool][Environment]::UserInteractive
             powershell = $PSVersionTable.PSVersion.ToString()
+            apartment = [string][Threading.Thread]::CurrentThread.GetApartmentState()
+            ansi_codepage = [int][Text.Encoding]::Default.CodePage
+            culture = [string][Globalization.CultureInfo]::CurrentCulture.Name
             os_caption = [string](Get-CimInstance Win32_OperatingSystem).Caption
             os_version = [string](Get-CimInstance Win32_OperatingSystem).Version
           }
