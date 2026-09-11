@@ -87,13 +87,17 @@ function Get-TelephoneDashboardWatchScriptPath {
 function Get-TelephoneDashboardStateRoot {
     [CmdletBinding()]
     param()
-    $configured = Get-TelephoneDashboardEnvironmentValue -Name $script:TelephoneDashboardStateName
+    $processOnly = Test-TelephoneDashboardProcessEnvOnly
+    $configured = Get-TelephoneDashboardEnvironmentValue -Name $script:TelephoneDashboardStateName -ProcessOnly:$processOnly
     if (-not [string]::IsNullOrWhiteSpace($configured)) {
         $full = [IO.Path]::GetFullPath($configured).TrimEnd('\')
         if ($full.IndexOf('http:', [StringComparison]::OrdinalIgnoreCase) -ge 0 -or $full.IndexOf('https:', [StringComparison]::OrdinalIgnoreCase) -ge 0) {
             throw 'Dashboard state root must be a local directory.'
         }
         return $full
+    }
+    if ($processOnly) {
+        throw 'Dashboard state root is required. Set TELEPHONE_LINE_DASHBOARD_STATE.'
     }
     $local = [string]$env:LOCALAPPDATA
     if ([string]::IsNullOrWhiteSpace($local)) {
@@ -105,7 +109,8 @@ function Get-TelephoneDashboardStateRoot {
 function Get-TelephoneDashboardConfigPath {
     [CmdletBinding()]
     param()
-    $configured = Get-TelephoneDashboardEnvironmentValue -Name $script:TelephoneDashboardConfigName
+    $processOnly = Test-TelephoneDashboardProcessEnvOnly
+    $configured = Get-TelephoneDashboardEnvironmentValue -Name $script:TelephoneDashboardConfigName -ProcessOnly:$processOnly
     if (-not [string]::IsNullOrWhiteSpace($configured)) {
         return [IO.Path]::GetFullPath($configured)
     }

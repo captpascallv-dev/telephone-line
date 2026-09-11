@@ -108,6 +108,7 @@ if (-not [string]::IsNullOrWhiteSpace([string]$env:TELEPHONE_LINE_SUPERVISOR_RUN
         package_id = [string]$batch.package_id
     }
     $null = Write-TelephoneJsonCreateNew -Path (Join-Path $jobRoot 'supervisor-lineage.json') -Value $lineage
+    try { $null = Register-TelephoneSupervisorBoundLineStateRoot -LineStateRoot $state } catch { }
 }
 if ([string]$leadSessionId -cne [string]$dispatch.lead.session_id) {
     throw 'Frozen dispatch session disagrees with the Lead binding.'

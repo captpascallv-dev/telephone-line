@@ -1600,16 +1600,17 @@ function Wait-TelephoneLeadWakeAcknowledged {
                     $promptRun = (Read-TelephoneJson -Path $runMetaPath).value
                 }
                 $appRunPath = Join-Path $root 'run.json'
-                $appRun = $null
+                $appRunValidated = $false
                 if ($null -eq $promptRun -and [IO.File]::Exists($appRunPath)) {
                     $appRun = (Read-TelephoneJson -Path $appRunPath).value
                     if ($appRun -is [Collections.IDictionary] -and [string]$appRun.protocol_version -ceq 'telephone-line-codex-app-server-lead-run-v1') {
-                        if ([string]$appRun.run_id -cne $expectedRun) {
+                        if ([string]::IsNullOrWhiteSpace([string]$appRun.run_id) -or [string]$appRun.run_id -cne $expectedRun) {
                             throw 'Lead wake acknowledgment binds a different wake run.'
                         }
-                        if ([string]$appRun.thread_id -cne $ExpectedSessionId) {
+                        if ([string]::IsNullOrWhiteSpace([string]$appRun.thread_id) -or [string]$appRun.thread_id -cne $ExpectedSessionId) {
                             throw 'Lead wake run started another session.'
                         }
+                        $appRunValidated = $true
                         if ($appRun.Contains('callback') -and $appRun['callback'] -is [Collections.IDictionary]) {
                             $promptRun = [ordered]@{ prompt = $appRun['callback'] }
                         }
@@ -1618,8 +1619,8 @@ function Wait-TelephoneLeadWakeAcknowledged {
                 if ($ackNeedsRunBind) {
                     if ($null -ne $promptRun -and [IO.File]::Exists($runMetaPath)) {
                         $null = Test-TelephoneNativeLeadRunBinding -Run $promptRun -ExpectedSessionId $ExpectedSessionId -ExpectedRunId $expectedRun -EventsPath $eventsPath
-                    } elseif ($null -ne $appRun) {
-                        # App Server run.json already bound run_id/thread_id above.
+                    } elseif ($appRunValidated) {
+                        # App Server run.json protocol, run_id, and thread_id were validated above.
                     } else {
                         throw [IO.IOException]::new('Lead wake acknowledgment is missing a bound run id.')
                     }
@@ -3480,6 +3481,87 @@ function Ensure-TelephoneLeadCollector {
         if (Test-TelephoneOwnerAlive -Owner $owner) { return $owner }
     }
     throw 'Lead mailbox collector did not start.'
+}
+
+function Register-TelephoneSupervisorBoundLineStateRoot {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$LineStateRoot)
+    $runId = [string]$env:TELEPHONE_LINE_SUPERVISOR_RUN_ID
+    $supState = [string]$env:TELEPHONE_LINE_SUPERVISOR_STATE_ROOT
+    if ([string]::IsNullOrWhiteSpace($runId) -or [string]::IsNullOrWhiteSpace($supState)) { return $false }
+    if ($runId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { return $false }
+    $root = ''
+    try { $root = [IO.Path]::GetFullPath($LineStateRoot).TrimEnd('\') } catch { return $false }
+    if ([string]::IsNullOrWhiteSpace($root) -or -not [IO.Directory]::Exists($root)) { return $false }
+    $runDir = Join-Path (Join-Path $supState 'runs') $runId
+    if (-not [IO.Directory]::Exists($runDir)) { return $false }
+    $path = Join-Path $runDir 'bound-line-state-roots.json'
+    $roots = [Collections.Generic.List[string]]::new()
+    if ([IO.File]::Exists($path)) {
+        try {
+            $doc = (Read-TelephoneJson -Path $path).value
+            if ($doc -is [Collections.IDictionary] -and $doc.Contains('state_roots')) {
+                foreach ($item in @($doc.state_roots)) {
+                    $one = [string]$item
+                    if (-not [string]::IsNullOrWhiteSpace($one) -and -not $roots.Contains($one)) { [void]$roots.Add($one) }
+                }
+            }
+        } catch { }
+    }
+    if (-not $roots.Contains($root)) { [void]$roots.Add($root) }
+    $record = [ordered]@{
+        protocol_version = 'telephone-line-supervisor-bound-line-state-v1'
+        supervisor_run_id = $runId
+        state_roots = @($roots)
+        recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+    }
+    try {
+        if ([IO.File]::Exists($path)) { $null = Write-TelephoneJsonReplace -Path $path -Value $record }
+        else { $null = Write-TelephoneJsonCreateNew -Path $path -Value $record }
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Restore-TelephoneExactJobRelay {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$JobRoot,
+        [string]$RelayScript = ''
+    )
+    $result = [ordered]@{
+        protocol_version = 'telephone-line-exact-relay-restore-v1'
+        job_root = ''
+        restored = $false
+        reason = ''
+        owner = $null
+        provider_replayed = $false
+        recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+    }
+    $root = ''
+    try { $root = [IO.Path]::GetFullPath($JobRoot).TrimEnd('\') } catch { $result.reason = 'job_root_invalid'; return $result }
+    $result.job_root = $root
+    $paths = Get-TelephoneJobPaths -JobRoot $root
+    if ([IO.File]::Exists($paths.delivery)) { $result.reason = 'already_delivered'; return $result }
+    $relayOwner = $null
+    if ([IO.File]::Exists($paths.relay_owner)) {
+        try { $relayOwner = (Read-TelephoneJson -Path $paths.relay_owner).value } catch { $relayOwner = $null }
+    }
+    if (Test-TelephoneOwnerAlive -Owner $relayOwner) { $result.reason = 'relay_alive'; $result.owner = $relayOwner; return $result }
+    $scriptPath = $RelayScript
+    if ([string]::IsNullOrWhiteSpace($scriptPath)) { $scriptPath = Join-Path $PSScriptRoot 'Invoke-TelephoneLineRelay.ps1' }
+    if (-not [IO.File]::Exists($scriptPath)) { $result.reason = 'relay_script_missing'; return $result }
+    $newRelay = Start-TelephoneHiddenPowerShell -ScriptPath $scriptPath -Arguments @('-JobRoot', $root)
+    $attemptPath = Join-Path $root ('relay-resume-' + [DateTimeOffset]::UtcNow.ToString('yyyyMMddTHHmmssfffffffZ') + '.json')
+    try { $null = Write-TelephoneJsonCreateNew -Path $attemptPath -Value $newRelay } catch { }
+    try { $null = Write-TelephoneJsonReplace -Path $paths.relay_owner -Value $newRelay } catch {
+        try { $null = Write-TelephoneJsonCreateNew -Path $paths.relay_owner -Value $newRelay } catch { }
+    }
+    $result.restored = $true
+    $result.reason = 'relay_restored'
+    $result.owner = $newRelay
+    return $result
 }
 
 function Get-TelephoneNextMailboxSequence {

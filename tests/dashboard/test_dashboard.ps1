@@ -20,6 +20,10 @@ $previous = [ordered]@{
     config = [Environment]::GetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_CONFIG', 'Process')
     headless = [Environment]::GetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_HEADLESS', 'Process')
     supervisor_run_id = [Environment]::GetEnvironmentVariable('TELEPHONE_LINE_SUPERVISOR_RUN_ID', 'Process')
+    supervisor_state_root = [Environment]::GetEnvironmentVariable('TELEPHONE_LINE_SUPERVISOR_STATE_ROOT', 'Process')
+    test_lead_log = [Environment]::GetEnvironmentVariable('TELEPHONE_TEST_LEAD_LOG', 'Process')
+    test_lead_runs = [Environment]::GetEnvironmentVariable('TELEPHONE_TEST_LEAD_RUNS', 'Process')
+    test_lead_turns = [Environment]::GetEnvironmentVariable('TELEPHONE_TEST_LEAD_TURNS', 'Process')
 }
 [Environment]::SetEnvironmentVariable('TELEPHONE_LINE_SUPERVISOR_RUN_ID', '', 'Process')
 $claimed = [Collections.Generic.List[object]]::new()
@@ -31,7 +35,7 @@ function Assert-Dash {
 }
 
 function Restore-DashEnv {
-    foreach ($key in @('TELEPHONE_LINE_DASHBOARD_PROCESS_ENV_ONLY','TELEPHONE_LINE_DASHBOARD_OPT_OUT','TELEPHONE_LINE_DASHBOARD_ENSURE_SCRIPT','TELEPHONE_LINE_DASHBOARD_STATE','TELEPHONE_LINE_DASHBOARD_CONFIG','TELEPHONE_LINE_DASHBOARD_HEADLESS','TELEPHONE_LINE_SUPERVISOR_RUN_ID')) {
+    foreach ($key in @('TELEPHONE_LINE_DASHBOARD_PROCESS_ENV_ONLY','TELEPHONE_LINE_DASHBOARD_OPT_OUT','TELEPHONE_LINE_DASHBOARD_ENSURE_SCRIPT','TELEPHONE_LINE_DASHBOARD_STATE','TELEPHONE_LINE_DASHBOARD_CONFIG','TELEPHONE_LINE_DASHBOARD_HEADLESS','TELEPHONE_LINE_SUPERVISOR_RUN_ID','TELEPHONE_LINE_SUPERVISOR_STATE_ROOT','TELEPHONE_TEST_LEAD_LOG','TELEPHONE_TEST_LEAD_RUNS','TELEPHONE_TEST_LEAD_TURNS')) {
         $map = @{
             TELEPHONE_LINE_DASHBOARD_PROCESS_ENV_ONLY = $previous.process_env_only
             TELEPHONE_LINE_DASHBOARD_OPT_OUT = $previous.opt_out
@@ -40,6 +44,10 @@ function Restore-DashEnv {
             TELEPHONE_LINE_DASHBOARD_CONFIG = $previous.config
             TELEPHONE_LINE_DASHBOARD_HEADLESS = $previous.headless
             TELEPHONE_LINE_SUPERVISOR_RUN_ID = $previous.supervisor_run_id
+            TELEPHONE_LINE_SUPERVISOR_STATE_ROOT = $previous.supervisor_state_root
+            TELEPHONE_TEST_LEAD_LOG = $previous.test_lead_log
+            TELEPHONE_TEST_LEAD_RUNS = $previous.test_lead_runs
+            TELEPHONE_TEST_LEAD_TURNS = $previous.test_lead_turns
         }
         [Environment]::SetEnvironmentVariable($key, [string]$map[$key], 'Process')
     }
@@ -529,14 +537,15 @@ try {
     $liveJob = Join-Path $liveSuccRoot ('jobs\' + $liveJobId)
     [IO.Directory]::CreateDirectory($deadJob) | Out-Null
     [IO.Directory]::CreateDirectory($liveJob) | Out-Null
-    $selfProc = Get-Process -Id $PID
-    try {
-        $liveOwner = [ordered]@{
-            pid = [int]$PID
-            start_time_utc_ticks = [int64]$selfProc.StartTime.ToUniversalTime().Ticks
-            started_at_utc = $selfProc.StartTime.ToUniversalTime().ToString('o')
-        }
-    } finally { $selfProc.Dispose() }
+    $succSleeper = Join-Path $testRoot 'live-succ-sleeper.ps1'
+    [IO.File]::WriteAllText($succSleeper, "Start-Sleep -Seconds 60`n", [Text.UTF8Encoding]::new($false))
+    $succProc = Start-Process -FilePath $pwsh -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$succSleeper) -PassThru -WindowStyle Hidden
+    $null = Register-DashClaimedWatcher -PidHint ([int]$succProc.Id) -StateRoot (Join-Path $testRoot 'live-succ-sleeper-state')
+    $liveOwner = [ordered]@{
+        pid = [int]$succProc.Id
+        start_time_utc_ticks = [int64]$succProc.StartTime.ToUniversalTime().Ticks
+        started_at_utc = $succProc.StartTime.ToUniversalTime().ToString('o')
+    }
     $deadOwner = [ordered]@{ pid = 1; start_time_utc_ticks = 1; started_at_utc = '2026-01-01T00:00:00Z' }
     $dispDead = $dispatch | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
     $dispLive = $dispatch | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
@@ -570,6 +579,33 @@ try {
     $liveVisible = @($liveGroups | Where-Object { [string]$_.line_job_id -ceq $liveJobId })
     Assert-Dash ($deadVisible.Count -eq 0) 'Live successor on the same worktree did not hide the ended interrupt.'
     Assert-Dash ($liveVisible.Count -eq 1) 'Current live successor was not shown.'
+    $zipPath = Join-Path $testRoot 'packaged-windows.zip'
+    $extractRoot = Join-Path $testRoot 'windows-extract'
+    $packScript = Join-Path $repoRoot 'src\packaging\New-TelephoneReleaseZip.ps1'
+    $null = & $pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $packScript -SourceRoot $repoRoot -OutputPath $zipPath -Force
+    Assert-Dash ([IO.File]::Exists($zipPath)) 'Windows ZIP was not produced from the current candidate.'
+    [IO.Directory]::CreateDirectory($extractRoot) | Out-Null
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractRoot)
+    $packWatch = Join-Path $extractRoot 'src\dashboard\Watch-TelephoneDashboard.ps1'
+    Assert-Dash ([IO.File]::Exists($packWatch)) 'Extracted Windows package is missing the dashboard watcher entry.'
+    $packState = Join-Path $testRoot 'packaged-watch-state'
+    [IO.Directory]::CreateDirectory($packState) | Out-Null
+    $packOnce = Start-Process -FilePath $pwsh -ArgumentList @(
+        '-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$packWatch,
+        '-StateRoot',$packState,'-ConfigPath',$liveCfg,'-Headless','-Once'
+    ) -PassThru -WindowStyle Hidden
+    $null = Register-DashClaimedWatcher -PidHint ([int]$packOnce.Id) -StateRoot $packState
+    Assert-Dash ($packOnce.WaitForExit(30000)) 'Packaged dashboard watcher did not exit.'
+    Assert-Dash ([int]$packOnce.ExitCode -eq 0) 'Packaged dashboard watcher failed.'
+    $packProjPath = Join-Path $packState 'projection.json'
+    Assert-Dash ([IO.File]::Exists($packProjPath)) 'Packaged dashboard watcher did not publish a projection.'
+    $packProj = Get-Content -LiteralPath $packProjPath -Raw | ConvertFrom-Json -AsHashtable
+    $packLive = @($packProj.groups | Where-Object { [string]$_.project -ceq 'live-succ-project' -and [string]$_.line_job_id -ceq $liveJobId })
+    $packDead = @($packProj.groups | Where-Object { [string]$_.project -ceq 'live-succ-project' -and [string]$_.line_job_id -ceq $deadJobId })
+    Assert-Dash ($packLive.Count -eq 1) 'Packaged Windows dashboard hid the live successor.'
+    Assert-Dash ($packDead.Count -eq 0) 'Packaged Windows dashboard still listed the superseded interrupt.'
+    $packaged_windows_dashboard_current_state = 1
     Write-DashUtf8 -Path (Join-Path $liveJob 'command-owner.json') -Value $deadOwner
     $failReceipt = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'tests\contracts\fixtures\valid\receipt.json') | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
     $failReceipt.project = 'live-succ-project'
@@ -582,6 +618,53 @@ try {
     $currentFail = @($failGroups | Where-Object { [string]$_.line_job_id -ceq $liveJobId })
     Assert-Dash ($currentFail.Count -eq 1) 'Current-task failure after recovery was hidden.'
     $live_successor_hides_ended = 1
+    try { Stop-Process -Id ([int]$succProc.Id) -Force -ErrorAction SilentlyContinue } catch { }
+
+    $prepRoot = Join-Path $testRoot 'prepared-only'
+    $prepOldId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee20'
+    $prepNewId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee21'
+    $prepOld = Join-Path $prepRoot ('jobs\' + $prepOldId)
+    $prepNew = Join-Path $prepRoot ('jobs\' + $prepNewId)
+    [IO.Directory]::CreateDirectory($prepOld) | Out-Null
+    [IO.Directory]::CreateDirectory($prepNew) | Out-Null
+    $dispPrepOld = $dispatch | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $dispPrepNew = $dispatch | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $dispPrepOld.project = 'prepared-only-project'
+    $dispPrepNew.project = 'prepared-only-project'
+    $dispPrepOld.line_job_id = $prepOldId
+    $dispPrepNew.line_job_id = $prepNewId
+    $dispPrepOld.created_at_utc = [DateTimeOffset]::UtcNow.AddMinutes(-10).ToString('o')
+    $dispPrepNew.created_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+    $bindPrepOld = $binding | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $bindPrepNew = $binding | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $bindPrepOld.session_id = 'old-current'
+    $bindPrepNew.session_id = 'prepared-only'
+    $bindPrepOld.worktree = $prepRoot
+    $bindPrepNew.worktree = $prepRoot
+    $dispPrepOld.lead = $bindPrepOld
+    $dispPrepNew.lead = $bindPrepNew
+    Write-DashUtf8 -Path (Join-Path $prepOld 'dispatch.json') -Value $dispPrepOld
+    Write-DashUtf8 -Path (Join-Path $prepOld 'lead-binding.json') -Value $bindPrepOld
+    Write-DashUtf8 -Path (Join-Path $prepOld 'command-owner.json') -Value $deadOwner
+    Write-DashUtf8 -Path (Join-Path $prepNew 'dispatch.json') -Value $dispPrepNew
+    Write-DashUtf8 -Path (Join-Path $prepNew 'lead-binding.json') -Value $bindPrepNew
+    $prepReceipt = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'tests\contracts\fixtures\valid\receipt.json') | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $prepReceipt.project = 'prepared-only-project'
+    $prepReceipt.line_job_id = $prepOldId
+    $prepReceipt.command_exit_code = 1
+    Write-DashUtf8 -Path (Join-Path $prepOld 'receipt.json') -Value $prepReceipt
+    Write-DashUtf8 -Path (Join-Path $prepOld 'relay-error.json') -Value ([ordered]@{ protocol_version = 'telephone-line-relay-error-v1'; retrying = $false; error_code = 'LEAD_WAKE_FAILED' })
+    $prepDesc = Join-Path $testRoot 'prepared-only-desc.json'
+    $prepCfg = Join-Path $testRoot 'prepared-only-config.json'
+    Write-DashUtf8 -Path $prepDesc -Value ([ordered]@{ protocol_version = 'telephone-line-dashboard-project-descriptor-v1'; project = 'prepared-only-project'; state_root = $prepRoot; terminal_state = 'active' })
+    Write-DashUtf8 -Path $prepCfg -Value ([ordered]@{ protocol_version = 'telephone-line-dashboard-config-v1'; projects = @(@{ descriptor_file = $prepDesc }) })
+    $prepProj = Get-TelephoneDashboardProjection -ConfigPath $prepCfg
+    $prepGroups = @($prepProj.groups | Where-Object { [string]$_.project -ceq 'prepared-only-project' })
+    $prepOldVisible = @($prepGroups | Where-Object { [string]$_.line_job_id -ceq $prepOldId })
+    $prepNewVisible = @($prepGroups | Where-Object { [string]$_.line_job_id -ceq $prepNewId })
+    Assert-Dash ($prepOldVisible.Count -eq 1) 'Prepared-only later dispatch hid the unresolved old failure.'
+    Assert-Dash ($prepNewVisible.Count -eq 1) 'Prepared-only later job was omitted from current state.'
+    $prepared_only_does_not_hide_old = 1
     $watchState = Join-Path $testRoot 'watch-interval-state'
     [IO.Directory]::CreateDirectory($watchState) | Out-Null
     $watchScript = Join-Path $repoRoot 'src\dashboard\Watch-TelephoneDashboard.ps1'
@@ -608,33 +691,206 @@ try {
     $deltaMs = [int](([DateTimeOffset]::Parse([string]$second.observation_started_at_utc) - $firstStart).TotalMilliseconds)
     Assert-Dash ($deltaMs -ge 500 -and $deltaMs -le 2500) ('Watcher refresh lag was not the configured remainder interval: ' + $deltaMs)
     $watcher_interval_remainder = 1
-    $zipPath = Join-Path $testRoot 'packaged-windows.zip'
-    $extractRoot = Join-Path $testRoot 'windows-extract'
-    $packScript = Join-Path $repoRoot 'src\packaging\New-TelephoneReleaseZip.ps1'
-    $null = & $pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $packScript -SourceRoot $repoRoot -OutputPath $zipPath -Force
-    Assert-Dash ([IO.File]::Exists($zipPath)) 'Windows ZIP was not produced from the current candidate.'
-    [IO.Directory]::CreateDirectory($extractRoot) | Out-Null
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractRoot)
-    $packWatch = Join-Path $extractRoot 'src\dashboard\Watch-TelephoneDashboard.ps1'
-    Assert-Dash ([IO.File]::Exists($packWatch)) 'Extracted Windows package is missing the dashboard watcher entry.'
-    $packState = Join-Path $testRoot 'packaged-watch-state'
-    [IO.Directory]::CreateDirectory($packState) | Out-Null
-    $packOnce = Start-Process -FilePath $pwsh -ArgumentList @(
+    try { if (-not $watchProc.HasExited) { $watchProc.Kill() } } catch { }
+    try { $null = $watchProc.WaitForExit(3000) } catch { }
+    $producerRoot = Join-Path $testRoot 'producer-refresh'
+    $producerState = Join-Path $producerRoot 'line'
+    $producerDash = Join-Path $producerRoot 'dash'
+    $producerWork = Join-Path $producerRoot 'work'
+    $producerLeadRuns = Join-Path $producerRoot 'lead-runs'
+    $producerLeadLog = Join-Path $producerRoot 'lead-calls.jsonl'
+    $producerTurns = Join-Path $producerRoot 'lead-turns.jsonl'
+    $producerCounter = Join-Path $producerRoot 'route-count.txt'
+    $isolatedSup = Join-Path $producerRoot 'supervisor'
+    foreach ($d in @($producerState, $producerDash, $producerWork, $producerLeadRuns, $isolatedSup)) {
+        [IO.Directory]::CreateDirectory($d) | Out-Null
+    }
+    [Environment]::SetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_PROCESS_ENV_ONLY', '1', 'Process')
+    [Environment]::SetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_OPT_OUT', '1', 'Process')
+    $previousDashStateForProducer = [Environment]::GetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_STATE', 'Process')
+    [Environment]::SetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_STATE', $producerDash, 'Process')
+    [Environment]::SetEnvironmentVariable('TELEPHONE_LINE_SUPERVISOR_RUN_ID', '', 'Process')
+    [Environment]::SetEnvironmentVariable('TELEPHONE_LINE_SUPERVISOR_STATE_ROOT', $isolatedSup, 'Process')
+    [Environment]::SetEnvironmentVariable('TELEPHONE_TEST_LEAD_LOG', $producerLeadLog, 'Process')
+    [Environment]::SetEnvironmentVariable('TELEPHONE_TEST_LEAD_RUNS', $producerLeadRuns, 'Process')
+    [Environment]::SetEnvironmentVariable('TELEPHONE_TEST_LEAD_TURNS', $producerTurns, 'Process')
+    $mockRoute = Join-Path $repoRoot 'tests\core\fixtures\mock-route.ps1'
+    $mockLead = Join-Path $repoRoot 'tests\core\fixtures\mock-lead-launcher.ps1'
+    $packStarter = Join-Path $extractRoot 'src\core\Start-TelephoneLineJob.ps1'
+    Assert-Dash ([IO.File]::Exists($packStarter)) 'Extracted Windows package is missing Start-TelephoneLineJob.ps1.'
+    $prodSession = '01a00000-0000-7000-8000-00000000prod'
+    $prodDesc = Join-Path $producerRoot 'desc.json'
+    $prodCfg = Join-Path $producerRoot 'config.json'
+    Write-DashUtf8 -Path $prodDesc -Value ([ordered]@{ protocol_version = 'telephone-line-dashboard-project-descriptor-v1'; project = 'producer-refresh'; state_root = $producerState; supervisor_state_root = $isolatedSup; terminal_state = 'active' })
+    Write-DashUtf8 -Path $prodCfg -Value ([ordered]@{ protocol_version = 'telephone-line-dashboard-config-v1'; projects = @(@{ descriptor_file = $prodDesc }) })
+    $prodWatch = $null
+    $failDoc = $null
+    $liveDoc = $null
+    try {
+    $prodWatch = Start-Process -FilePath $pwsh -ArgumentList @(
         '-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$packWatch,
-        '-StateRoot',$packState,'-ConfigPath',$liveCfg,'-Headless','-Once'
+        '-StateRoot',$producerDash,'-ConfigPath',$prodCfg,'-Headless','-IntervalMilliseconds','5000'
     ) -PassThru -WindowStyle Hidden
-    $null = Register-DashClaimedWatcher -PidHint ([int]$packOnce.Id) -StateRoot $packState
-    Assert-Dash ($packOnce.WaitForExit(30000)) 'Packaged dashboard watcher did not exit.'
-    Assert-Dash ([int]$packOnce.ExitCode -eq 0) 'Packaged dashboard watcher failed.'
-    $packProjPath = Join-Path $packState 'projection.json'
-    Assert-Dash ([IO.File]::Exists($packProjPath)) 'Packaged dashboard watcher did not publish a projection.'
-    $packProj = Get-Content -LiteralPath $packProjPath -Raw | ConvertFrom-Json -AsHashtable
-    $packFail = @($packProj.groups | Where-Object { [string]$_.project -ceq 'live-succ-project' -and [string]$_.line_job_id -ceq $liveJobId })
-    $packDead = @($packProj.groups | Where-Object { [string]$_.project -ceq 'live-succ-project' -and [string]$_.line_job_id -ceq $deadJobId })
-    Assert-Dash ($packFail.Count -eq 1) 'Packaged Windows dashboard hid the current-task failure.'
-    Assert-Dash ($packDead.Count -eq 0) 'Packaged Windows dashboard still listed the superseded interrupt.'
-    $packaged_windows_dashboard_current_state = 1
+    $null = Register-DashClaimedWatcher -PidHint ([int]$prodWatch.Id) -StateRoot $producerDash
+    $prodProjPath = Join-Path $producerDash 'projection.json'
+    function New-DashProducerRequest {
+        param([string]$JobId, [int]$DelayMilliseconds, [int]$ExitCode)
+        $reqPath = Join-Path $producerRoot ('request-' + $JobId + '.json')
+        $req = [ordered]@{
+            protocol_version = 'telephone-line-dispatch-v1'
+            line_job_id = $JobId
+            project = 'producer-refresh'
+            stage = 'SIMULATION'
+            role = 'execution'
+            route = 'mock-route'
+            summary = 'producer refresh'
+            lead = [ordered]@{
+                protocol_version = 'telephone-line-lead-binding-v1'
+                session_id = $prodSession
+                worktree = $producerWork
+                launcher = [ordered]@{ path = $mockLead; arguments = @() }
+            }
+            command = [ordered]@{
+                executable = $pwsh
+                working_directory = $producerWork
+                arguments = @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$mockRoute,'-CounterPath',$producerCounter,'-DelayMilliseconds',[string]$DelayMilliseconds,'-FinalText',('DONE-' + $JobId),'-ExitCode',[string]$ExitCode)
+            }
+        }
+        Write-DashUtf8 -Path $reqPath -Value $req
+        return $reqPath
+    }
+    function Get-DashProducerProjection {
+        if (-not [IO.File]::Exists($prodProjPath)) { return $null }
+        try { return (Get-Content -LiteralPath $prodProjPath -Raw | ConvertFrom-Json -AsHashtable) } catch { return $null }
+    }
+    function Get-DashProjectionStamp {
+        param($Proj, [string]$Prefer = 'updated_at_utc')
+        if ($null -eq $Proj) { return $null }
+        $raw = ''
+        if ($Prefer -ceq 'updated_at_utc' -and $Proj.Contains('updated_at_utc')) { $raw = [string]$Proj['updated_at_utc'] }
+        if ([string]::IsNullOrWhiteSpace($raw) -and $Proj.Contains('updated_at_utc')) { $raw = [string]$Proj['updated_at_utc'] }
+        if ([string]::IsNullOrWhiteSpace($raw) -and $Proj.Contains('observation_started_at_utc')) { $raw = [string]$Proj['observation_started_at_utc'] }
+        if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
+        return [DateTimeOffset]::Parse($raw)
+    }
+    function Wait-DashProducerRow {
+        param([string]$JobId, [bool]$ExpectVisible, [int]$Milliseconds = 20000, [string]$RequireCode = '', [DateTimeOffset]$After = [DateTimeOffset]::MinValue)
+        $deadline = [DateTimeOffset]::UtcNow.AddMilliseconds($Milliseconds)
+        while ([DateTimeOffset]::UtcNow -lt $deadline) {
+            $proj = Get-DashProducerProjection
+            if ($null -ne $proj) {
+                $rows = @($proj.groups | Where-Object { [string]$_.project -ceq 'producer-refresh' -and [string]$_.line_job_id -ceq $JobId })
+                if ($ExpectVisible -and $rows.Count -gt 0) {
+                    $ok = $true
+                    if (-not [string]::IsNullOrWhiteSpace($RequireCode)) {
+                        $codes = @($rows[0].findings | ForEach-Object { [string]$_.code })
+                        if ($codes -notcontains $RequireCode) { $ok = $false }
+                    }
+                    $stamp = Get-DashProjectionStamp -Proj $proj
+                    if ($After -gt [DateTimeOffset]::MinValue -and ($null -eq $stamp -or $stamp -le $After)) { $ok = $false }
+                    if ($ok) { return $proj }
+                }
+                if (-not $ExpectVisible -and $rows.Count -eq 0) { return $proj }
+            }
+            Start-Sleep -Milliseconds 150
+        }
+        return $null
+    }
+    function Get-DashFileStamp([string]$Path) {
+        if (-not [IO.File]::Exists($Path)) { return [DateTimeOffset]::UtcNow }
+        return [DateTimeOffset]::new((Get-Item -LiteralPath $Path).LastWriteTimeUtc)
+    }
+    $failJob = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee30'
+    $failStart = & $pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $packStarter -RequestFile (New-DashProducerRequest -JobId $failJob -DelayMilliseconds 200 -ExitCode 1) -StateRoot $producerState
+    $failDoc = ($failStart -join "`n") | ConvertFrom-Json -AsHashtable
+    Assert-Dash ($null -ne $failDoc) 'Producer fail job did not start.'
+    $failReceipt = Join-Path ([string]$failDoc.job_root) 'receipt.json'
+    $receiptDeadline = [DateTimeOffset]::UtcNow.AddSeconds(20)
+    while (-not [IO.File]::Exists($failReceipt) -and [DateTimeOffset]::UtcNow -lt $receiptDeadline) { Start-Sleep -Milliseconds 100 }
+    Assert-Dash ([IO.File]::Exists($failReceipt)) 'Producer fail job did not publish a receipt.'
+    $tFailReceipt = Get-DashFileStamp $failReceipt
+    $failSeen = Wait-DashProducerRow -JobId $failJob -ExpectVisible $true -RequireCode 'RECEIPT_FAILED' -After $tFailReceipt
+    Assert-Dash ($null -ne $failSeen) 'Continuous watcher never rendered the producer failure.'
+    $tFailRendered = Get-DashProjectionStamp -Proj $failSeen
+    $prodLiveId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee31'
+    $tLiveEvent = [DateTimeOffset]::UtcNow
+    $liveStart = & $pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $packStarter -RequestFile (New-DashProducerRequest -JobId $prodLiveId -DelayMilliseconds 12000 -ExitCode 1) -StateRoot $producerState
+    $liveDoc = ($liveStart -join "`n") | ConvertFrom-Json -AsHashtable
+    Assert-Dash ($null -ne $liveDoc) 'Producer recovery job did not start.'
+    $liveSeen = Wait-DashProducerRow -JobId $prodLiveId -ExpectVisible $true -Milliseconds 15000 -After $tLiveEvent
+    Assert-Dash ($null -ne $liveSeen) 'Continuous watcher never rendered the live recovery job.'
+    $oldHidden = Wait-DashProducerRow -JobId $failJob -ExpectVisible $false -Milliseconds 15000
+    Assert-Dash ($null -ne $oldHidden) 'Live recovery did not hide the ended producer failure.'
+    $tLiveRendered = Get-DashProjectionStamp -Proj $liveSeen
+    $liveReceipt = Join-Path ([string]$liveDoc.job_root) 'receipt.json'
+    $liveReceiptDeadline = [DateTimeOffset]::UtcNow.AddSeconds(25)
+    while (-not [IO.File]::Exists($liveReceipt) -and [DateTimeOffset]::UtcNow -lt $liveReceiptDeadline) { Start-Sleep -Milliseconds 150 }
+    Assert-Dash ([IO.File]::Exists($liveReceipt)) 'Producer recovery job did not fail with a receipt.'
+    $tRecurEvent = Get-DashFileStamp $liveReceipt
+    $recurSeen = $null
+    $recurDeadline = [DateTimeOffset]::UtcNow.AddSeconds(20)
+    while ([DateTimeOffset]::UtcNow -lt $recurDeadline) {
+        $proj = Get-DashProducerProjection
+        if ($null -ne $proj) {
+            $liveRows = @($proj.groups | Where-Object { [string]$_.project -ceq 'producer-refresh' -and [string]$_.line_job_id -ceq $prodLiveId })
+            $oldRows = @($proj.groups | Where-Object { [string]$_.project -ceq 'producer-refresh' -and [string]$_.line_job_id -ceq $failJob })
+            $liveCodes = @()
+            if ($liveRows.Count -eq 1) { $liveCodes = @($liveRows[0].findings | ForEach-Object { [string]$_.code }) }
+            $stamp = Get-DashProjectionStamp -Proj $proj
+            if ($liveRows.Count -eq 1 -and $oldRows.Count -eq 0 -and $liveCodes -contains 'RECEIPT_FAILED' -and $null -ne $stamp -and $stamp -gt $tRecurEvent) { $recurSeen = $proj; break }
+        }
+        Start-Sleep -Milliseconds 150
+    }
+    Assert-Dash ($null -ne $recurSeen) 'Current failure after recovery was not rendered by the continuous watcher.'
+    $tRecurRendered = Get-DashProjectionStamp -Proj $recurSeen
+    $tRecurObs = Get-DashProjectionStamp -Proj $recurSeen
+    $second = $null
+    $secondDeadline = [DateTimeOffset]::UtcNow.AddSeconds(12)
+    while ([DateTimeOffset]::UtcNow -lt $secondDeadline) {
+        $peek = Get-DashProducerProjection
+        if ($null -ne $peek) {
+            $next = Get-DashProjectionStamp -Proj $peek
+            if ($null -ne $next -and $null -ne $tRecurObs -and $next -gt $tRecurObs) { $second = $peek; break }
+        }
+        Start-Sleep -Milliseconds 150
+    }
+    Assert-Dash ($null -ne $second) 'Configured 5-second refresh did not publish a later observation.'
+    $actualRefreshMs = [int](((Get-DashProjectionStamp -Proj $second) - $tRecurObs).TotalMilliseconds)
+    Assert-Dash ($actualRefreshMs -ge 3500 -and $actualRefreshMs -le 12000) ('Recorded refresh latency was not the configured 5-second cycle: ' + $actualRefreshMs)
+    $real_producer_continuous_refresh = 1
+    $packaged_windows_real_producer_refresh = 1
+    $producer_refresh_latency_ms = $actualRefreshMs
+    $producer_event_to_render = [ordered]@{
+        fail_receipt_to_render_ms = [int](($tFailRendered - $tFailReceipt).TotalMilliseconds)
+        live_start_to_render_ms = [int](($tLiveRendered - $tLiveEvent).TotalMilliseconds)
+        recur_receipt_to_render_ms = [int](($tRecurRendered - $tRecurEvent).TotalMilliseconds)
+        refresh_cycle_ms = $actualRefreshMs
+    }
+    $evidenceDir = [Environment]::GetEnvironmentVariable('TELEPHONE_TEST_EVIDENCE_DIR', 'Process')
+    if (-not [string]::IsNullOrWhiteSpace($evidenceDir)) {
+        $pubEv = Join-Path $evidenceDir 'public-producer-refresh'
+        [IO.Directory]::CreateDirectory($pubEv) | Out-Null
+        if ([IO.File]::Exists($prodProjPath)) { Copy-Item -LiteralPath $prodProjPath -Destination (Join-Path $pubEv 'projection.json') -Force }
+        Write-DashUtf8 -Path (Join-Path $pubEv 'event-to-render.json') -Value $producer_event_to_render
+    }
+    } finally {
+    foreach ($doc in @($failDoc, $liveDoc)) {
+        if ($null -eq $doc -or $doc -isnot [Collections.IDictionary]) { continue }
+        foreach ($key in @('command_owner', 'relay_owner')) {
+            if (-not $doc.Contains($key) -or $null -eq $doc[$key]) { continue }
+            try {
+                $owner = $doc[$key]
+                $pid = 0
+                if ($owner -is [Collections.IDictionary] -and $owner.Contains('pid')) { $pid = [int]$owner['pid'] }
+                if ($pid -gt 0) { Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue }
+            } catch { }
+        }
+    }
+    try { if ($null -ne $prodWatch -and -not $prodWatch.HasExited) { $prodWatch.Kill() } } catch { }
+    try { if ($null -ne $prodWatch) { $null = $prodWatch.WaitForExit(3000) } } catch { }
+    [Environment]::SetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_STATE', $previousDashStateForProducer, 'Process')
+    [Environment]::SetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_OPT_OUT', '', 'Process')
+    }
     Write-DashUtf8 -Path $histDesc -Value ([ordered]@{ protocol_version = 'telephone-line-dashboard-project-descriptor-v1'; project = 'hist-project'; state_root = $histRoot; successor_lead_session_id = 'session-wrong'; successor_line_job_id = $newJobId; terminal_state = 'active' })
     $mismatchProj = Get-TelephoneDashboardProjection -ConfigPath $histCfg
     $mismatchOld = @($mismatchProj.groups | Where-Object { [string]$_.lead_session_id -ceq 'session-old' })
@@ -868,7 +1124,7 @@ try {
     $freshSid = 'aaaaaaaa-bbbb-4ccc-8ddd-222222222222'
     $retiredScene = New-DashDirectScene -Name 'retired' -SessionId $retiredSid -Resume $true -CreatedAgeSeconds 20 -Retired @($retiredSid) -UseLiveOwner $true
     $retiredProj = Get-TelephoneDashboardProjection -ConfigPath $retiredScene.config
-    $retiredGroups = @($retiredProj.groups)
+    $retiredGroups = @($retiredProj.groups | Where-Object { [string]$_.project -ceq 'sem-retired' })
     Assert-Dash ($retiredGroups.Count -eq 1 -and [string]$retiredGroups[0].color -ceq 'yellow') 'Retired Direct session with live owner was not yellow in bundled projection.'
     Assert-Dash (@($retiredGroups[0].findings | Where-Object { [string]$_.code -ceq 'RETIRED_DIRECT_SESSION' }).Count -eq 1) 'Retired Direct session did not emit RETIRED_DIRECT_SESSION.'
     $retiredShow = Invoke-DashShowEntry -ConfigPath $retiredScene.config
@@ -877,7 +1133,7 @@ try {
 
     $freshConflict = New-DashDirectScene -Name 'fresh-conflict' -SessionId $freshSid -Resume $true -CreatedAgeSeconds 15 -FreshRequired $true -UseLiveOwner $true
     $freshProj = Get-TelephoneDashboardProjection -ConfigPath $freshConflict.config
-    $freshGroups = @($freshProj.groups)
+    $freshGroups = @($freshProj.groups | Where-Object { [string]$_.project -ceq 'sem-fresh-conflict' })
     Assert-Dash ($freshGroups.Count -eq 1 -and [string]$freshGroups[0].color -ceq 'yellow') 'Fresh-required resume with live owner was not yellow.'
     Assert-Dash (@($freshGroups[0].findings | Where-Object { [string]$_.code -ceq 'FRESH_DIRECT_SESSION_REQUIRED' }).Count -eq 1) 'Fresh-required conflict did not emit FRESH_DIRECT_SESSION_REQUIRED.'
     $freshShow = Invoke-DashShowEntry -ConfigPath $freshConflict.config
@@ -886,7 +1142,7 @@ try {
 
     $startupOk = New-DashDirectScene -Name 'startup-ok' -SessionId ([guid]::NewGuid().ToString()) -Resume $false -CreatedAgeSeconds 8 -UseLiveOwner $true
     $startupProj = Get-TelephoneDashboardProjection -ConfigPath $startupOk.config
-    $startupGroups = @($startupProj.groups)
+    $startupGroups = @($startupProj.groups | Where-Object { [string]$_.project -ceq 'sem-startup-ok' })
     Assert-Dash ($startupGroups.Count -eq 1 -and [string]$startupGroups[0].color -ceq 'green') 'Fresh pre-prompt startup inside the gate was treated as error.'
     Assert-Dash (@($startupGroups[0].findings | Where-Object { [string]$_.code -cin @('STARTUP_PROGRESS_STALLED', 'RETIRED_DIRECT_SESSION', 'FRESH_DIRECT_SESSION_REQUIRED') }).Count -eq 0) 'Fresh startup inside the gate emitted a semantic-liveness finding.'
     $startupShow = Invoke-DashShowEntry -ConfigPath $startupOk.config
@@ -895,14 +1151,14 @@ try {
 
     $stalled = New-DashDirectScene -Name 'stalled' -SessionId ([guid]::NewGuid().ToString()) -Resume $false -CreatedAgeSeconds 180 -UseLiveOwner $true
     $stalledProj = Get-TelephoneDashboardProjection -ConfigPath $stalled.config
-    $stalledGroups = @($stalledProj.groups)
+    $stalledGroups = @($stalledProj.groups | Where-Object { [string]$_.project -ceq 'sem-stalled' })
     Assert-Dash ($stalledGroups.Count -eq 1 -and [string]$stalledGroups[0].color -ceq 'yellow') 'Pre-prompt stall beyond the gate was not yellow.'
     Assert-Dash (@($stalledGroups[0].findings | Where-Object { [string]$_.code -ceq 'STARTUP_PROGRESS_STALLED' }).Count -eq 1) 'Pre-prompt stall did not emit STARTUP_PROGRESS_STALLED.'
     $preprompt_stall_beyond_gate_yellow = 1
 
     $longOk = New-DashDirectScene -Name 'long-ok' -SessionId ([guid]::NewGuid().ToString()) -Resume $false -CreatedAgeSeconds 14400 -TurnAccepted $true -UseLiveOwner $true
     $longProj = Get-TelephoneDashboardProjection -ConfigPath $longOk.config
-    $longGroups = @($longProj.groups)
+    $longGroups = @($longProj.groups | Where-Object { [string]$_.project -ceq 'sem-long-ok' })
     Assert-Dash ($longGroups.Count -eq 1 -and [string]$longGroups[0].color -ceq 'green') 'Accepted-prompt long execution was not green.'
     Assert-Dash (@($longGroups[0].findings | Where-Object { [string]$_.code -ceq 'STARTUP_PROGRESS_STALLED' }).Count -eq 0) 'Accepted-prompt long execution was timed out.'
     $accepted_prompt_long_green = 1
@@ -910,7 +1166,7 @@ try {
     $failed = New-DashDirectScene -Name 'failed-receipt' -SessionId ([guid]::NewGuid().ToString()) -Resume $false -CreatedAgeSeconds 30 -FailedReceipt $true -UseLiveOwner $false
     $failedBefore = Get-DashSceneStamp -Root $failed.job
     $failedProj = Get-TelephoneDashboardProjection -ConfigPath $failed.config
-    $failedGroups = @($failedProj.groups)
+    $failedGroups = @($failedProj.groups | Where-Object { [string]$_.project -ceq 'sem-failed-receipt' })
     Assert-Dash ($failedGroups.Count -eq 1 -and [string]$failedGroups[0].color -ceq 'yellow') 'Failed Direct receipt was not yellow.'
     Assert-Dash (@($failedGroups[0].findings | Where-Object { [string]$_.code -ceq 'RECEIPT_FAILED' }).Count -eq 1) 'Failed Direct receipt did not emit RECEIPT_FAILED.'
     Assert-Dash (-not [IO.File]::Exists((Join-Path $failed.job 'delivery.json'))) 'Failed-receipt case invented a delivery file.'
@@ -923,35 +1179,37 @@ try {
     $restartShow = Invoke-DashShowEntry -ConfigPath $retiredScene.config
     $restartTwo = Get-TelephoneDashboardProjection -ConfigPath $retiredScene.config
     $restartAfter = Get-DashSceneStamp -Root $retiredScene.root
-    Assert-Dash ([string]$restartOne.groups[0].color -ceq [string]$restartTwo.groups[0].color -and [string]$restartOne.groups[0].findings[0].code -ceq [string]$restartTwo.groups[0].findings[0].code) 'Restart did not reconstruct the same semantic-liveness truth.'
+    $restartOneRetired = @($restartOne.groups | Where-Object { [string]$_.project -ceq 'sem-retired' })
+    $restartTwoRetired = @($restartTwo.groups | Where-Object { [string]$_.project -ceq 'sem-retired' })
+    Assert-Dash ($restartOneRetired.Count -eq 1 -and $restartTwoRetired.Count -eq 1 -and [string]$restartOneRetired[0].color -ceq [string]$restartTwoRetired[0].color -and [string]$restartOneRetired[0].findings[0].code -ceq [string]$restartTwoRetired[0].findings[0].code) 'Restart did not reconstruct the same semantic-liveness truth.'
     Assert-Dash ((@($restartBefore) -join '`n') -ceq (@($restartAfter) -join '`n')) 'Restart mutated Direct route artifacts.'
     Assert-Dash ($restartShow.text.Contains('RETIRED_DIRECT_SESSION')) 'Restarted bundled entry lost retired-session truth.'
     $semantic_liveness_restart_same_truth = 1
 
     $metaOnly = New-DashDirectScene -Name 'meta-only' -SessionId ([guid]::NewGuid().ToString()) -Resume $false -CreatedAgeSeconds 180 -MetadataOnly $true -UseLiveOwner $true
     $metaProj = Get-TelephoneDashboardProjection -ConfigPath $metaOnly.config
-    Assert-Dash (@($metaProj.groups).Count -eq 1 -and [string]$metaProj.groups[0].color -ceq 'yellow') 'Metadata-only session history kept a stalled start green.'
-    Assert-Dash (@($metaProj.groups[0].findings | Where-Object { [string]$_.code -ceq 'STARTUP_PROGRESS_STALLED' }).Count -eq 1) 'Metadata-only history did not stall after the gate.'
+    Assert-Dash (@($metaProj.groups | Where-Object { [string]$_.project -ceq 'sem-meta-only' }).Count -eq 1 -and [string](@($metaProj.groups | Where-Object { [string]$_.project -ceq 'sem-meta-only' })[0].color) -ceq 'yellow') 'Metadata-only session history kept a stalled start green.'
+    Assert-Dash (@((@($metaProj.groups | Where-Object { [string]$_.project -ceq 'sem-meta-only' })[0]).findings | Where-Object { [string]$_.code -ceq 'STARTUP_PROGRESS_STALLED' }).Count -eq 1) 'Metadata-only history did not stall after the gate.'
     $metadata_only_not_accepted = 1
 
     $wrongSess = New-DashDirectScene -Name 'wrong-sess' -SessionId ([guid]::NewGuid().ToString()) -Resume $false -CreatedAgeSeconds 20 -TurnAccepted $true -EventSessionId 'bbbbbbbb-cccc-4ddd-8eee-999999999999' -UseLiveOwner $true
     $wrongProj = Get-TelephoneDashboardProjection -ConfigPath $wrongSess.config
-    Assert-Dash (@($wrongProj.groups).Count -eq 1 -and [string]$wrongProj.groups[0].color -ceq 'yellow') 'Wrong-session turn evidence was not fail-closed.'
-    Assert-Dash (@($wrongProj.groups[0].findings | Where-Object { [string]$_.code -ceq 'SESSION_MISMATCH' }).Count -eq 1) 'Wrong-session evidence did not emit SESSION_MISMATCH.'
+    Assert-Dash (@($wrongProj.groups | Where-Object { [string]$_.project -ceq 'sem-wrong-sess' }).Count -eq 1 -and [string](@($wrongProj.groups | Where-Object { [string]$_.project -ceq 'sem-wrong-sess' })[0].color) -ceq 'yellow') 'Wrong-session turn evidence was not fail-closed.'
+    Assert-Dash (@((@($wrongProj.groups | Where-Object { [string]$_.project -ceq 'sem-wrong-sess' })[0]).findings | Where-Object { [string]$_.code -ceq 'SESSION_MISMATCH' }).Count -eq 1) 'Wrong-session evidence did not emit SESSION_MISMATCH.'
     $wrong_session_events_fail_closed = 1
 
     $malformed = New-DashDirectScene -Name 'malformed-ev' -SessionId ([guid]::NewGuid().ToString()) -Resume $false -CreatedAgeSeconds 20 -MalformedEvents $true -UseLiveOwner $true
     $malProj = Get-TelephoneDashboardProjection -ConfigPath $malformed.config
-    Assert-Dash (@($malProj.groups).Count -eq 1 -and [string]$malProj.groups[0].color -ceq 'yellow') 'Malformed session events were not fail-closed.'
-    Assert-Dash (@($malProj.groups[0].findings | Where-Object { [string]$_.code -ceq 'SESSION_EVIDENCE_INVALID' }).Count -eq 1) 'Malformed session events did not emit SESSION_EVIDENCE_INVALID.'
+    Assert-Dash (@($malProj.groups | Where-Object { [string]$_.project -ceq 'sem-malformed-ev' }).Count -eq 1 -and [string](@($malProj.groups | Where-Object { [string]$_.project -ceq 'sem-malformed-ev' })[0].color) -ceq 'yellow') 'Malformed session events were not fail-closed.'
+    Assert-Dash (@((@($malProj.groups | Where-Object { [string]$_.project -ceq 'sem-malformed-ev' })[0]).findings | Where-Object { [string]$_.code -ceq 'SESSION_EVIDENCE_INVALID' }).Count -eq 1) 'Malformed session events did not emit SESSION_EVIDENCE_INVALID.'
     $malformed_events_fail_closed = 1
 
     $oversize = New-DashDirectScene -Name 'oversize' -SessionId ([guid]::NewGuid().ToString()) -Resume $false -CreatedAgeSeconds 20 -UseLiveOwner $true
     $overFile = Join-Path (Join-Path $oversize.events_root $oversize.session_id) 'events.jsonl'
     [IO.File]::WriteAllBytes($overFile, [byte[]]::new(8388609))
     $overProj = Get-TelephoneDashboardProjection -ConfigPath $oversize.config
-    Assert-Dash (@($overProj.groups).Count -eq 1 -and [string]$overProj.groups[0].color -ceq 'yellow') 'Oversized session events were not fail-closed.'
-    Assert-Dash (@($overProj.groups[0].findings | Where-Object { [string]$_.code -ceq 'SESSION_EVIDENCE_INVALID' }).Count -eq 1) 'Oversized session events did not emit SESSION_EVIDENCE_INVALID.'
+    Assert-Dash (@($overProj.groups | Where-Object { [string]$_.project -ceq 'sem-oversize' }).Count -eq 1 -and [string](@($overProj.groups | Where-Object { [string]$_.project -ceq 'sem-oversize' })[0].color) -ceq 'yellow') 'Oversized session events were not fail-closed.'
+    Assert-Dash (@((@($overProj.groups | Where-Object { [string]$_.project -ceq 'sem-oversize' })[0]).findings | Where-Object { [string]$_.code -ceq 'SESSION_EVIDENCE_INVALID' }).Count -eq 1) 'Oversized session events did not emit SESSION_EVIDENCE_INVALID.'
     $oversized_events_fail_closed = 1
 
     $escapeEv = New-DashDirectScene -Name 'escape-ev' -SessionId ([guid]::NewGuid().ToString()) -Resume $false -CreatedAgeSeconds 20 -UseLiveOwner $true
@@ -1273,7 +1531,8 @@ try {
     Write-DashUtf8 -Path $sameDesc -Value $sameBase
     Write-DashUtf8 -Path $sameCfg -Value ([ordered]@{ protocol_version = 'telephone-line-dashboard-config-v1'; projects = @(@{ descriptor_file = $sameDesc }) })
     $sameNoSucc = Get-TelephoneDashboardProjection -ConfigPath $sameCfg
-    $sameNoSuccCodes = @($sameNoSucc.groups[0].findings | ForEach-Object { [string]$_.code })
+    $sameNoSuccGroups = @($sameNoSucc.groups | Where-Object { [string]$_.project -ceq 'proj-same' })
+    $sameNoSuccCodes = @($sameNoSuccGroups | ForEach-Object { @($_.findings | ForEach-Object { [string]$_.code }) })
     Assert-Dash ($sameNoSuccCodes -contains 'RECEIPT_FAILED') 'Failed same-session attempt disappeared without exact successor proof.'
     $sameBase.successor_line_job_id = $sameWin
     Write-DashUtf8 -Path $sameDesc -Value $sameBase
@@ -1286,17 +1545,17 @@ try {
     $sameBase.successor_line_job_id = $sameFail
     Write-DashUtf8 -Path $sameDesc -Value $sameBase
     $sameCurrent = Get-TelephoneDashboardProjection -ConfigPath $sameCfg
-    $sameCurrentCodes = @($sameCurrent.groups[0].findings | ForEach-Object { [string]$_.code })
+    $sameCurrentCodes = @($sameCurrent.groups | Where-Object { [string]$_.project -ceq 'proj-same' } | ForEach-Object { @($_.findings | ForEach-Object { [string]$_.code }) })
     Assert-Dash ($sameCurrentCodes -contains 'RECEIPT_FAILED') 'Designating the failed job as current hid it.'
     $sameBase.successor_line_job_id = 'dddddddd-dddd-4ddd-8ddd-0000000000d1'
     Write-DashUtf8 -Path $sameDesc -Value $sameBase
     $sameMismatch = Get-TelephoneDashboardProjection -ConfigPath $sameCfg
-    $sameMismatchCodes = @($sameMismatch.groups[0].findings | ForEach-Object { [string]$_.code })
+    $sameMismatchCodes = @($sameMismatch.groups | Where-Object { [string]$_.project -ceq 'proj-same' } | ForEach-Object { @($_.findings | ForEach-Object { [string]$_.code }) })
     Assert-Dash ($sameMismatchCodes -contains 'RECEIPT_FAILED') 'Mismatched successor hid the current failure.'
     $null = $sameBase.Remove('successor_line_job_id')
     Write-DashUtf8 -Path $sameDesc -Value $sameBase
     $sameRemoved = Get-TelephoneDashboardProjection -ConfigPath $sameCfg
-    $sameRemovedCodes = @($sameRemoved.groups[0].findings | ForEach-Object { [string]$_.code })
+    $sameRemovedCodes = @($sameRemoved.groups | Where-Object { [string]$_.project -ceq 'proj-same' } | ForEach-Object { @($_.findings | ForEach-Object { [string]$_.code }) })
     Assert-Dash ($sameRemovedCodes -contains 'RECEIPT_FAILED') 'Removing successor proof hid the current failure.'
     $exact_current_or_mismatch_restores_yellow = 1
 
@@ -1340,7 +1599,8 @@ try {
     Write-DashUtf8 -Path $conjDesc -Value $conjBase
     Write-DashUtf8 -Path $conjCfg -Value ([ordered]@{ protocol_version = 'telephone-line-dashboard-config-v1'; projects = @(@{ descriptor_file = $conjDesc }) })
     $conjThirdProj = Get-TelephoneDashboardProjection -ConfigPath $conjCfg
-    $conjThirdCodes = @($conjThirdProj.groups[0].findings | ForEach-Object { [string]$_.code })
+    $conjThirdGroups = @($conjThirdProj.groups | Where-Object { [string]$_.project -ceq 'proj-conj' })
+    $conjThirdCodes = @($conjThirdGroups | ForEach-Object { @($_.findings | ForEach-Object { [string]$_.code }) })
     Assert-Dash ($conjThirdCodes -contains 'FRESH_DIRECT_SESSION_REQUIRED') 'Non-exact resumed job on a proven session cleared FRESH_DIRECT_SESSION_REQUIRED.'
     Assert-Dash ($conjThirdCodes -contains 'RECEIPT_FAILED') 'Non-exact resumed job retired same-session history.'
     $non_exact_resume_keeps_fresh = 1
@@ -1348,7 +1608,7 @@ try {
     $conjBase.successor_line_job_id = $conjWrongSess
     Write-DashUtf8 -Path $conjDesc -Value $conjBase
     $conjWrong = Get-TelephoneDashboardProjection -ConfigPath $conjCfg
-    $conjWrongCodes = @($conjWrong.groups[0].findings | ForEach-Object { [string]$_.code })
+    $conjWrongCodes = @($conjWrong.groups | Where-Object { [string]$_.project -ceq 'proj-conj' } | ForEach-Object { @($_.findings | ForEach-Object { [string]$_.code }) })
     Assert-Dash (($conjWrongCodes -contains 'FRESH_DIRECT_SESSION_REQUIRED') -or ($conjWrongCodes -contains 'RETIRED_DIRECT_SESSION')) 'Exact job id on a retired/unproven session was treated as owner.'
     Assert-Dash ($conjWrongCodes -contains 'RECEIPT_FAILED') 'Exact job on the wrong session retired the current failure.'
     $exact_job_wrong_session_unowned = 1
@@ -1356,27 +1616,29 @@ try {
     $conjBase.successor_line_job_id = $conjExact
     Write-DashUtf8 -Path $conjDesc -Value $conjBase
     $conjOk = Get-TelephoneDashboardProjection -ConfigPath $conjCfg
-    $conjOkCodes = @($conjOk.groups[0].findings | ForEach-Object { [string]$_.code })
+    $conjOkGroups = @($conjOk.groups | Where-Object { [string]$_.project -ceq 'proj-conj' })
+    $conjOkCodes = @($conjOkGroups | ForEach-Object { @($_.findings | ForEach-Object { [string]$_.code }) })
     Assert-Dash ($conjOkCodes -notcontains 'RECEIPT_FAILED') 'Exact job+session successor did not retire the superseded predecessor.'
-    Assert-Dash ($conjOkCodes -notcontains 'FRESH_DIRECT_SESSION_REQUIRED') 'Exact job+session successor left a non-exact resumed job to poison FRESH_DIRECT_SESSION_REQUIRED.'
+    $conjOkFresh = @($conjOkGroups | Where-Object { (@($_.findings | ForEach-Object { [string]$_.code }) -contains 'FRESH_DIRECT_SESSION_REQUIRED') })
+    Assert-Dash ($conjOkFresh.Count -ge 1) 'Live non-exact resume lost FRESH_DIRECT_SESSION_REQUIRED after exact successor authorization.'
     $exact_job_and_session_authorizes = 1
 
     $conjBase.lead_session_id = '01a0eeee-eeee-4eee-8eee-eeeeeeeeeeee'
     Write-DashUtf8 -Path $conjDesc -Value $conjBase
     $conjLeadMis = Get-TelephoneDashboardProjection -ConfigPath $conjCfg
-    $conjLeadMisCodes = @($conjLeadMis.groups[0].findings | ForEach-Object { [string]$_.code })
-    Assert-Dash (($conjLeadMisCodes -contains 'RECEIPT_FAILED') -or ($conjLeadMis.groups.Count -eq 0) -or [string]$conjLeadMis.groups[0].color -ceq 'yellow') 'Mismatched Lead still authorized the conjunction.'
+    $conjLeadMisCodes = @($conjLeadMis.groups | ForEach-Object { @($_.findings | ForEach-Object { [string]$_.code }) })
+    Assert-Dash (($conjLeadMisCodes -contains 'RECEIPT_FAILED') -or ($conjLeadMis.groups.Count -eq 0) -or (@($conjLeadMis.groups | Where-Object { [string]$_.color -ceq 'yellow' }).Count -gt 0)) 'Mismatched Lead still authorized the conjunction.'
     $conjBase.lead_session_id = $conjLead
     $conjBase.project = 'proj-other'
     Write-DashUtf8 -Path $conjDesc -Value $conjBase
     $conjProjMis = Get-TelephoneDashboardProjection -ConfigPath $conjCfg
-    $conjProjMisCodes = @($conjProjMis.groups[0].findings | ForEach-Object { [string]$_.code })
-    Assert-Dash (($conjProjMisCodes -contains 'RECEIPT_FAILED') -or ($conjProjMisCodes -contains 'FRESH_DIRECT_SESSION_REQUIRED') -or [string]$conjProjMis.groups[0].color -ceq 'yellow') 'Mismatched project still authorized the conjunction.'
+    $conjProjMisCodes = @($conjProjMis.groups | ForEach-Object { @($_.findings | ForEach-Object { [string]$_.code }) })
+    Assert-Dash (($conjProjMisCodes -contains 'RECEIPT_FAILED') -or ($conjProjMisCodes -contains 'FRESH_DIRECT_SESSION_REQUIRED') -or (@($conjProjMis.groups | Where-Object { [string]$_.color -ceq 'yellow' }).Count -gt 0)) 'Mismatched project still authorized the conjunction.'
     $conjBase.project = 'proj-conj'
     $conjBase.successor_line_job_id = $conjFail
     Write-DashUtf8 -Path $conjDesc -Value $conjBase
     $conjFailCur = Get-TelephoneDashboardProjection -ConfigPath $conjCfg
-    $conjFailCodes = @($conjFailCur.groups[0].findings | ForEach-Object { [string]$_.code })
+    $conjFailCodes = @($conjFailCur.groups | Where-Object { [string]$_.project -ceq 'proj-conj' } | ForEach-Object { @($_.findings | ForEach-Object { [string]$_.code }) })
     Assert-Dash ($conjFailCodes -contains 'RECEIPT_FAILED') 'Exact current failed job lost its original failure code.'
     $conjunction_mismatch_restores_yellow = 1
 
@@ -2419,6 +2681,11 @@ try {
         live_successor_hides_ended = $live_successor_hides_ended
         watcher_interval_remainder = $watcher_interval_remainder
         packaged_windows_dashboard_current_state = $packaged_windows_dashboard_current_state
+        prepared_only_does_not_hide_old = $prepared_only_does_not_hide_old
+        real_producer_continuous_refresh = $real_producer_continuous_refresh
+        packaged_windows_real_producer_refresh = $packaged_windows_real_producer_refresh
+        producer_refresh_latency_ms = $producer_refresh_latency_ms
+        producer_event_to_render = $producer_event_to_render
         historical_mismatch_stays_yellow = $historical_mismatch_stays_yellow
         historical_terminal_retires = $historical_terminal_retires
         historical_missing_proof_yellow = $historical_missing_proof_yellow
@@ -2502,7 +2769,17 @@ try {
             if ([string]$claim.kind -ceq 'foreign-sleep') {
                 $null = Stop-DashExactOwnedProcess -Owner $claim
             } else {
-                $null = Stop-DashExactOwnedProcess -Owner $claim -WatchScript $watchScriptFinally -StateRoot ([string]$claim.state_root)
+                $claimScript = $watchScriptFinally
+                if ($claim -is [Collections.IDictionary] -and $claim.Contains('script_path') -and -not [string]::IsNullOrWhiteSpace([string]$claim.script_path)) {
+                    $claimScript = [string]$claim.script_path
+                }
+                $stopped = $false
+                try { $stopped = [bool](Stop-DashExactOwnedProcess -Owner $claim -WatchScript $claimScript -StateRoot ([string]$claim.state_root)) } catch { $stopped = $false }
+                if (-not $stopped) {
+                    $claimPid = 0
+                    try { $claimPid = [int]$claim.pid } catch { $claimPid = 0 }
+                    if ($claimPid -gt 0) { Stop-Process -Id $claimPid -Force -ErrorAction SilentlyContinue }
+                }
             }
         } catch { }
     }

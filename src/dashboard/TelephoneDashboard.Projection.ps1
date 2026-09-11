@@ -588,6 +588,10 @@ function Test-TelephoneDashboardDirectReceiptFailed {
     if ($complete -and $success -is [bool] -and -not $success) { return $true }
     $errorCode = Get-TelephoneDashboardMapText -Map $Receipt -Name 'command_error_code'
     if (-not [string]::IsNullOrWhiteSpace($errorCode) -and $errorCode -cne 'null') { return $true }
+    $exitValue = $null
+    if ($Receipt -is [Collections.IDictionary] -and $Receipt.Contains('command_exit_code')) { $exitValue = $Receipt['command_exit_code'] }
+    elseif ($null -ne $Receipt.PSObject.Properties['command_exit_code']) { $exitValue = $Receipt.command_exit_code }
+    if ($null -ne $exitValue -and $exitValue -is [ValueType] -and [int]$exitValue -ne 0) { return $true }
     return $false
 }
 
@@ -802,6 +806,9 @@ function Get-TelephoneDashboardJobScan {
     if ([bool]$receipt.present -and [bool]$receipt.valid) {
         if ([string]$receipt.value.line_job_id -cne $jobId -and -not [string]::IsNullOrWhiteSpace($jobId)) {
             Add-TelephoneDashboardFinding -Findings $findings -Code 'RECEIPT_MISMATCH'
+        }
+        if (Test-TelephoneDashboardDirectReceiptFailed -Receipt $receipt.value) {
+            Add-TelephoneDashboardFinding -Findings $findings -Code 'RECEIPT_FAILED'
         }
     }
     $commandAlive = $false
@@ -1688,6 +1695,39 @@ function Test-TelephoneDashboardJobIsLiveNow {
     return $false
 }
 
+function Test-TelephoneDashboardJobHasObservedContinuation {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][object]$Job,
+        [AllowNull()][object]$Descriptor = $null
+    )
+    if (Test-TelephoneDashboardJobIsLiveNow -Job $Job) { return $true }
+    $delivery = $false
+    $receiptPresent = $false
+    $bindingValid = $false
+    if ($Job -is [Collections.IDictionary]) {
+        if ($Job.Contains('delivery')) { $delivery = [bool]$Job['delivery'] }
+        if ($Job.Contains('receipt') -and $null -ne $Job['receipt']) {
+            $receipt = $Job['receipt']
+            if ($receipt -is [Collections.IDictionary] -and $receipt.Contains('present')) { $receiptPresent = [bool]$receipt['present'] }
+        }
+        if ($Job.Contains('binding') -and $null -ne $Job['binding'] -and $Job['binding'] -is [Collections.IDictionary] -and $Job['binding'].Contains('valid')) {
+            $bindingValid = [bool]$Job['binding']['valid']
+        }
+    } elseif ($null -ne $Job.PSObject) {
+        if ($null -ne $Job.PSObject.Properties['delivery']) { $delivery = [bool]$Job.delivery }
+        if ($null -ne $Job.PSObject.Properties['receipt'] -and $null -ne $Job.receipt) {
+            $receipt = $Job.receipt
+            if ($receipt -is [Collections.IDictionary] -and $receipt.Contains('present')) { $receiptPresent = [bool]$receipt['present'] }
+            elseif ($null -ne $receipt.PSObject.Properties['present']) { $receiptPresent = [bool]$receipt.present }
+        }
+    }
+    if ($receiptPresent) { return $true }
+    if ($delivery) { return $true }
+    if ($bindingValid -and $delivery) { return $true }
+    return $false
+}
+
 function Test-TelephoneDashboardJobSupersededByLiveSuccessor {
     [CmdletBinding()]
     param(
@@ -1697,8 +1737,14 @@ function Test-TelephoneDashboardJobSupersededByLiveSuccessor {
     )
     if (Test-TelephoneDashboardJobIsLiveNow -Job $Job) { return $false }
     if ($null -ne $Descriptor -and (Test-TelephoneDashboardExactSuccessorJob -Candidate $Job -Descriptor $Descriptor)) { return $false }
+    foreach ($finding in @($Job.findings)) {
+        if ($null -eq $finding) { continue }
+        $code = ''
+        if ($finding -is [Collections.IDictionary] -and $finding.Contains('code')) { $code = [string]$finding['code'] }
+        elseif ($null -ne $finding.PSObject.Properties['code']) { $code = [string]$finding.code }
+        if ($code -cin @('CALLBACK_PENDING', 'CALLBACK_MISSING', 'RECEIPT_AWAITING_DELIVERY')) { return $false }
+    }
     $project = Get-TelephoneDashboardMapText -Map $Job -Name 'project'
-    $session = Get-TelephoneDashboardMapText -Map $Job -Name 'session_id'
     $worktree = Get-TelephoneDashboardJobWorktreeKey -Job $Job
     $created = Get-TelephoneDashboardJobCreatedAt -Job $Job
     foreach ($other in @($AllJobs)) {
@@ -1713,9 +1759,7 @@ function Test-TelephoneDashboardJobSupersededByLiveSuccessor {
         if (-not $sameLane) { continue }
         $otherCreated = Get-TelephoneDashboardJobCreatedAt -Job $other
         if ($created -gt [DateTimeOffset]::MinValue -and $otherCreated -gt [DateTimeOffset]::MinValue -and $otherCreated -le $created) { continue }
-        if ($created -eq [DateTimeOffset]::MinValue -or $otherCreated -eq [DateTimeOffset]::MinValue) {
-            if (-not (Test-TelephoneDashboardJobIsLiveNow -Job $other)) { continue }
-        }
+        if (-not (Test-TelephoneDashboardJobHasObservedContinuation -Job $other -Descriptor $Descriptor)) { continue }
         return $true
     }
     return $false
@@ -1734,7 +1778,7 @@ function Test-TelephoneDashboardJobMustRemainVisible {
         elseif ($null -ne $finding.PSObject.Properties['code']) { $code = [string]$finding.code }
         if (-not [string]::IsNullOrWhiteSpace($code)) { [void]$codes.Add($code) }
     }
-    foreach ($keep in @('UNKNOWN', 'RECEIPT_AWAITING_DELIVERY', 'UNKNOWN_EXECUTION', 'CALLBACK_MISSING', 'CALLBACK_PENDING', 'TURN_DONE_HOST_INCOMPLETE', 'BATCH_COLLECTING')) {
+    foreach ($keep in @('UNKNOWN', 'RECEIPT_AWAITING_DELIVERY', 'UNKNOWN_EXECUTION', 'CALLBACK_MISSING', 'CALLBACK_PENDING', 'TURN_DONE_HOST_INCOMPLETE', 'BATCH_COLLECTING', 'RETIRED_DIRECT_SESSION', 'FRESH_DIRECT_SESSION_REQUIRED', 'RECEIPT_FAILED')) {
         if ($codes.Contains($keep)) { return $true }
     }
     $receiptPresent = $false
@@ -1759,6 +1803,7 @@ function Test-TelephoneDashboardDirectHistoryRetired {
         [AllowEmptyCollection()][string[]]$ProofJobIds = @(),
         [AllowEmptyCollection()][string[]]$ProofDirectSessions = @()
     )
+    if (Test-TelephoneDashboardJobIsLiveNow -Job $Job) { return $false }
     if (Test-TelephoneDashboardJobSupersededByLiveSuccessor -Job $Job -AllJobs $AllJobs -Descriptor $Descriptor) { return $true }
     $proofJobSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($id in @($ProofJobIds)) {
@@ -2411,6 +2456,28 @@ function Get-TelephoneDashboardProjection {
             $ownerSession = Get-TelephoneDashboardJobDirectSession -Job $job -DirectByJobId $directByJobId
             if (-not [string]::IsNullOrWhiteSpace($ownerSession)) { [void]$proofDirectSessions.Add($ownerSession) }
         }
+        foreach ($exactId in @(Get-TelephoneDashboardDescriptorExactJobIds -Descriptor $descriptor)) {
+            if ([string]::IsNullOrWhiteSpace([string]$exactId)) { continue }
+            $exactPresent = $false
+            foreach ($scanned in @($jobScans)) {
+                if ([string]$scanned.job_id -ceq [string]$exactId) { $exactPresent = $true; break }
+            }
+            if (-not $exactPresent) { continue }
+            $exactSid = ''
+            if ($null -ne $directByJobId -and $directByJobId.Contains([string]$exactId)) {
+                $exactSid = Get-TelephoneDashboardJobDirectSession -Job $directByJobId[[string]$exactId] -DirectByJobId $directByJobId
+            }
+            $exactRetired = $false
+            if (-not [string]::IsNullOrWhiteSpace($exactSid)) {
+                $authorityExact = Get-TelephoneDashboardDirectRouteAuthority -Descriptor $descriptor
+                foreach ($retiredSid in @($authorityExact.retired_session_ids)) {
+                    if ($exactSid -ceq [string]$retiredSid) { $exactRetired = $true; break }
+                }
+            }
+            if ($exactRetired) { continue }
+            [void]$proofJobIds.Add([string]$exactId)
+            if (-not [string]::IsNullOrWhiteSpace($exactSid)) { [void]$proofDirectSessions.Add($exactSid) }
+        }
         foreach ($job in $jobScans) {
             if (Test-TelephoneDashboardJobSupersededByLiveSuccessor -Job $job -AllJobs @($jobScans) -Descriptor $descriptor) {
                 continue
@@ -2443,9 +2510,7 @@ function Get-TelephoneDashboardProjection {
                 if (-not [string]::IsNullOrWhiteSpace($ownerJobId) -and $ownerJobId -ceq [string]$exactId) { $isExactAuthorizedJob = $true; break }
             }
             $stripFresh = $false
-            if (-not [string]::IsNullOrWhiteSpace($ownerJobId) -and $proofJobIds.Contains($ownerJobId)) { $stripFresh = $true }
-            elseif ($isExactAuthorizedJob -and $onProvenFreshSession) { $stripFresh = $true }
-            elseif ($isExactAuthorizedJob) { $stripFresh = $true }
+            if ($onProvenFreshSession -and (($proofJobIds.Contains($ownerJobId)) -or $isExactAuthorizedJob)) { $stripFresh = $true }
             if ($stripFresh) {
                 $job.findings = @($job.findings | Where-Object { [string]$_.code -cne 'FRESH_DIRECT_SESSION_REQUIRED' })
             }

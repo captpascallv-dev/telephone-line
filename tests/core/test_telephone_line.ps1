@@ -699,6 +699,25 @@ try {
         [IO.File]::WriteAllText($events, ('{"type":"thread.started","thread_id":"' + $sessionId + '"}' + "`n" + '{"type":"turn.started"}' + "`n"), [Text.UTF8Encoding]::new($false))
         $null = Wait-TelephoneLeadWakeAcknowledged -RunRoot $root -ExpectedSessionId $sessionId -ExpectedRunId 'telephone-missing-run' -StartupTimeoutSeconds 1
     }
+    Assert-TelephoneNativeNegative -Name 'wrong-protocol-app-run' -Body {
+        $root = Join-Path $negBase 'wrong-protocol'
+        [IO.Directory]::CreateDirectory($root) | Out-Null
+        New-TelephoneTestLiveOwner -RunRoot $root
+        $ack = [ordered]@{
+            protocol_version = 'telephone-line-lead-wake-ack-v1'
+            session_id = $sessionId
+            event = 'turn.started'
+            wake_key = 'wanted-wake'
+            receipt_sha256 = ('a' * 64)
+        }
+        [IO.File]::WriteAllText((Join-Path $root 'lead-wake-ack.json'), (($ack | ConvertTo-Json -Compress) + "`n"), [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $root 'run.json'), (([ordered]@{
+            protocol_version = 'unrelated-protocol'
+            run_id = 'wrong-run'
+            thread_id = 'wrong-thread'
+        } | ConvertTo-Json -Compress) + "`n"), [Text.UTF8Encoding]::new($false))
+        $null = Wait-TelephoneLeadWakeAcknowledged -RunRoot $root -ExpectedSessionId $sessionId -ExpectedRunId 'telephone-expected' -ExpectedWakeKey 'wanted-wake' -ExpectedReceiptSha256 ('a' * 64) -StartupTimeoutSeconds 1
+    }
     $nativeNegativesClosed = [int]$nativeNegatives
 
     $detachedSleeper = Join-Path $testRoot 'detached-sleeper.ps1'
@@ -809,6 +828,27 @@ Start-TelephoneHiddenPowerShell -ScriptPath $ChildPath -Arguments @('-Ignored', 
     $claimFiles = @(Get-ChildItem -LiteralPath ([string]$start2.job_root) -Filter 'delivery-claim.json')
     Assert-TelephoneTest ($claimFiles.Count -eq 1) 'More than one delivery claim was published.'
 
+    $jobLostRelay = [Guid]::NewGuid().ToString()
+    $requestLost = New-TelephoneTestRequest -JobId $jobLostRelay -Role execution -DelayMilliseconds 3500
+    $startLost = ((& $starter -RequestFile $requestLost -StateRoot $stateRoot) -join "`n") | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    Add-TelephoneTestTracked -Owner $startLost.command_owner -Kind 'command_owner'
+    Add-TelephoneTestTracked -Owner $startLost.relay_owner -Kind 'relay_owner'
+    $lostRoot = [string]$startLost.job_root
+    $lostReceipt = Join-Path $lostRoot 'receipt.json'
+    Assert-TelephoneTest (-not [IO.File]::Exists($lostReceipt)) 'Lost-relay fixture already had a receipt before the original relay was interrupted.'
+    Stop-Process -Id ([int]$startLost.relay_owner.pid) -Force -ErrorAction Stop
+    Assert-TelephoneTest (Test-TelephoneOwnerAlive -Owner $startLost.command_owner) 'Command host died when the original relay was interrupted.'
+    Assert-TelephoneTest (-not [IO.File]::Exists($lostReceipt)) 'Receipt appeared from a killed relay rather than the still-running command.'
+    $restoredRelay = Restore-TelephoneExactJobRelay -JobRoot $lostRoot
+    Assert-TelephoneTest ([bool]$restoredRelay.restored) 'Exact relay restore did not start a replacement collector.'
+    Add-TelephoneTestTracked -Owner $restoredRelay.owner -Kind 'relay_owner'
+    Wait-TelephoneTestPath -Path $lostReceipt
+    Wait-TelephoneTestPath -Path (Join-Path $lostRoot 'delivery.json')
+    $lostDelivery = (Read-TelephoneJson -Path (Join-Path $lostRoot 'delivery.json')).value
+    Assert-TelephoneTest ([string]$lostDelivery.lead_session_id -ceq $sessionId) 'Restored relay delivered to a different Lead.'
+    Assert-TelephoneTest (@([IO.File]::ReadAllLines($counter)).Count -eq 3) 'Relay restore replayed the command.'
+    Assert-TelephoneTest (@(Get-ChildItem -LiteralPath $lostRoot -Filter 'delivery-claim.json').Count -eq 1) 'Restored relay published more than one delivery claim.'
+
     $job3 = [Guid]::NewGuid().ToString()
     $job3Root = Join-Path (Join-Path $stateRoot 'jobs') $job3
     [IO.Directory]::CreateDirectory($job3Root) | Out-Null
@@ -823,8 +863,8 @@ Start-TelephoneHiddenPowerShell -ScriptPath $ChildPath -Arguments @('-Ignored', 
     $receipt3 = (Read-TelephoneJson -Path $paths3.receipt -SchemaName 'receipt').value
     Assert-TelephoneTest ($receipt3.transport_complete -eq $false -and [string]$receipt3.command_error_code -ceq 'COMMAND_HOST_INTERRUPTED') 'Interrupted command host was not reported without rerun.'
     Assert-TelephoneTest ($receipt3.automatic_rerun -eq $false) 'Interrupted external task was automatically rerun.'
-    Assert-TelephoneTest (@([IO.File]::ReadAllLines($counter)).Count -eq 2) 'Telephone recovery unexpectedly reran an external route.'
-    Assert-TelephoneTest (@([IO.File]::ReadAllLines($leadLog)).Count -eq 3) 'Interrupted receipt was not delivered exactly once.'
+    Assert-TelephoneTest (@([IO.File]::ReadAllLines($counter)).Count -eq 3) 'Telephone recovery unexpectedly reran an external route.'
+    Assert-TelephoneTest (@([IO.File]::ReadAllLines($leadLog)).Count -eq 4) 'Interrupted receipt was not delivered exactly once.'
 
     $stdinText = "utf8 stdin `nsecond line"
     $stdinPath = Join-Path $testRoot 'route-input.json'
@@ -863,7 +903,7 @@ Start-TelephoneHiddenPowerShell -ScriptPath $ChildPath -Arguments @('-Ignored', 
     $dispatch4 = (Read-TelephoneJson -Path (Join-Path ([string]$start4.job_root) 'dispatch.json') -SchemaName 'dispatch').value
     $dispatch4Json = $dispatch4 | ConvertTo-Json -Depth 8 -Compress
     Assert-TelephoneTest (-not $dispatch4Json.Contains($stdinText.Replace("`n", '\n')) -and -not $dispatch4Json.Contains('utf8 stdin')) 'Stdin bytes were copied into dispatch metadata.'
-    Assert-TelephoneTest (@([IO.File]::ReadAllLines($leadLog)).Count -eq 4) 'Stdin-backed route receipt was not delivered exactly once.'
+    Assert-TelephoneTest (@([IO.File]::ReadAllLines($leadLog)).Count -eq 5) 'Stdin-backed route receipt was not delivered exactly once.'
 
     $mismatchFailed = $false
     try {

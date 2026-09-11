@@ -623,16 +623,24 @@ try {
         $hp = Get-Process -Id ([int]$ownerHost.pid) -ErrorAction SilentlyContinue
         try { return ($null -eq $hp) } finally { if ($null -ne $hp) { $hp.Dispose() } }
     } -Milliseconds 10000) 'Run host did not die after forced stop.'
+    $childAfterHost = Get-Process -Id ([int]$childHostEv.pid) -ErrorAction SilentlyContinue
+    try {
+        Assert-Sup ($null -ne $childAfterHost -and -not $childAfterHost.HasExited) 'Job descendants were killed by run-host handle close.'
+    } finally { if ($null -ne $childAfterHost) { $childAfterHost.Dispose() } }
+    $null = Invoke-SupScript -Relative 'src\supervisor\Invoke-TelephoneSupervisor.ps1' -Arguments @('-InstallRoot', $repoRoot, '-StateRoot', $script:supState)
+    $outHost = Get-TelephoneSupervisorRecordPath -StateRoot $script:supState -Kind outbox -RunId $runHost
+    Assert-Sup (-not [IO.File]::Exists($outHost)) 'Run-host death failed the run while a surviving descendant was still working.'
+    Stop-Process -Id ([int]$childHostEv.pid) -Force -ErrorAction SilentlyContinue
     Assert-Sup (Wait-Sup {
         $cp = Get-Process -Id ([int]$childHostEv.pid) -ErrorAction SilentlyContinue
         try { return ($null -eq $cp) } finally { if ($null -ne $cp) { $cp.Dispose() } }
-    } -Milliseconds 10000) 'Job descendants survived run-host death.'
+    } -Milliseconds 10000) 'Surviving descendant did not exit after test stop.'
     $null = Invoke-SupScript -Relative 'src\supervisor\Invoke-TelephoneSupervisor.ps1' -Arguments @('-InstallRoot', $repoRoot, '-StateRoot', $script:supState)
-    $outHost = Get-TelephoneSupervisorRecordPath -StateRoot $script:supState -Kind outbox -RunId $runHost
-    Assert-Sup (Wait-Sup { [IO.File]::Exists($outHost) } -Milliseconds 10000) 'Run-host death was not reconciled.'
+    Assert-Sup (Wait-Sup { [IO.File]::Exists($outHost) } -Milliseconds 10000) 'Run-host death was not reconciled after descendants exited.'
     $outHostRec = (Read-TelephoneJson -Path $outHost).value
     Assert-Sup ([string]$outHostRec.terminal -ceq 'failed') 'Run-host death invented success.'
     Assert-Sup ([string]$outHostRec.error_code -ceq 'SUPERVISOR_OWNER_DEAD_NO_RERUN') 'Run-host death used the wrong error code.'
+    Stop-Process -Id ([int]$childHostEv.pid) -Force -ErrorAction SilentlyContinue
     $script:runHostDeathNegative = 1
 
     $runB = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee02'
@@ -1478,6 +1486,14 @@ try {
         )
     } catch { }
     try { Unregister-TelephoneSupervisorInstallSurface -InstallRoot $repoRoot } catch { }
+    if (-not [string]::IsNullOrWhiteSpace($testRoot)) {
+        foreach ($proc in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)) {
+            $cl = [string]$proc.CommandLine
+            if ([string]::IsNullOrWhiteSpace($cl) -or $cl.IndexOf($testRoot, [StringComparison]::OrdinalIgnoreCase) -lt 0) { continue }
+            if ([int]$proc.ProcessId -eq [int]$PID) { continue }
+            try { Stop-Process -Id ([int]$proc.ProcessId) -Force -ErrorAction SilentlyContinue } catch { }
+        }
+    }
     if (-not [string]::IsNullOrWhiteSpace([string]$script:supState) -and [IO.Directory]::Exists($script:supState)) {
         $expected = Join-Path $repoRoot 'supervisor-state'
         if ([string]::Equals($script:supState, $expected, [StringComparison]::OrdinalIgnoreCase)) {

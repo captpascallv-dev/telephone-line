@@ -168,7 +168,9 @@ namespace TelephoneWiredSupervisorNative {
             IntPtr handle = CreateJobObject(IntPtr.Zero, name);
             if (handle == IntPtr.Zero) { throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateJobObject failed"); }
             var info = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
-            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            // Cancel uses TerminateJobObject. Do not kill in-job CommandHost/Relay
+            // when the last RunHost handle closes unexpectedly.
+            info.BasicLimitInformation.LimitFlags = 0;
             uint length = (uint)Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
             if (!SetInformationJobObject(handle, JobObjectExtendedLimitInformation, ref info, length)) {
                 int error = Marshal.GetLastWin32Error();
@@ -2011,14 +2013,34 @@ function Sync-TelephoneSupervisorMailboxBinding {
     $paths = Get-TelephoneSupervisorPaths -StateRoot $StateRoot
     $runDir = Join-Path $paths.runs $RunId
     $mailboxPath = Join-Path $runDir 'mailbox.json'
-    if ([string]::IsNullOrWhiteSpace($telState) -or -not [IO.Directory]::Exists($telState)) {
+    $telStates = [Collections.Generic.List[string]]::new()
+    if (-not [string]::IsNullOrWhiteSpace($telState) -and [IO.Directory]::Exists($telState)) {
+        [void]$telStates.Add([IO.Path]::GetFullPath($telState).TrimEnd('\'))
+    }
+    $boundPath = Join-Path $runDir 'bound-line-state-roots.json'
+    if ([IO.File]::Exists($boundPath)) {
+        try {
+            $bound = (Read-TelephoneJson -Path $boundPath).value
+            if ($bound -is [Collections.IDictionary] -and $bound.Contains('state_roots')) {
+                foreach ($item in @($bound.state_roots)) {
+                    $one = [string]$item
+                    if ([string]::IsNullOrWhiteSpace($one) -or -not [IO.Directory]::Exists($one)) { continue }
+                    $full = [IO.Path]::GetFullPath($one).TrimEnd('\')
+                    if (-not $telStates.Contains($full)) { [void]$telStates.Add($full) }
+                }
+            }
+        } catch { }
+    }
+    if ($telStates.Count -eq 0) {
         $null = Write-TelephoneJsonReplace -Path $mailboxPath -Value $binding
         return $binding
     }
     $leadKeys = [Collections.Generic.List[string]]::new()
-    $jobsRoot = Join-Path $telState 'jobs'
+    $leadStateByKey = @{}
     $needsCollector = $false
-    if ([IO.Directory]::Exists($jobsRoot)) {
+    foreach ($oneState in @($telStates)) {
+        $jobsRoot = Join-Path $oneState 'jobs'
+        if (-not [IO.Directory]::Exists($jobsRoot)) { continue }
         foreach ($dir in @([IO.Directory]::GetDirectories($jobsRoot))) {
             $lineagePath = Join-Path $dir 'supervisor-lineage.json'
             if (-not [IO.File]::Exists($lineagePath)) { continue }
@@ -2031,7 +2053,10 @@ function Sync-TelephoneSupervisorMailboxBinding {
             if ([string]$lineage.supervisor_run_id -cne [string]$RunId) { continue }
             $leadKey = ''
             if ($lineage.Contains('lead_identity_sha256')) { $leadKey = [string]$lineage.lead_identity_sha256 }
-            if (-not [string]::IsNullOrWhiteSpace($leadKey) -and -not $leadKeys.Contains($leadKey)) { [void]$leadKeys.Add($leadKey) }
+            if (-not [string]::IsNullOrWhiteSpace($leadKey) -and -not $leadKeys.Contains($leadKey)) {
+                [void]$leadKeys.Add($leadKey)
+                $leadStateByKey[$leadKey] = $oneState
+            }
             if ([string]::IsNullOrWhiteSpace([string]$binding.lead_session_id) -and $lineage.Contains('lead_session_id')) {
                 $binding.lead_session_id = [string]$lineage.lead_session_id
             }
@@ -2041,12 +2066,23 @@ function Sync-TelephoneSupervisorMailboxBinding {
             $jobPaths = Get-TelephoneJobPaths -JobRoot $dir
             if (-not [IO.File]::Exists($jobPaths.delivery) -and -not [IO.File]::Exists($jobPaths.relay_error)) {
                 $needsCollector = $true
+                try {
+                    if (-not [string]::IsNullOrWhiteSpace($RelayScript) -and [IO.File]::Exists($RelayScript)) {
+                        $null = Restore-TelephoneExactJobRelay -JobRoot $dir -RelayScript $RelayScript
+                    } else {
+                        $null = Restore-TelephoneExactJobRelay -JobRoot $dir
+                    }
+                } catch { }
             }
         }
     }
     foreach ($leadKey in @($leadKeys)) {
         $binding.lead_identity_sha256 = [string]$leadKey
-        $mailbox = Get-TelephoneLeadMailboxPaths -StateRoot $telState -LeadKey $leadKey
+        $mailboxState = $telState
+        if ($leadStateByKey.Contains($leadKey)) { $mailboxState = [string]$leadStateByKey[$leadKey] }
+        elseif ($telStates.Count -gt 0) { $mailboxState = [string]$telStates[0] }
+        if ([string]::IsNullOrWhiteSpace($mailboxState) -or -not [IO.Directory]::Exists($mailboxState)) { continue }
+        $mailbox = Get-TelephoneLeadMailboxPaths -StateRoot $mailboxState -LeadKey $leadKey
         if ([IO.File]::Exists([string]$mailbox.truth)) {
             try {
                 $truth = (Read-TelephoneJson -Path ([string]$mailbox.truth)).value
@@ -2070,7 +2106,7 @@ function Sync-TelephoneSupervisorMailboxBinding {
         }
         if ($collectorPid -le 0 -and $needsCollector -and -not [string]::IsNullOrWhiteSpace($RelayScript) -and [IO.File]::Exists($RelayScript)) {
             try {
-                $ensured = Ensure-TelephoneLeadCollector -StateRoot $telState -LeadKey $leadKey -RelayScript $RelayScript
+                $ensured = Ensure-TelephoneLeadCollector -StateRoot $mailboxState -LeadKey $leadKey -RelayScript $RelayScript
                 if ($null -ne $ensured -and $ensured -is [Collections.IDictionary] -and $ensured.Contains('pid')) {
                     $collectorPid = [int]$ensured.pid
                 }
