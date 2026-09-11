@@ -890,20 +890,39 @@ exit 0
             [IO.File]::Exists($foreignMarker) -and
             [string]$foreignAfterUninstall.sha256 -ceq [string]$foreignBefore.sha256
         )
+        $lineBoundToInstall = $lineState.StartsWith(($installRoot + '\'), [StringComparison]::OrdinalIgnoreCase)
+        $lineStateFilesGone = ([int]$lineAfterUninstall.file_count -eq 0)
+        $lineStateDirGoneIfBound = if ($lineBoundToInstall) { -not [bool]$lineAfterUninstall.present } else { $true }
+        $stateRemoved = $false
+        $residue = $null
+        if ($uninstall.parsed -is [Collections.IDictionary]) {
+            if ($uninstall.parsed.Contains('state_removed')) { $stateRemoved = [bool]$uninstall.parsed.state_removed }
+            if ($uninstall.parsed.Contains('residue')) { $residue = [bool]$uninstall.parsed.residue }
+        }
+        # Sibling TELEPHONE_LINE_STATE_ROOT is a job fixture, not product-owned unless
+        # it is under the install root. Product -RemoveState recycles only bound line-state
+        # (inside install or equal to the owned supervisor state) plus supervisor-state.
         $ownedGone = (
             -not [bool]$desktopAfterUninstall.owned.emergency -and
             -not [bool]$desktopAfterUninstall.owned.console -and
             -not [bool]$taskAfterUninstall.registered -and
             -not [bool]$installAfterUninstall.present -and
-            -not [bool]$lineAfterUninstall.present -and
-            -not [bool]$supervisorAfterUninstall.present
+            -not [bool]$supervisorAfterUninstall.present -and
+            $lineStateFilesGone -and
+            $lineStateDirGoneIfBound -and
+            $stateRemoved -and
+            ($residue -eq $false)
         )
         $uninstallFreeze = [ordered]@{
             recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
             before_job_temp_cleanup = $true
             uninstall_ok_field = [bool]$uninstall.ok
             uninstall_code = [string]$uninstall.code
-            residue = $(if ($uninstall.parsed -is [Collections.IDictionary] -and $uninstall.parsed.Contains('residue')) { [bool]$uninstall.parsed.residue } else { $null })
+            residue = $residue
+            state_removed = $stateRemoved
+            line_state_bound_to_install = $lineBoundToInstall
+            line_state_file_count = [int]$lineAfterUninstall.file_count
+            unbound_empty_line_state_dir_present = ((-not $lineBoundToInstall) -and [bool]$lineAfterUninstall.present -and $lineStateFilesGone)
             task = $taskAfterUninstall
             desktop = $desktopAfterUninstall
             install = $installAfterUninstall
@@ -923,8 +942,14 @@ exit 0
         $stages.uninstall = [ordered]@{
             ok_field = [bool]$uninstall.ok
             code = [string]$uninstall.code
+            residue = $residue
+            state_removed = $stateRemoved
             foreign_kept = $foreignKept
             task_registered_after = [bool]$taskAfterUninstall.registered
+            install_present_after = [bool]$installAfterUninstall.present
+            supervisor_present_after = [bool]$supervisorAfterUninstall.present
+            line_state_bound_to_install = $lineBoundToInstall
+            line_state_file_count = [int]$lineAfterUninstall.file_count
             owned_removed = $ownedGone
             accepted = $uninstallOk
             freeze_before_cleanup = $true

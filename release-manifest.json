@@ -1122,8 +1122,8 @@
     },
     {
       "path": "tests/ci/Test-PublicWindowsLifecycle.ps1",
-      "bytes": 54848,
-      "sha256": "7160f922bcfda34273be0f1ee97f78f735a01f34f8dadf751b4bbe06d766d440"
+      "bytes": 56402,
+      "sha256": "408914ba3c8932fb3cb7673ef1ad98f884b80b4236b92283ab3190b2fd62d6ce"
     },
     {
       "path": "tests/compatibility/compatibility-contract.json",
@@ -1613,7 +1613,7 @@
   ],
   "counts": {
     "files": 316,
-    "bytes": 4806726
+    "bytes": 4808280
   },
   "excluded": [
     ".control/**",
