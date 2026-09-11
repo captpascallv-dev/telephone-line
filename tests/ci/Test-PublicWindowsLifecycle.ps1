@@ -806,7 +806,7 @@ exit 0
         $foreignBeforeRemove = Get-TreeFingerprint -Root $foreignState
         $ownerBeforeRemove = Get-TreeFingerprint -Root $installRoot
         $taskBeforeRemove = Get-ScheduledTaskEvidence
-        $remove = Invoke-Product -File (Join-Path $installRoot 'src\install\Uninstall-TelephoneLine.ps1') -WorkingDirectory $installRoot -ArgumentList @(
+        $remove = Invoke-Product -File (Join-Path $extract 'src\install\Uninstall-TelephoneLine.ps1') -WorkingDirectory $jobHome -ArgumentList @(
             '-InstallRoot', $installRoot, '-RemoveState'
         ) -ExtraEnvironment @{ TELEPHONE_LINE_SUPERVISOR_STATE_ROOT = $foreignState }
         Write-Utf8Json -Path (Join-Path $evidence 'command-results\nonowner-removestate.json') -Value $remove
@@ -876,7 +876,7 @@ exit 0
     }
 
     if (-not $blocked) {
-        $uninstall = Invoke-Product -File (Join-Path $installRoot 'src\install\Uninstall-TelephoneLine.ps1') -WorkingDirectory $installRoot -ArgumentList @(
+        $uninstall = Invoke-Product -File (Join-Path $extract 'src\install\Uninstall-TelephoneLine.ps1') -WorkingDirectory $jobHome -ArgumentList @(
             '-InstallRoot', $installRoot, '-RemoveState'
         )
         Write-Utf8Json -Path (Join-Path $evidence 'command-results\uninstall.json') -Value $uninstall
@@ -947,10 +947,11 @@ exit 0
     $safetyCleanup.used = $false
     $safetyCleanup.product_uninstall_pass = [bool]$uninstallOk
     try {
-        $stillInstalled = [IO.Directory]::Exists($installRoot) -and [IO.File]::Exists((Join-Path $installRoot 'src\install\Uninstall-TelephoneLine.ps1'))
+        $uninstallEntry = Join-Path $extract 'src\install\Uninstall-TelephoneLine.ps1'
+        $stillInstalled = [IO.Directory]::Exists($installRoot) -and [IO.File]::Exists($uninstallEntry)
         if ($stillInstalled) {
             $safetyCleanup.used = $true
-            $safety = Invoke-Product -File (Join-Path $installRoot 'src\install\Uninstall-TelephoneLine.ps1') -WorkingDirectory $installRoot -ArgumentList @(
+            $safety = Invoke-Product -File $uninstallEntry -WorkingDirectory $jobHome -ArgumentList @(
                 '-InstallRoot', $installRoot, '-RemoveState'
             )
             $safetyCleanup.command = [ordered]@{ ok = [bool]$safety.ok; code = [string]$safety.code; exit_code = [int]$safety.exit_code }
