@@ -1697,6 +1697,23 @@ function Test-TelephoneDashboardJobIsLiveNow {
     return $false
 }
 
+function Test-TelephoneDashboardJobHasOutstandingUnconsumedCallback {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][object]$Job)
+    $delivery = $false
+    if ($Job -is [Collections.IDictionary] -and $Job.Contains('delivery')) { $delivery = [bool]$Job['delivery'] }
+    elseif ($null -ne $Job.PSObject -and $null -ne $Job.PSObject.Properties['delivery']) { $delivery = [bool]$Job.delivery }
+    if ($delivery) { return $false }
+    foreach ($finding in @($Job.findings)) {
+        if ($null -eq $finding) { continue }
+        $code = ''
+        if ($finding -is [Collections.IDictionary] -and $finding.Contains('code')) { $code = [string]$finding['code'] }
+        elseif ($null -ne $finding.PSObject.Properties['code']) { $code = [string]$finding.code }
+        if ($code -ceq 'CALLBACK_MISSING' -or $code -ceq 'RECEIPT_AWAITING_DELIVERY') { return $true }
+    }
+    return $false
+}
+
 function Test-TelephoneDashboardJobHasObservedContinuation {
     [CmdletBinding()]
     param(
@@ -1797,6 +1814,7 @@ function Test-TelephoneDashboardJobSupersededByLiveSuccessor {
         elseif ($null -ne $finding.PSObject.Properties['code']) { $code = [string]$finding.code }
         if ($code -ceq 'CALLBACK_PENDING') { return $false }
     }
+    $outstanding = Test-TelephoneDashboardJobHasOutstandingUnconsumedCallback -Job $Job
     $project = Get-TelephoneDashboardMapText -Map $Job -Name 'project'
     $worktree = Get-TelephoneDashboardJobWorktreeKey -Job $Job
     $created = Get-TelephoneDashboardJobCreatedAt -Job $Job
@@ -1808,6 +1826,11 @@ function Test-TelephoneDashboardJobSupersededByLiveSuccessor {
         if (-not $sameLane) { continue }
         $otherCreated = Get-TelephoneDashboardJobCreatedAt -Job $other
         if ($created -gt [DateTimeOffset]::MinValue -and $otherCreated -gt [DateTimeOffset]::MinValue -and $otherCreated -le $created) { continue }
+        if ($outstanding) {
+            if ($null -ne $Descriptor -and (Test-TelephoneDashboardExactSuccessorJob -Candidate $other -Descriptor $Descriptor)) { return $true }
+            if (Test-TelephoneDashboardJobIsLiveNow -Job $other) { return $true }
+            continue
+        }
         if (-not (Test-TelephoneDashboardJobHasObservedContinuation -Job $other -Descriptor $Descriptor)) { continue }
         return $true
     }
@@ -2606,7 +2629,16 @@ function Get-TelephoneDashboardProjection {
                 $pkg = Get-TelephoneDashboardJobPackageIdentity -Job $pkgJob
                 $pkgRole = Get-TelephoneDashboardMapText -Map $pkgJob -Name 'role'
                 $disc = ''
-                if (([string]::IsNullOrWhiteSpace($pkgRole) -or $pkgRole -ceq 'execution') -and -not [string]::IsNullOrWhiteSpace($pkg) -and $execStagesBySession.Contains($session) -and $execStagesBySession[$session].Count -ge 2) {
+                if (Test-TelephoneDashboardJobHasOutstandingUnconsumedCallback -Job $job) {
+                    foreach ($peer in @($jobScans)) {
+                        if ($null -eq $peer) { continue }
+                        if ([string]$peer.job_root -ceq [string]$job.job_root) { continue }
+                        if (Test-TelephoneDashboardJobsShareContinuationLane -Job $job -Other $peer -Descriptor $descriptor) {
+                            $disc = [string]$job.job_id
+                            break
+                        }
+                    }
+                } elseif (([string]::IsNullOrWhiteSpace($pkgRole) -or $pkgRole -ceq 'execution') -and -not [string]::IsNullOrWhiteSpace($pkg) -and $execStagesBySession.Contains($session) -and $execStagesBySession[$session].Count -ge 2) {
                     $disc = $pkg
                 }
                 $key = Get-TelephoneDashboardGroupKey -Project ([string]$descriptor.project) -SessionId $session -RunId $runId -LineJobId $disc

@@ -1441,7 +1441,15 @@ function Bind-CodexAppServerTurnAndAck {
     if ([IO.File]::Exists($Paths.recovery) -or [IO.File]::Exists($Paths.failure)) {
         Throw-CodexAppServerPublic -Code 'DURABLE_CHAIN_INVALID'
     }
+    $phaseNow = 'none'
+    try { $phaseNow = Get-CodexAppServerCallbackWritePhase -Paths $Paths } catch { $phaseNow = 'none' }
+    Write-CodexAppServerTestEvent ('bind:begin:phase=' + [string]$phaseNow)
+    if ($phaseNow -ceq 'none') {
+        Set-CodexAppServerRunPhase -Paths $Paths -Phase 'turn_start_sending' -WriterLabel 'run-bound-pre'
+        Write-CodexAppServerTestEvent 'bind:phase=turn_start_sending'
+    }
     Write-CodexAppServerBoundTurnRecord -Paths $Paths -ThreadId $ThreadId -TurnId $TurnId -State $BoundState -WriterLabel 'bound'
+    Write-CodexAppServerTestEvent 'bind:bound_written'
     Set-CodexAppServerRunPhase -Paths $Paths -Phase 'turn_bound' -WriterLabel 'run-bound'
     Add-CodexAppServerTransition -Path $Paths.transitions -State 'turn_bound'
     Invoke-CodexAppServerMaybeCrash -Point 'after-turn-bind'
@@ -3967,7 +3975,29 @@ function Invoke-CodexAppServerWakeCore {
     $expectedPid = 0
     $ackWaitReady = $false
     try {
-        Assert-CodexAppServerDurableChain -Paths $paths -RunId $RunId -ThreadId $threadId -Worktree $worktree -CallbackIdentity $promptIdentity -Marker $marker -Profile $profile -ProfilePath $profileFile
+        $hadIntent = [IO.File]::Exists($paths.intent)
+        $hadRun = [IO.File]::Exists($paths.run)
+        Write-CodexAppServerTestEvent ('chain_assert:begin:intent=' + [int]$hadIntent + ':run=' + [int]$hadRun)
+        try {
+            Assert-CodexAppServerDurableChain -Paths $paths -RunId $RunId -ThreadId $threadId -Worktree $worktree -CallbackIdentity $promptIdentity -Marker $marker -Profile $profile -ProfilePath $profileFile
+            Write-CodexAppServerTestEvent 'chain_assert:ok'
+        } catch {
+            $chainMessage = [string]$_.Exception.Message
+            $invalid = $chainMessage -ceq (Get-CodexAppServerPublicMessage -Code 'DURABLE_CHAIN_INVALID')
+            $ownerAlive = $false
+            try { $ownerAlive = Test-CodexAppServerThreadOwnerAlive -ThreadPaths $threadPaths } catch { $ownerAlive = $false }
+            $phaseNow = 'none'
+            try { $phaseNow = Get-CodexAppServerCallbackWritePhase -Paths $paths } catch { $phaseNow = 'none' }
+            $hasBound = [IO.File]::Exists($paths.bound_turn)
+            $hasAck = [IO.File]::Exists($paths.ack)
+            $inProgressBind = $hasBound -and -not $hasAck -and ($phaseNow -ceq 'none' -or $phaseNow -ceq 'turn_start_sending')
+            if ($invalid -and $inProgressBind -and $ownerAlive) {
+                Write-CodexAppServerTestEvent 'chain_assert:in_progress_attach'
+            } else {
+                Write-CodexAppServerTestEvent 'chain_assert:reject'
+                throw
+            }
+        }
         Clear-CodexAppServerPublishResidue -Directory $paths.run_root
         $finished = Complete-CodexAppServerTerminalPublicationFromDisk -Paths $paths -RunId $RunId -ThreadId $threadId
         if ($null -ne $finished) {

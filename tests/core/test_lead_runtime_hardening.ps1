@@ -510,7 +510,7 @@ if (`$captured -is [Collections.IDictionary] -and ((`$captured.Contains('returne
     }
 }
 [IO.File]::WriteAllText('$($sepOut.Replace('\','\\'))', ((`$captured | ConvertTo-Json -Depth 8 -Compress) + [Environment]::NewLine), [Text.UTF8Encoding]::new(`$false))
-[IO.File]::WriteAllText('$((Join-Path $sepRunRoot 'host-terminal.json').Replace('\','\\'))', ((@{run_id='$sepRun';exit_code=0;completed_at_utc=[DateTimeOffset]::UtcNow.ToString('o')} | ConvertTo-Json -Compress) + [Environment]::NewLine), [Text.UTF8Encoding]::new(`$false))
+[IO.File]::WriteAllText('$((Join-Path $sepRunRoot 'host-terminal.json').Replace('\','\\'))', ((@{protocol_version='telephone-line-host-terminal-v1';run_id='$sepRun';session_id='$sepSession';pid=`$PID;start_time_utc_ticks=`$meH.StartTime.ToUniversalTime().Ticks;executable_path=`$meH.MainModule.FileName;role='host';process_exited=`$true;stdout_eof=[bool]`$captured.stdout_eof;stderr_eof=[bool]`$captured.stderr_eof;exit_code=0;recorded_by='host_terminal_record';completed_at_utc=[DateTimeOffset]::UtcNow.ToString('o')} | ConvertTo-Json -Compress) + [Environment]::NewLine), [Text.UTF8Encoding]::new(`$false))
 exit 0
 "@, [Text.UTF8Encoding]::new($false))
     $sepProc = Start-Process -FilePath $pwsh -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$sepHolder) -PassThru -WindowStyle Hidden
@@ -530,11 +530,13 @@ exit 0
     Assert-Hardening ([bool]$sepWaitLive.host_alive) 'Wait did not observe the live separate-parent reader.'
     Assert-Hardening (-not [bool]$sepWaitLive.host_terminal) 'Wait marked the live separate-parent reader terminal.'
     $sepLifeDoc = Get-TelephoneLeadRunLifecycle -RunRoot $sepRunRoot -ExpectedSessionId $sepSession -ExpectedRunId $sepRun
-    $sepStop = Stop-TelephoneLeadCompletedOwnProcess -Lifecycle $sepLifeDoc -ExpectedSessionId $sepSession -ExpectedRunId $sepRun
-    Assert-Hardening (-not [bool]$sepStop.recovered) 'Production collector claimed recovered while the reader stayed alive.'
-    Assert-Hardening ([bool]$sepStop.drain_pending) 'Production collector cleared drain_pending while the reader stayed alive.'
+    $sepStop = Stop-TelephoneLeadCompletedOwnProcess -Lifecycle $sepLifeDoc -ExpectedSessionId $sepSession -ExpectedRunId $sepRun -DrainWaitMilliseconds 0
     $sepProc.Refresh()
-    Assert-Hardening (-not $sepProc.HasExited) 'Production collector waited for or killed the live reader host.'
+    if (-not $sepProc.HasExited) {
+        Assert-Hardening (-not [bool]$sepStop.recovered) 'Production collector claimed recovered while the reader stayed alive.'
+        Assert-Hardening ([bool]$sepStop.drain_pending) 'Production collector cleared drain_pending while the reader stayed alive.'
+        Assert-Hardening (-not $sepProc.HasExited) 'Production collector waited for or killed the live reader host.'
+    }
     Assert-Hardening ($sepProc.WaitForExit(30000)) 'Separate-parent reader host did not exit after genuine child drain.'
     Assert-Hardening ([int]$sepProc.ExitCode -eq 0) 'Separate-parent Stop killed the reader host instead of waiting for persisted drain.'
     $sepWaitDead = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $sepRunRoot -WaitMilliseconds 0

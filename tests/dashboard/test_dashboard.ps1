@@ -806,6 +806,54 @@ try {
     Assert-Dash ((@($parPackProj.groups | Where-Object { [string]$_.line_job_id -ceq $parOldId })).Count -eq 1) 'Extracted bundle hid the original same-Lead failed package.'
     Assert-Dash ((@($parPackProj.groups | Where-Object { [string]$_.line_job_id -ceq $parNewId })).Count -eq 1) 'Extracted bundle omitted the independent same-Lead package.'
     $same_lead_parallel_distinct_stages_keeps_old = 1
+    $cbRoot = Join-Path $testRoot 'same-stage-callback'
+    $cbOldId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee40'
+    $cbNewId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee41'
+    $cbOld = Join-Path $cbRoot ('jobs\' + $cbOldId)
+    $cbNew = Join-Path $cbRoot ('jobs\' + $cbNewId)
+    [IO.Directory]::CreateDirectory($cbOld) | Out-Null
+    [IO.Directory]::CreateDirectory($cbNew) | Out-Null
+    $dispCbOld = $dispatch | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $dispCbNew = $dispatch | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $bindCb = $binding | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $dispCbOld.project = 'same-stage-callback'; $dispCbNew.project = 'same-stage-callback'
+    $dispCbOld.line_job_id = $cbOldId; $dispCbNew.line_job_id = $cbNewId
+    $dispCbOld.stage = 'FULL_PRODUCT_CANDIDATE_CORRECTION_2'
+    $dispCbNew.stage = 'FULL_PRODUCT_CANDIDATE_CORRECTION_2'
+    $dispCbOld.created_at_utc = [DateTimeOffset]::UtcNow.AddMinutes(-10).ToString('o')
+    $dispCbNew.created_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+    $bindCb.session_id = 'same-original-lead'
+    $bindCb.worktree = $cbRoot
+    $dispCbOld.lead = $bindCb; $dispCbNew.lead = $bindCb
+    Write-DashUtf8 -Path (Join-Path $cbOld 'dispatch.json') -Value $dispCbOld
+    Write-DashUtf8 -Path (Join-Path $cbOld 'lead-binding.json') -Value $bindCb
+    Write-DashUtf8 -Path (Join-Path $cbOld 'command-owner.json') -Value $deadOwner
+    $cbOldRec = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'tests\contracts\fixtures\valid\receipt.json') | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $cbOldRec.project = 'same-stage-callback'; $cbOldRec.line_job_id = $cbOldId; $cbOldRec.command_exit_code = 1
+    Write-DashUtf8 -Path (Join-Path $cbOld 'receipt.json') -Value $cbOldRec
+    Write-DashUtf8 -Path (Join-Path $cbOld 'relay-error.json') -Value ([ordered]@{ protocol_version = 'telephone-line-relay-error-v1'; retrying = $false; error_code = 'LEAD_WAKE_FAILED' })
+    Write-DashUtf8 -Path (Join-Path $cbNew 'dispatch.json') -Value $dispCbNew
+    Write-DashUtf8 -Path (Join-Path $cbNew 'lead-binding.json') -Value $bindCb
+    $cbNewRec = $cbOldRec | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $cbNewRec.line_job_id = $cbNewId; $cbNewRec.command_exit_code = 0
+    Write-DashUtf8 -Path (Join-Path $cbNew 'receipt.json') -Value $cbNewRec
+    Write-DashUtf8 -Path (Join-Path $cbNew 'delivery.json') -Value ([ordered]@{ transport_complete = $true })
+    $cbDesc = Join-Path $testRoot 'same-stage-callback-desc.json'
+    $cbCfg = Join-Path $testRoot 'same-stage-callback-config.json'
+    Write-DashUtf8 -Path $cbDesc -Value ([ordered]@{ protocol_version = 'telephone-line-dashboard-project-descriptor-v1'; project = 'same-stage-callback'; state_root = $cbRoot; terminal_state = 'active' })
+    Write-DashUtf8 -Path $cbCfg -Value ([ordered]@{ protocol_version = 'telephone-line-dashboard-config-v1'; projects = @(@{ descriptor_file = $cbDesc }) })
+    $cbProj = Get-TelephoneDashboardProjection -ConfigPath $cbCfg
+    $cbOldVisible = @($cbProj.groups | Where-Object { [string]$_.line_job_id -ceq $cbOldId })
+    $cbNewVisible = @($cbProj.groups | Where-Object { [string]$_.line_job_id -ceq $cbNewId })
+    Assert-Dash ($cbOldVisible.Count -eq 1) 'Same-stage later delivery hid the outstanding old callback.'
+    Assert-Dash ($cbNewVisible.Count -eq 1) 'Same-stage later delivered job was omitted.'
+    $cbOldCodes = @($cbOldVisible[0].findings | ForEach-Object { [string]$_.code })
+    Assert-Dash ($cbOldCodes -contains 'CALLBACK_MISSING') 'Outstanding CALLBACK_MISSING was dropped from the old job group.'
+    $cbSummary = Format-TelephoneDashboardSummary -Projection $cbProj
+    Assert-Dash ($cbSummary.Contains($cbOldId)) 'Summary omitted the outstanding callback job.'
+    Assert-Dash ($cbSummary.Contains($cbNewId)) 'Summary omitted the later same-stage job.'
+    Assert-Dash ($cbSummary.Contains('CALLBACK_MISSING')) 'Summary/alerts omitted CALLBACK_MISSING on the outstanding job.'
+    $same_lead_same_stage_outstanding_callback_keeps_old = 1
     $watchState = Join-Path $testRoot 'watch-interval-state'
     [IO.Directory]::CreateDirectory($watchState) | Out-Null
     $watchScript = Join-Path $repoRoot 'src\dashboard\Watch-TelephoneDashboard.ps1'
@@ -2836,6 +2884,7 @@ try {
         same_lead_live_successor_hides_ended = $same_lead_live_successor_hides_ended
         independent_other_lead_receipt_keeps_old = $independent_other_lead_receipt_keeps_old
         same_lead_parallel_distinct_stages_keeps_old = $same_lead_parallel_distinct_stages_keeps_old
+        same_lead_same_stage_outstanding_callback_keeps_old = $same_lead_same_stage_outstanding_callback_keeps_old
         watcher_interval_remainder = $watcher_interval_remainder
         packaged_windows_dashboard_current_state = $packaged_windows_dashboard_current_state
         prepared_only_does_not_hide_old = $prepared_only_does_not_hide_old

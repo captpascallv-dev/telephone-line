@@ -736,6 +736,15 @@ try { `$null = Sync-TelephoneSupervisorMailboxBinding -StateRoot '$syncState' -R
         $afterCompete = (Read-TelephoneJson -Path $autoJobPaths.relay_owner).value
         Assert-Sup (Test-TelephoneOwnerAlive -Owner $afterCompete) 'Competing restore lost the exact relay.'
         Assert-Sup (Test-TelephoneOwnerAlive -Owner $origCommand) 'Original command died during competing restore.'
+        $restoredRelayProc = Get-Process -Id ([int]$afterCompete.pid) -ErrorAction SilentlyContinue
+        try {
+            Assert-Sup ($null -ne $restoredRelayProc) 'Restored relay pid was not an actual live process.'
+        } finally { if ($null -ne $restoredRelayProc) { $restoredRelayProc.Dispose() } }
+        $origRelayNow = Get-Process -Id $origRelayPid -ErrorAction SilentlyContinue
+        try {
+            Assert-Sup ($null -eq $origRelayNow) 'Original relay remained alive beside the one restored relay.'
+        } finally { if ($null -ne $origRelayNow) { $origRelayNow.Dispose() } }
+        Assert-Sup (([int]$afterCompete.pid) -ne $origRelayPid) 'Race restored the original relay pid instead of one new relay.'
         $ownerAutoPath = Join-Path (Join-Path $script:supState ('runs\' + $runAuto)) 'owner.json'
         $ownerAuto = (Read-TelephoneJson -Path $ownerAutoPath -SchemaName 'wired-supervisor-owner').value
         Stop-Process -Id ([int]$ownerAuto.pid) -Force -ErrorAction SilentlyContinue
@@ -757,10 +766,40 @@ try { `$null = Sync-TelephoneSupervisorMailboxBinding -StateRoot '$syncState' -R
         Assert-Sup (Wait-Sup { [IO.File]::Exists($autoJobPaths.receipt) } -Milliseconds 30000) 'Recovered command did not publish one receipt.'
         Assert-Sup (Wait-Sup { [IO.File]::Exists($autoJobPaths.delivery) } -Milliseconds 30000) 'Recovered relay did not publish one delivery.'
         Assert-Sup ((Get-SupCounterCount -Path $autoCounter) -eq 1) 'Automatic recovery reran the original command.'
+        Assert-Sup (Wait-Sup { [IO.File]::Exists($autoJobPaths.mailbox_ref) } -Milliseconds 15000) 'Race did not publish one exact mailbox-ref.'
+        $raceRef = (Read-TelephoneJson -Path $autoJobPaths.mailbox_ref).value
+        Assert-Sup ([string]$raceRef.protocol_version -ceq 'telephone-line-mailbox-ref-v1') 'Mailbox-ref protocol was not the original mailbox document.'
+        $wakeDocs = 0
+        if ([IO.File]::Exists($autoJobPaths.wake_attempt)) {
+            try {
+                $wakeDoc = (Read-TelephoneJson -Path $autoJobPaths.wake_attempt).value
+                if ($wakeDoc -is [Collections.IDictionary] -and [string]$wakeDoc.protocol_version -ceq 'telephone-line-wake-attempt-v1') { $wakeDocs += 1 }
+            } catch { }
+        }
+        $deliv = (Read-TelephoneJson -Path $autoJobPaths.delivery).value
+        Assert-Sup ($deliv -is [Collections.IDictionary] -and [string]$deliv.protocol_version -ceq 'telephone-line-delivery-v1') 'Race delivery was not the original continuation document.'
+        if (Test-TelephoneMailboxItemConsumed -Item $deliv) { $wakeDocs += 1 }
+        Assert-Sup ($wakeDocs -ge 1) 'Race did not publish one exact wake/continuation.'
         $null = Invoke-SupScript -Relative 'src\supervisor\Invoke-TelephoneSupervisor.ps1' -Arguments @('-InstallRoot', $repoRoot, '-StateRoot', $script:supState)
         Assert-Sup (Wait-Sup { [IO.File]::Exists($outAuto) } -Milliseconds 15000) 'Settled recovered run did not publish a terminal.'
         $outAutoRec = (Read-TelephoneJson -Path $outAuto).value
         Assert-Sup ([string]$outAutoRec.terminal -ceq 'completed') 'Automatic recovery invented failure after one original receipt/delivery.'
+        $finalCmd = $null
+        try { $finalCmd = (Read-TelephoneJson -Path $autoJobPaths.command_owner).value } catch { $finalCmd = $null }
+        Assert-Sup (-not (Test-TelephoneOwnerAlive -Owner $finalCmd)) 'Settled automatic recovery left the original command alive.'
+        $finalRelay = $null
+        try { $finalRelay = (Read-TelephoneJson -Path $autoJobPaths.relay_owner).value } catch { $finalRelay = $null }
+        if ($null -ne $finalRelay) {
+            Assert-Sup (-not (Test-TelephoneOwnerAlive -Owner $finalRelay)) 'Settled automatic recovery left a live relay survivor.'
+        }
+        $restoreLock = Join-Path $autoJobRoot 'relay-restore.lock'
+        $lockStream = $null
+        try {
+            $lockStream = Open-TelephoneExclusiveGate -Path $restoreLock -WaitMilliseconds 0
+            Assert-Sup ($null -ne $lockStream) 'Natural terminal left the exclusive restore lock held.'
+        } finally {
+            if ($null -ne $lockStream) { $lockStream.Dispose() }
+        }
         $script:automaticRelayRestore = 1
     } finally {
         $env:TELEPHONE_LINE_STATE_ROOT = $previousAutoState

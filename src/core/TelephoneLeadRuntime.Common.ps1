@@ -1314,6 +1314,21 @@ function Test-TelephoneLeadExactProcessAlive {
     return ([string]$obs.status -ceq 'alive')
 }
 
+function Test-TelephoneLeadBoundHostTerminalRecord {
+    [CmdletBinding()]
+    param(
+        [AllowNull()][object]$Doc,
+        [string]$SessionId = '',
+        [string]$RunId = '',
+        [AllowNull()][object]$ExpectedIdentity = $null
+    )
+    if ($null -eq $Doc -or $Doc -isnot [Collections.IDictionary]) { return $false }
+    $proto = ''
+    if ($Doc.Contains('protocol_version')) { $proto = [string]$Doc['protocol_version'] }
+    if ($proto -cne 'telephone-line-host-terminal-v1') { return $false }
+    return (Test-TelephoneLeadDurableDrainTerminal -Doc $Doc -SessionId $SessionId -RunId $RunId -ExpectedIdentity $ExpectedIdentity)
+}
+
 function Test-TelephoneLeadDurableDrainTerminal {
     [CmdletBinding()]
     param(
@@ -1835,13 +1850,17 @@ function Wait-TelephoneLeadOwnedDrainTerminal {
             if ([IO.File]::Exists($hostTermPath)) {
                 try {
                     $hostTerm = (Read-TelephoneJson -Path $hostTermPath).value
-                    $termRun = ''
-                    if ($hostTerm -is [Collections.IDictionary] -and $hostTerm.Contains('run_id')) { $termRun = [string]$hostTerm['run_id'] }
-                    if ($hostTerm -is [Collections.IDictionary] -and ([string]::IsNullOrWhiteSpace($runId) -or [string]::IsNullOrWhiteSpace($termRun) -or $termRun -ceq $runId) -and $hostTerm.Contains('exit_code') -and $null -ne $hostTerm['exit_code']) {
+                    if (Test-TelephoneLeadBoundHostTerminalRecord -Doc $hostTerm -SessionId $sessionId -RunId $runId -ExpectedIdentity $hostIdentity) {
                         $hostDone = $true
                         $result.host_terminal = $true
-                        if ($null -eq $result.measured_os_exit_code) { $result.measured_os_exit_code = [int]$hostTerm['exit_code'] }
-                        if ([string]::IsNullOrWhiteSpace([string]$result.recorded_by)) { $result.recorded_by = 'host_terminal_record' }
+                        if ($null -eq $result.measured_os_exit_code -and $hostTerm.Contains('exit_code') -and $null -ne $hostTerm['exit_code']) {
+                            $result.measured_os_exit_code = [int]$hostTerm['exit_code']
+                        }
+                        if ($hostTerm.Contains('recorded_by') -and -not [string]::IsNullOrWhiteSpace([string]$hostTerm['recorded_by'])) {
+                            $result.recorded_by = [string]$hostTerm['recorded_by']
+                        } elseif ([string]::IsNullOrWhiteSpace([string]$result.recorded_by)) {
+                            $result.recorded_by = 'host_terminal_record'
+                        }
                     }
                 } catch { }
             }
@@ -2259,9 +2278,11 @@ function Get-TelephoneLeadRunLifecycle {
     if ([IO.File]::Exists($hostPath)) {
         try {
             $hostTerminalDoc = (Read-TelephoneJson -Path $hostPath).value
-            $life.host_terminal_present = $true
-            if ($hostTerminalDoc -is [Collections.IDictionary] -and $hostTerminalDoc.Contains('exit_code')) {
-                $life.host_terminal_exit_code = [int]$hostTerminalDoc.exit_code
+            if (Test-TelephoneLeadBoundHostTerminalRecord -Doc $hostTerminalDoc -SessionId $ExpectedSessionId -RunId $ExpectedRunId -ExpectedIdentity $life.owner) {
+                $life.host_terminal_present = $true
+                if ($hostTerminalDoc -is [Collections.IDictionary] -and $hostTerminalDoc.Contains('exit_code')) {
+                    $life.host_terminal_exit_code = [int]$hostTerminalDoc.exit_code
+                }
             }
         } catch { }
     }

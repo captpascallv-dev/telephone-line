@@ -2422,24 +2422,41 @@ function Test-TelephoneSupervisorBoundJobValidCompletedDelivery {
     param([Parameter(Mandatory = $true)][string]$JobRoot)
     $jobPaths = Get-TelephoneJobPaths -JobRoot $JobRoot
     if (-not [IO.File]::Exists($jobPaths.delivery)) { return $false }
+    if (-not [IO.File]::Exists($jobPaths.dispatch)) { return $false }
+    if (-not [IO.File]::Exists($jobPaths.lead_binding)) { return $false }
+    if (-not [IO.File]::Exists($jobPaths.receipt)) { return $false }
     try { $delivery = (Read-TelephoneJson -Path $jobPaths.delivery).value } catch { return $false }
     if ($delivery -isnot [Collections.IDictionary]) { return $false }
     if ([string]$delivery.protocol_version -cne 'telephone-line-delivery-v1') { return $false }
-    $dispId = ''
-    if ([IO.File]::Exists($jobPaths.dispatch)) {
+    try { $disp = (Read-TelephoneJson -Path $jobPaths.dispatch).value } catch { return $false }
+    if ($disp -isnot [Collections.IDictionary] -or -not $disp.Contains('line_job_id') -or [string]::IsNullOrWhiteSpace([string]$disp.line_job_id)) { return $false }
+    $dispId = [string]$disp.line_job_id
+    if (-not $delivery.Contains('line_job_id') -or [string]::IsNullOrWhiteSpace([string]$delivery.line_job_id) -or [string]$delivery.line_job_id -cne $dispId) { return $false }
+    try { $binding = (Read-TelephoneJson -Path $jobPaths.lead_binding).value } catch { return $false }
+    if ($binding -isnot [Collections.IDictionary] -or [string]$binding.protocol_version -cne 'telephone-line-lead-binding-v1') { return $false }
+    try { $receipt = (Read-TelephoneJson -Path $jobPaths.receipt).value } catch { return $false }
+    if ($receipt -isnot [Collections.IDictionary] -or [string]$receipt.protocol_version -cne 'telephone-line-receipt-v1') { return $false }
+    if (-not $receipt.Contains('line_job_id') -or [string]$receipt.line_job_id -cne $dispId) { return $false }
+    $wakeOk = $false
+    if ([IO.File]::Exists($jobPaths.mailbox_ref)) {
         try {
-            $disp = (Read-TelephoneJson -Path $jobPaths.dispatch).value
-            if ($disp -is [Collections.IDictionary] -and $disp.Contains('line_job_id')) { $dispId = [string]$disp.line_job_id }
-        } catch { return $false }
+            $ref = (Read-TelephoneJson -Path $jobPaths.mailbox_ref).value
+            if ($ref -is [Collections.IDictionary] -and [string]$ref.protocol_version -ceq 'telephone-line-mailbox-ref-v1') { $wakeOk = $true }
+        } catch { $wakeOk = $false }
     }
-    if ($delivery.Contains('line_job_id') -and -not [string]::IsNullOrWhiteSpace([string]$delivery.line_job_id) -and -not [string]::IsNullOrWhiteSpace($dispId) -and [string]$delivery.line_job_id -cne $dispId) {
-        return $false
+    if (-not $wakeOk -and [IO.File]::Exists($jobPaths.wake_attempt)) {
+        try {
+            $wake = (Read-TelephoneJson -Path $jobPaths.wake_attempt).value
+            if ($wake -is [Collections.IDictionary] -and [string]$wake.protocol_version -ceq 'telephone-line-wake-attempt-v1') { $wakeOk = $true }
+        } catch { $wakeOk = $false }
     }
-    if (Test-TelephoneMailboxItemConsumed -Item $delivery) { return $true }
+    if (-not $wakeOk -and (Test-TelephoneMailboxItemConsumed -Item $delivery)) { $wakeOk = $true }
+    if (-not $wakeOk) { return $false }
     $transport = $false
     if ($delivery.Contains('transport_complete')) { $transport = [bool]$delivery.transport_complete }
     elseif ($delivery.Contains('delivered')) { $transport = [bool]$delivery.delivered }
-    return [bool]$transport
+    if (-not $transport -and -not (Test-TelephoneMailboxItemConsumed -Item $delivery)) { return $false }
+    return $true
 }
 
 function Test-TelephoneSupervisorBoundJobsSettled {
@@ -2462,8 +2479,8 @@ function Test-TelephoneSupervisorBoundJobsSettled {
             } catch { continue }
             $seen += 1
             $jobPaths = Get-TelephoneJobPaths -JobRoot $dir
-            if (Test-TelephoneSupervisorBoundJobValidCompletedDelivery -JobRoot $dir) { continue }
             if (Test-TelephoneSupervisorBoundJobCommandAlive -JobRoot $dir) { $pending += 1; continue }
+            if (Test-TelephoneSupervisorBoundJobValidCompletedDelivery -JobRoot $dir) { continue }
             if ([IO.File]::Exists($jobPaths.relay_error)) {
                 $retrying = $false
                 $malformed = $false
@@ -3020,12 +3037,6 @@ function Reconcile-TelephoneSupervisorClaimed {
             [void]$reconciled.Add([ordered]@{ run_id = $runId; terminal = 'cancelled' })
             continue
         }
-        $settled = Test-TelephoneSupervisorBoundJobsSettled -StateRoot $StateRoot -RunId $runId
-        if ([bool]$settled.settled) {
-            $null = Write-TelephoneSupervisorOutbox -StateRoot $StateRoot -RunId $runId -Terminal 'completed' -Request $claimed.value
-            [void]$reconciled.Add([ordered]@{ run_id = $runId; terminal = 'completed' })
-            continue
-        }
         $commandAlive = $false
         foreach ($oneState in @(Get-TelephoneSupervisorBoundLineStateRoots -StateRoot $StateRoot -RunId $runId)) {
             $jobsRoot = Join-Path $oneState 'jobs'
@@ -3042,6 +3053,12 @@ function Reconcile-TelephoneSupervisorClaimed {
             if ($commandAlive) { break }
         }
         if ($commandAlive) { continue }
+        $settled = Test-TelephoneSupervisorBoundJobsSettled -StateRoot $StateRoot -RunId $runId
+        if ([bool]$settled.settled) {
+            $null = Write-TelephoneSupervisorOutbox -StateRoot $StateRoot -RunId $runId -Terminal 'completed' -Request $claimed.value
+            [void]$reconciled.Add([ordered]@{ run_id = $runId; terminal = 'completed' })
+            continue
+        }
         $null = Write-TelephoneSupervisorOutbox -StateRoot $StateRoot -RunId $runId -Terminal 'failed' -Request $claimed.value -ErrorCode 'SUPERVISOR_OWNER_DEAD_NO_RERUN'
         [void]$reconciled.Add([ordered]@{ run_id = $runId; terminal = 'failed' })
     }

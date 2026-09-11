@@ -1644,6 +1644,20 @@ function Get-CodexAppServerOwnerIdleMilliseconds {
     return $parsed
 }
 
+function Write-CodexAppServerTestEvent {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$Name)
+    $path = [string]$env:TELEPHONE_TEST_APP_SERVER_EVENT_LOG
+    if ([string]::IsNullOrWhiteSpace($path) -or [string]::IsNullOrWhiteSpace($Name)) { return }
+    try {
+        $parent = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($path))
+        if (-not [string]::IsNullOrWhiteSpace($parent) -and -not [IO.Directory]::Exists($parent)) {
+            [IO.Directory]::CreateDirectory($parent) | Out-Null
+        }
+        [IO.File]::AppendAllText($path, ('process:' + [string]$PID + ':' + [string]$Name + "`n"), [Text.UTF8Encoding]::new($false))
+    } catch { }
+}
+
 function Get-CodexAppServerAckTimeoutSeconds {
     [CmdletBinding()]
     param()
