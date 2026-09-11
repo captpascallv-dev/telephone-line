@@ -272,8 +272,8 @@
     },
     {
       "path": "docs/releases/v0.1.2.md",
-      "bytes": 6133,
-      "sha256": "e49ad57c5f35316b81e0601efad70b61a3880a0eb8b815b4af2cfb2e17722511"
+      "bytes": 6603,
+      "sha256": "1fa8989ee4cd7640ebaabe48cbd72705f0deaeabd6b823fa951c16b8aa93ba11"
     },
     {
       "path": "docs/routes.md",
@@ -1598,7 +1598,7 @@
   ],
   "counts": {
     "files": 313,
-    "bytes": 4723192
+    "bytes": 4723662
   },
   "excluded": [
     ".control/**",
