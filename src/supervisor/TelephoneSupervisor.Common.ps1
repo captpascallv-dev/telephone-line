@@ -883,6 +883,147 @@ function Get-TelephoneSupervisorInstallRootFromActionScript {
     return ''
 }
 
+function Resolve-TelephoneSupervisorPhysicalTaskAction {
+    [CmdletBinding()]
+    param(
+        [AllowNull()][string]$Execute,
+        [AllowNull()][string]$Arguments,
+        [AllowNull()][string]$WorkingDirectory
+    )
+    $result = [ordered]@{ action_script = ''; install_root = ''; state_root = ''; action_kind = 'unrecognized'; wrapper_sha256 = ''; wrapper_target = '' }
+    $hostPath = Convert-TelephoneSupervisorNormalizedInstallRoot -Path $Execute
+    if ([string]::IsNullOrWhiteSpace($hostPath) -or -not [IO.File]::Exists($hostPath)) { return $result }
+    $hostItem = Get-Item -LiteralPath $hostPath -Force -ErrorAction SilentlyContinue
+    if ($null -eq $hostItem -or ($hostItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return $result }
+    $hostName = [IO.Path]::GetFileName($hostPath)
+    if ($hostName -in @('pwsh.exe', 'powershell.exe', 'wscript.exe', 'cscript.exe')) {
+        $actualScript = Get-TelephoneSupervisorTaskActionScript -Arguments $Arguments
+        $ownedRoot = Get-TelephoneSupervisorInstallRootFromActionScript -ActionScript $actualScript
+        if ([string]::IsNullOrWhiteSpace($ownedRoot)) { return $result }
+        $result.action_kind = 'script-host'
+        $result.action_script = $actualScript
+        if ([IO.Path]::GetFileName($actualScript) -ceq 'Start-TelephoneSupervisorHostVisible.ps1') {
+            $result.action_script = Join-Path $ownedRoot 'src\supervisor\Invoke-TelephoneSupervisor.ps1'
+        }
+        $result.install_root = $ownedRoot
+        $result.state_root = Get-TelephoneSupervisorStateRootFromArguments -Arguments $Arguments
+        # The shipped hidden/visible launcher has an installed-root default and
+        # does not inherit the caller's supervisor-state environment setting.
+        if ([string]::IsNullOrWhiteSpace($result.state_root) -and (
+            $Arguments -match 'Invoke-TelephoneSupervisorHidden\.vbs' -or
+            [IO.Path]::GetFileName($actualScript) -ceq 'Start-TelephoneSupervisorHostVisible.ps1'
+        )) { $result.state_root = Join-Path $ownedRoot 'supervisor-state' }
+        return $result
+    }
+    # A filename or embedded path alone is not proof of wrapper ownership.
+    # Revalidate its identity sidecar and current compiled bytes on every query.
+    if (-not [string]::IsNullOrWhiteSpace($Arguments)) { return $result }
+    $readLock = [IO.File]::Open($hostPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    try {
+        $ownedRoot = Get-TelephoneSupervisorInstallRootFromWrapperIdentity -ActionScript $hostPath
+        if ([string]::IsNullOrWhiteSpace($ownedRoot)) { return $result }
+        $working = Convert-TelephoneSupervisorNormalizedInstallRoot -Path $WorkingDirectory
+        if (-not $working.Equals($ownedRoot, [StringComparison]::OrdinalIgnoreCase)) { return $result }
+        $bytes = [IO.File]::ReadAllBytes($hostPath)
+        $targets = @(Get-TelephoneSupervisorCompiledWrapperTargets -Bytes $bytes)
+        if ($targets.Count -ne 1) { return $result }
+        $target = [string]$targets[0]
+        if (-not [IO.File]::Exists($target)) { return $result }
+        $result.action_kind = 'verified-no-console-wrapper'
+        $result.install_root = $ownedRoot
+        $result.wrapper_target = $target
+        $result.wrapper_sha256 = Get-TelephoneSupervisorSha256Hex -Bytes $bytes
+        $result.action_script = $target
+        if ([IO.Path]::GetFileName($target) -ceq 'Start-TelephoneSupervisorHostVisible.ps1') {
+            $result.action_script = Join-Path $ownedRoot 'src\supervisor\Invoke-TelephoneSupervisor.ps1'
+            $result.state_root = Join-Path $ownedRoot 'supervisor-state'
+        }
+    } finally {
+        $readLock.Dispose()
+    }
+    return $result
+}
+
+function Get-TelephoneSupervisorInstallFileView {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$InstallRoot)
+    $requested = Assert-TelephoneSupervisorCanonicalRoot -Path $InstallRoot -Label 'Doctor install root'
+    $result = [ordered]@{ requested_root = $requested; physical_root = ''; known = $false; redirected = $false; error = '' }
+    try {
+        if (-not ('TelephoneSupervisorFileViewNative' -as [type])) {
+            Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class TelephoneSupervisorFileViewNative {
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    public static extern uint GetFinalPathNameByHandle(IntPtr handle, StringBuilder path, uint length, uint flags);
+}
+'@
+        }
+        # Query an existing product file, not package identity or an environment
+        # variable: child processes can inherit virtualization without a package ID.
+        $relative = 'current.json'
+        if (-not [IO.File]::Exists((Join-Path $requested $relative))) { $relative = 'src\supervisor\Invoke-TelephoneSupervisor.ps1' }
+        $path = Assert-TelephoneRegularFilePath -Path (Join-Path $requested $relative) -Label 'Doctor install view anchor'
+        $stream = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        try {
+            $buffer = [Text.StringBuilder]::new(32768)
+            $length = [TelephoneSupervisorFileViewNative]::GetFinalPathNameByHandle($stream.SafeFileHandle.DangerousGetHandle(), $buffer, 32768, 0)
+            if ($length -eq 0 -or $length -ge 32768) { throw 'Physical install file path could not be resolved.' }
+            $final = $buffer.ToString()
+        } finally { $stream.Dispose() }
+        if ($final.StartsWith('\\?\UNC\')) { $final = '\\' + $final.Substring(8) }
+        elseif ($final.StartsWith('\\?\')) { $final = $final.Substring(4) }
+        $suffix = '\' + $relative
+        if (-not $final.EndsWith($suffix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Physical install anchor has an unexpected suffix.' }
+        $result.physical_root = $final.Substring(0, $final.Length - $suffix.Length)
+        $result.known = $true
+        $result.redirected = -not $result.physical_root.Equals($requested, [StringComparison]::OrdinalIgnoreCase)
+    } catch { $result.error = [string]$_.Exception.Message }
+    return $result
+}
+
+function Resolve-TelephoneSupervisorDoctorState {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$InstallRoot,
+        [string]$StateRoot,
+        [string]$SupervisorStateRoot,
+        [AllowNull()][object]$Task
+    )
+    $source = ''
+    $resolved = ''
+    if (-not [string]::IsNullOrWhiteSpace($SupervisorStateRoot)) {
+        $resolved = [IO.Path]::GetFullPath($SupervisorStateRoot).TrimEnd('\')
+        $source = 'explicit-supervisor-state'
+    } else {
+        if ($null -eq $Task) { $Task = Invoke-TelephoneSupervisorTaskOperation -Operation get -InstallRoot $InstallRoot }
+        $ownedInstall = Get-TelephoneSupervisorTaskOwnedInstallRoot -Task $Task
+        $ownedState = Get-TelephoneSupervisorTaskOwnedStateRoot -Task $Task
+        $view = Get-TelephoneSupervisorInstallFileView -InstallRoot $InstallRoot
+        $wantedInstall = [string]$view.physical_root
+        if (-not [string]::IsNullOrWhiteSpace($ownedInstall) -and $ownedInstall.Equals($wantedInstall, [StringComparison]::OrdinalIgnoreCase) -and -not [string]::IsNullOrWhiteSpace($ownedState)) {
+            $resolved = $ownedState
+            $source = 'verified-installed-task'
+        } elseif (-not [string]::IsNullOrWhiteSpace([string]$env:TELEPHONE_LINE_SUPERVISOR_STATE_ROOT)) {
+            $resolved = Resolve-TelephoneSupervisorStateRoot
+            $source = 'caller-environment-or-default'
+        } elseif (-not [string]::IsNullOrWhiteSpace($StateRoot)) {
+            $resolved = [IO.Path]::GetFullPath((Join-Path $StateRoot 'supervisor')).TrimEnd('\')
+            $source = 'line-state-child'
+        } else {
+            $resolved = Resolve-TelephoneSupervisorStateRoot
+            $source = 'caller-environment-or-default'
+        }
+    }
+    return [ordered]@{
+        state_root = $resolved
+        source = $source
+        configured_supervisor_state_root = [string]$env:TELEPHONE_LINE_SUPERVISOR_STATE_ROOT
+    }
+}
+
 function Get-TelephoneSupervisorInstallRootFromArguments {
     [CmdletBinding()]
     param([AllowNull()][string]$Arguments)
@@ -1276,11 +1417,14 @@ function Invoke-TelephoneSupervisorRealTaskOperation {
         'get' {
             $task = Get-ScheduledTask -TaskName $script:TelephoneSupervisorTaskName -ErrorAction SilentlyContinue
             if ($null -eq $task) { return [ordered]@{ registered = $false } }
-            $action = @($task.Actions)[0]
+            $actions = @($task.Actions)
+            $action = if ($actions.Count -eq 1) { $actions[0] } else { $null }
             $principal = $task.Principal
             $limited = ($null -ne $principal -and [string]$principal.RunLevel -ceq 'Limited')
             $argumentText = if ($null -ne $action) { [string]$action.Arguments } else { '' }
             $execute = if ($null -ne $action) { [string]$action.Execute } else { '' }
+            $working = if ($null -ne $action) { [string]$action.WorkingDirectory } else { '' }
+            $resolvedAction = Resolve-TelephoneSupervisorPhysicalTaskAction -Execute $execute -Arguments $argumentText -WorkingDirectory $working
             $hasLogonTrigger = @($task.Triggers | Where-Object { [string]$_.CimClass.CimClassName -match 'LogonTrigger' }).Count -gt 0
             $hasPeriodicTrigger = @($task.Triggers | Where-Object { $null -ne $_.Repetition -and -not [string]::IsNullOrWhiteSpace([string]$_.Repetition.Interval) }).Count -gt 0
             return [ordered]@{
@@ -1290,8 +1434,15 @@ function Invoke-TelephoneSupervisorRealTaskOperation {
                 hidden = [bool]$task.Settings.Hidden
                 logon_type = $(if ($null -ne $principal) { [string]$principal.LogonType } else { '' })
                 execute = $execute
+                action_count = $actions.Count
+                working_directory = $working
                 action_arguments = $argumentText
-                action_script = Get-TelephoneSupervisorTaskActionScript -Arguments $argumentText
+                action_script = [string]$resolvedAction.action_script
+                action_kind = [string]$resolvedAction.action_kind
+                install_root = [string]$resolvedAction.install_root
+                state_root = [string]$resolvedAction.state_root
+                wrapper_sha256 = [string]$resolvedAction.wrapper_sha256
+                wrapper_target = [string]$resolvedAction.wrapper_target
                 restart_trigger = $(if ($hasLogonTrigger -and $hasPeriodicTrigger) { 'at-logon+one-minute-periodic' } elseif ($hasLogonTrigger) { 'at-logon-only' } else { 'missing' })
             }
         }
@@ -2638,31 +2789,34 @@ function Get-TelephoneSupervisorDoctorReport {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$InstallRoot,
-        [string]$StateRoot
+        [string]$StateRoot,
+        [string]$SupervisorStateRoot
     )
-    $resolvedState = if (-not [string]::IsNullOrWhiteSpace([string]$env:TELEPHONE_LINE_SUPERVISOR_STATE_ROOT)) {
-        Resolve-TelephoneSupervisorStateRoot
-    } elseif (-not [string]::IsNullOrWhiteSpace($StateRoot)) {
-        [IO.Path]::GetFullPath((Join-Path $StateRoot 'supervisor')).TrimEnd('\')
-    } else {
-        Resolve-TelephoneSupervisorStateRoot
-    }
+    $got = Invoke-TelephoneSupervisorTaskOperation -Operation get -InstallRoot $InstallRoot
+    $installView = Get-TelephoneSupervisorInstallFileView -InstallRoot $InstallRoot
+    $resolution = Resolve-TelephoneSupervisorDoctorState -InstallRoot $InstallRoot -StateRoot $StateRoot -SupervisorStateRoot $SupervisorStateRoot -Task $got
+    $resolvedState = [string]$resolution.state_root
     $paths = Get-TelephoneSupervisorPaths -StateRoot $resolvedState
     $pause = if ([IO.Directory]::Exists($resolvedState)) { Get-TelephoneSupervisorPause -StateRoot $resolvedState } else { [ordered]@{ paused_by_pascal = $false } }
-    $task = [ordered]@{ registered = $false; action_ok = $false; principal_ok = $false; hidden_ok = $false; logon_ok = $false; execute = ''; action_script = ''; action_arguments = '' }
+    $task = [ordered]@{ registered = $false; action_ok = $false; principal_ok = $false; hidden_ok = $false; logon_ok = $false; execute = ''; action_script = ''; action_arguments = ''; action_kind = ''; wrapper_sha256 = ''; wrapper_target = '' }
     try {
-        $got = Invoke-TelephoneSupervisorTaskOperation -Operation get -InstallRoot $InstallRoot
         if ($got -is [Collections.IDictionary]) {
             $task.registered = [bool]($got.Contains('registered') -and [bool]$got.registered)
             if ($got.Contains('task_name') -and [string]$got.task_name -ceq $script:TelephoneSupervisorTaskName) { $task.registered = $true }
-            $expectedScript = Join-Path $InstallRoot 'src\supervisor\Invoke-TelephoneSupervisor.ps1'
+            $expectedScript = if ($installView.known) { Join-Path $installView.physical_root 'src\supervisor\Invoke-TelephoneSupervisor.ps1' } else { '' }
             $actualScript = if ($got.Contains('action_script')) { [string]$got.action_script } else { '' }
-            if ([string]::IsNullOrWhiteSpace($actualScript) -and $got.Contains('action_arguments')) {
+            if ([string]::IsNullOrWhiteSpace($actualScript) -and -not $got.Contains('action_kind') -and $got.Contains('action_arguments')) {
                 $actualScript = Get-TelephoneSupervisorTaskActionScript -Arguments ([string]$got.action_arguments)
             }
             $task.action_script = $actualScript
             if ($got.Contains('execute')) { $task.execute = [string]$got.execute }
             if ($got.Contains('action_arguments')) { $task.action_arguments = [string]$got.action_arguments }
+            foreach ($name in @('action_kind','wrapper_sha256','wrapper_target')) { if ($got.Contains($name)) { $task[$name] = [string]$got[$name] } }
+            # Do not resolve the task's literal target through this process again:
+            # that would hide a different file view in the scheduler process.
+            $task.install_root = Get-TelephoneSupervisorTaskOwnedInstallRoot -Task $got
+            $task.install_view_ok = [bool]$installView.known -and ([string]$task.install_root).Equals([string]$installView.physical_root, [StringComparison]::OrdinalIgnoreCase)
+            $task.expected_action_script = $expectedScript
             if (-not [string]::IsNullOrWhiteSpace($actualScript) -and $actualScript.Equals($expectedScript, [StringComparison]::OrdinalIgnoreCase)) { $task.action_ok = $true }
             if ($got.Contains('principal') -and [string]$got.principal -ceq 'LimitedUser') { $task.principal_ok = $true }
             if ($got.Contains('hidden')) { $task.hidden_ok = [bool]$got.hidden }
@@ -2739,6 +2893,8 @@ function Get-TelephoneSupervisorDoctorReport {
     if ([int]$one.live_owners -gt 1) { $ownerOk = $false }
     return [ordered]@{
         state_root = $resolvedState
+        state_root_resolution = $resolution
+        install_file_view = $installView
         inbox = [IO.Directory]::Exists($paths.inbox)
         claimed = [IO.Directory]::Exists($paths.claimed)
         outbox = [IO.Directory]::Exists($paths.outbox)

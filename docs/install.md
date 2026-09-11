@@ -18,6 +18,10 @@ v0.1 is Codex-first. Codex CLI is the currently built-in Lead. Other routes are 
 
 ## Environment
 
+Doctor audits the supervisor state of the verified task owned by the requested install. An inherited `TELEPHONE_LINE_SUPERVISOR_STATE_ROOT` therefore cannot redirect that audit to an obsolete installation control directory. The report includes `state_root_resolution` and the inherited value. `-SupervisorStateRoot` explicitly audits another exact supervisor directory. `-StateRoot` remains the line-state input; if the task does not prove an owned supervisor state, Doctor retains the previous dedicated supervisor environment, then line-state `supervisor` child, then default discovery. A legacy fallback is reported as such rather than being treated as verified task configuration. Supervisor configuration or owner failures report `SUPERVISOR_UNHEALTHY`; file hash drift still reports `DRIFT_DETECTED`.
+
+For an existing no-console EXE task, Doctor reads the real task action and revalidates the `telephone-line-supervisor-wrapper-identity-v1` sidecar against the current wrapper bytes, unique compiled supervisor target and task working directory. A wrapper with extra arguments, a changed binary, a missing identity, a mismatched target or a different install is not accepted as this install's supervisor. The physical EXE/arguments remain in the report alongside the resolved target; Doctor neither substitutes a task backend nor modifies the task. Existing wrappers require a current, locally verified identity sidecar; copying a filename or an old successful Doctor result does not configure one.
+
 - `TELEPHONE_LINE_INSTALL_ROOT` — default install root when `-InstallRoot` is omitted
 - `TELEPHONE_LINE_SOURCE_ROOT` — default source root when `-SourceRoot` is omitted
 - `TELEPHONE_LINE_STATE_ROOT` — resolved state root for update, uninstall `-RemoveState`, and doctor when `-StateRoot` is omitted
@@ -32,3 +36,5 @@ v0.1 is Codex-first. Codex CLI is the currently built-in Lead. Other routes are 
 - `TELEPHONE_LINE_STABLE_CLI` — explicit independent Lead CLI executable; not an App version directory and not discovered by globbing
 - `TELEPHONE_LINE_STABLE_CLI_POLICY` — optional `telephone-line-stable-cli-policy-v1` JSON path (`executable`, optional `sha256`/`version`); when unset, install root `stable-cli-policy.json` is read if present
 - `TELEPHONE_LINE_LEAD_STATE_ROOT` — optional Lead run-state root used to attach a missing wake launch-result to an existing same-Run directory without starting a second turn
+
+Doctor compares the registered task's literal install target with the physical path of an opened installed file. A redirected AppData view cannot prove the scheduler reads the same installation: it reports `SUPERVISOR_INSTALL_VIEW_MISMATCH`, retaining the separate manifest result. Bind the task, future launch requests and user install/state settings to the existing explicit physical installation directory during a coordinated idle window; do not move live state, accept a junction alias, or infer the scheduler view from package identity alone.

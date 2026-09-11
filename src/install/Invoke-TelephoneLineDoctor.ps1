@@ -2,7 +2,8 @@
 [CmdletBinding()]
 param(
     [string]$InstallRoot,
-    [string]$StateRoot
+    [string]$StateRoot,
+    [string]$SupervisorStateRoot
 )
 
 Set-StrictMode -Version Latest
@@ -10,7 +11,7 @@ $ErrorActionPreference = 'Stop'
 if (-not $IsWindows) { throw 'Telephone Line v0.1 supports Windows only.' }
 . (Join-Path $PSScriptRoot 'TelephoneLineInstall.Common.ps1')
 
-$result = Invoke-TelephoneLineDoctor -InstallRoot $InstallRoot -StateRoot $StateRoot
+$result = Invoke-TelephoneLineDoctor -InstallRoot $InstallRoot -StateRoot $StateRoot -SupervisorStateRoot $SupervisorStateRoot
 Write-Output (ConvertTo-TelephoneInstallJson -Value $result).TrimEnd()
 if ($result.ok -eq $true) { exit 0 }
 exit 1

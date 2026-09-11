@@ -37,6 +37,7 @@ $script:TelephoneInstallPublicMessage = [ordered]@{
     UNINSTALLED = 'The manifested product files were removed.'
     HEALTHY = 'The install is healthy.'
     DRIFT_DETECTED = 'Installed files do not match the install manifest.'
+    SUPERVISOR_UNHEALTHY = 'The installed supervisor configuration or owner state is unhealthy; inspect the supervisor report.'
     ADAPTER_DESCRIPTOR_INVALID = 'One or more adapter descriptors did not validate.'
     SUPERVISOR_STATE_FOREIGN = 'Supervisor or line state is not bound to this install or task. Uninstall refused that resource.'
     SUPERVISOR_STATE_AMBIGUOUS = 'Supervisor state ownership is ambiguous. Uninstall refused that resource.'
@@ -1236,7 +1237,8 @@ function Invoke-TelephoneLineDoctor {
     [CmdletBinding()]
     param(
         [string]$InstallRoot,
-        [string]$StateRoot
+        [string]$StateRoot,
+        [string]$SupervisorStateRoot
     )
 
     try {
@@ -1329,7 +1331,9 @@ function Invoke-TelephoneLineDoctor {
         $controlPlaneCommon = Join-Path $dest 'src\control-plane\TelephoneControlPlane.Common.ps1'
         if ([IO.File]::Exists($controlPlaneCommon) -and -not (Test-TelephoneInstallReparse -Path $controlPlaneCommon)) {
             . $controlPlaneCommon
-            $controlPlaneReport = Get-TelephoneControlPlaneDoctorReport -ProductRoot $dest -SupervisorStateRoot $StateRoot
+            Import-TelephoneSupervisorCommon
+            $doctorSupervisorState = Resolve-TelephoneSupervisorDoctorState -InstallRoot $dest -StateRoot $StateRoot -SupervisorStateRoot $SupervisorStateRoot
+            $controlPlaneReport = Get-TelephoneControlPlaneDoctorReport -ProductRoot $dest -SupervisorStateRoot ([string]$doctorSupervisorState.state_root)
             if (-not [bool]$controlPlaneReport.bundled_present -or -not [bool]$controlPlaneReport.schemas_valid -or -not [bool]$controlPlaneReport.controller_is_authority_bounded) {
                 $healthy = $false
                 if ($code -ceq 'HEALTHY') { $code = 'DRIFT_DETECTED' }
@@ -1371,7 +1375,7 @@ function Invoke-TelephoneLineDoctor {
         if ([IO.Directory]::Exists($dest) -and [bool]$manifestPresent) {
             try {
                 Import-TelephoneSupervisorCommon
-                $supervisorReport = Get-TelephoneSupervisorDoctorReport -InstallRoot $dest -StateRoot $StateRoot
+                $supervisorReport = Get-TelephoneSupervisorDoctorReport -InstallRoot $dest -StateRoot $StateRoot -SupervisorStateRoot $SupervisorStateRoot
                 $currentOk = $true
                 $pendingOk = $true
                 $pinnedOk = $true
@@ -1419,11 +1423,13 @@ function Invoke-TelephoneLineDoctor {
                 $oneOk = [bool]$supervisorReport.one_supervisor
                 if (-not $taskOk -or -not $layoutOk -or -not $desktopOk -or -not [bool]$supervisorReport.owner_ok -or -not $currentOk -or -not $pendingOk -or -not $pinnedOk -or -not $oneOk) {
                     $healthy = $false
-                    if ($code -ceq 'HEALTHY') { $code = 'DRIFT_DETECTED' }
+                    if ($code -ceq 'HEALTHY') {
+                        $code = if ($supervisorReport.task.Contains('install_view_ok') -and -not $supervisorReport.task.install_view_ok) { 'SUPERVISOR_INSTALL_VIEW_MISMATCH' } else { 'SUPERVISOR_UNHEALTHY' }
+                    }
                 }
             } catch {
                 $healthy = $false
-                if ($code -ceq 'HEALTHY') { $code = 'DRIFT_DETECTED' }
+                if ($code -ceq 'HEALTHY') { $code = 'SUPERVISOR_UNHEALTHY' }
             }
         }
 
