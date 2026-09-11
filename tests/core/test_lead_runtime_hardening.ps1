@@ -510,10 +510,30 @@ if (`$captured -is [Collections.IDictionary] -and ((`$captured.Contains('returne
     }
 }
 [IO.File]::WriteAllText('$($sepOut.Replace('\','\\'))', ((`$captured | ConvertTo-Json -Depth 8 -Compress) + [Environment]::NewLine), [Text.UTF8Encoding]::new(`$false))
-[IO.File]::WriteAllText('$((Join-Path $sepRunRoot 'host-terminal.json').Replace('\','\\'))', ((@{protocol_version='telephone-line-host-terminal-v1';run_id='$sepRun';session_id='$sepSession';pid=`$PID;start_time_utc_ticks=`$meH.StartTime.ToUniversalTime().Ticks;executable_path=`$meH.MainModule.FileName;role='host';process_exited=`$true;stdout_eof=[bool]`$captured.stdout_eof;stderr_eof=[bool]`$captured.stderr_eof;exit_code=0;recorded_by='host_terminal_record';completed_at_utc=[DateTimeOffset]::UtcNow.ToString('o')} | ConvertTo-Json -Compress) + [Environment]::NewLine), [Text.UTF8Encoding]::new(`$false))
+[IO.File]::WriteAllText('$((Join-Path $sepRunRoot 'host-terminal.json').Replace('\','\\'))', ((@{protocol_version='telephone-line-host-terminal-v1';run_id='$sepRun';session_id='$sepSession';pid=`$PID;start_time_utc_ticks=`$meH.StartTime.ToUniversalTime().Ticks;executable_path=`$meH.MainModule.FileName;role='host';process_exited=`$false;stdout_eof=`$false;stderr_eof=`$false;host_exit_intent=`$true;recorded_by='host_terminal_intent';recorded_at_utc=[DateTimeOffset]::UtcNow.ToString('o')} | ConvertTo-Json -Compress) + [Environment]::NewLine), [Text.UTF8Encoding]::new(`$false))
+`$holdDeadline=[DateTime]::UtcNow.AddSeconds(35)
+while(-not [IO.File]::Exists('$((Join-Path $sepRoot 'release-sep-holder').Replace('\','\\'))') -and [DateTime]::UtcNow -lt `$holdDeadline){Start-Sleep -Milliseconds 50}
 exit 0
 "@, [Text.UTF8Encoding]::new($false))
-    $sepProc = Start-Process -FilePath $pwsh -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$sepHolder) -PassThru -WindowStyle Hidden
+    $sepInfo = [Diagnostics.ProcessStartInfo]::new()
+    $sepInfo.FileName = $pwsh
+    $sepInfo.UseShellExecute = $false
+    $sepInfo.CreateNoWindow = $true
+    $sepInfo.RedirectStandardOutput = $true
+    $sepInfo.RedirectStandardError = $true
+    foreach ($a in @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$sepHolder)) { [void]$sepInfo.ArgumentList.Add([string]$a) }
+    $sepProc = [Diagnostics.Process]::Start($sepInfo)
+    $sepOutTask = $sepProc.StandardOutput.ReadToEndAsync()
+    $sepErrTask = $sepProc.StandardError.ReadToEndAsync()
+    $sepHostId = [ordered]@{
+        pid = [int]$sepProc.Id
+        start_time_utc_ticks = [int64]$sepProc.StartTime.ToUniversalTime().Ticks
+        started_at_utc = $sepProc.StartTime.ToUniversalTime().ToString('o')
+        executable_path = $pwsh
+        session_id = $sepSession
+        run_id = $sepRun
+    }
+    Start-TelephoneLeadOpenDrain -Process $sepProc -StdoutTask $sepOutTask -StderrTask $sepErrTask -LifecyclePath (Join-Path $sepRunRoot 'host-drain-lifecycle.json') -Identity $sepHostId -Role 'host' -SessionId $sepSession -RunId $sepRun -HandoffPath (Join-Path $sepRunRoot 'host-drain-handoff.json')
     Add-HardeningTracked -Owner ([ordered]@{ pid = [int]$sepProc.Id; start_time_utc_ticks = [int64]$sepProc.StartTime.ToUniversalTime().Ticks })
     $nativeReady = $false
     $nativeDeadline = [DateTimeOffset]::UtcNow.AddSeconds(10)
@@ -537,6 +557,7 @@ exit 0
         Assert-Hardening ([bool]$sepStop.drain_pending) 'Production collector cleared drain_pending while the reader stayed alive.'
         Assert-Hardening (-not $sepProc.HasExited) 'Production collector waited for or killed the live reader host.'
     }
+    [IO.File]::WriteAllText((Join-Path $sepRoot 'release-sep-holder'), 'release', [Text.UTF8Encoding]::new($false))
     Assert-Hardening ($sepProc.WaitForExit(30000)) 'Separate-parent reader host did not exit after genuine child drain.'
     Assert-Hardening ([int]$sepProc.ExitCode -eq 0) 'Separate-parent Stop killed the reader host instead of waiting for persisted drain.'
     $sepWaitDead = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $sepRunRoot -WaitMilliseconds 0

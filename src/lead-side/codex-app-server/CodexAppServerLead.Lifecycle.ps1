@@ -1444,8 +1444,10 @@ function Bind-CodexAppServerTurnAndAck {
     $phaseNow = 'none'
     try { $phaseNow = Get-CodexAppServerCallbackWritePhase -Paths $Paths } catch { $phaseNow = 'none' }
     Write-CodexAppServerTestEvent ('bind:begin:phase=' + [string]$phaseNow)
-    if ($phaseNow -ceq 'none') {
-        Set-CodexAppServerRunPhase -Paths $Paths -Phase 'turn_start_sending' -WriterLabel 'run-bound-pre'
+    if ($phaseNow -ceq 'none' -or $phaseNow -ceq 'turn_start_sending') {
+        if ($phaseNow -ceq 'none') {
+            Set-CodexAppServerRunPhase -Paths $Paths -Phase 'turn_start_sending' -WriterLabel 'run-bound-pre'
+        }
         Write-CodexAppServerTestEvent 'bind:phase=turn_start_sending'
     }
     Write-CodexAppServerBoundTurnRecord -Paths $Paths -ThreadId $ThreadId -TurnId $TurnId -State $BoundState -WriterLabel 'bound'
@@ -3978,26 +3980,8 @@ function Invoke-CodexAppServerWakeCore {
         $hadIntent = [IO.File]::Exists($paths.intent)
         $hadRun = [IO.File]::Exists($paths.run)
         Write-CodexAppServerTestEvent ('chain_assert:begin:intent=' + [int]$hadIntent + ':run=' + [int]$hadRun)
-        try {
-            Assert-CodexAppServerDurableChain -Paths $paths -RunId $RunId -ThreadId $threadId -Worktree $worktree -CallbackIdentity $promptIdentity -Marker $marker -Profile $profile -ProfilePath $profileFile
-            Write-CodexAppServerTestEvent 'chain_assert:ok'
-        } catch {
-            $chainMessage = [string]$_.Exception.Message
-            $invalid = $chainMessage -ceq (Get-CodexAppServerPublicMessage -Code 'DURABLE_CHAIN_INVALID')
-            $ownerAlive = $false
-            try { $ownerAlive = Test-CodexAppServerThreadOwnerAlive -ThreadPaths $threadPaths } catch { $ownerAlive = $false }
-            $phaseNow = 'none'
-            try { $phaseNow = Get-CodexAppServerCallbackWritePhase -Paths $paths } catch { $phaseNow = 'none' }
-            $hasBound = [IO.File]::Exists($paths.bound_turn)
-            $hasAck = [IO.File]::Exists($paths.ack)
-            $inProgressBind = $hasBound -and -not $hasAck -and ($phaseNow -ceq 'none' -or $phaseNow -ceq 'turn_start_sending')
-            if ($invalid -and $inProgressBind -and $ownerAlive) {
-                Write-CodexAppServerTestEvent 'chain_assert:in_progress_attach'
-            } else {
-                Write-CodexAppServerTestEvent 'chain_assert:reject'
-                throw
-            }
-        }
+        Assert-CodexAppServerDurableChain -Paths $paths -RunId $RunId -ThreadId $threadId -Worktree $worktree -CallbackIdentity $promptIdentity -Marker $marker -Profile $profile -ProfilePath $profileFile
+        Write-CodexAppServerTestEvent 'chain_assert:ok'
         Clear-CodexAppServerPublishResidue -Directory $paths.run_root
         $finished = Complete-CodexAppServerTerminalPublicationFromDisk -Paths $paths -RunId $RunId -ThreadId $threadId
         if ($null -ne $finished) {

@@ -128,6 +128,8 @@ $noProvider = 0
 $denominatorEight = 0
 $parseCheck = 0
 $f1GateReleasedBeforeAckWait = 0
+$overlapNoSwallowedChainError = 0
+$overlapCorruptChainRejects = 0
 $appServerDeathRecoveryFocused = 0
 $quietNotTerminalOracle = 0
 $terminalWaitObservationOnly = 0
@@ -6251,12 +6253,71 @@ Set-StrictMode -Version Latest
         Assert-CasInt ($ovStarts.Count -eq 2) 'Overlap A/B did not send exactly two turn/start records.'
         $ovPids = @($ovStarts | ForEach-Object { [regex]::Match([string]$_, '^process:(\d+):').Groups[1].Value } | Select-Object -Unique)
         Assert-CasInt ($ovPids.Count -eq 1) 'Overlap A/B used more than one app-server client.'
+        $ovAll = @()
+        if ([IO.File]::Exists($ovLog)) { $ovAll = @(Get-Content -LiteralPath $ovLog) }
+        Assert-CasInt ((@($ovAll | Where-Object { $_ -match 'chain_assert:in_progress_attach' }).Count) -eq 0) 'Overlap still swallowed DURABLE_CHAIN_INVALID behind liveness/phase.'
+        Assert-CasInt ((@($ovAll | Where-Object { $_ -match 'bind:phase=turn_start_sending' }).Count) -ge 1) 'Overlap Bind did not publish turn_start_sending before bound write.'
+        Assert-CasInt ((@($ovAll | Where-Object { $_ -match 'chain_assert:ok' }).Count) -ge 1) 'Overlap lacked a successful durable-chain observation.'
+        $overlapNoSwallowedChainError = 1
         Assert-CasInt (Wait-CasIntRunQuiet -Harness $hOv -RunId 'run-overlap-a') 'Overlap A left a live per-run owner.'
         Assert-CasInt (Wait-CasIntRunQuiet -Harness $hOv -RunId 'run-overlap-b') 'Overlap B left a live per-run owner.'
         Assert-CasInt (Wait-CasIntThreadOwnerQuiet -Harness $hOv -ThreadId $tidOv -TimeoutMs 20000) 'Overlap thread owner did not quiesce naturally.'
         Assert-CasInt (-not (Test-CasIntThreadOwnerAlive -Harness $hOv -ThreadId $tidOv)) 'Overlap quiesce left a live thread owner.'
         Stop-CasIntRun -Harness $hOv -RunId 'run-overlap-a'
         Stop-CasIntRun -Harness $hOv -RunId 'run-overlap-b'
+        Clear-CasIntTestEnv
+
+        $hBad = New-CasIntHarness -Name 'owner-overlap-corrupt-chain'
+        $null = Invoke-CasIntProfile -Harness $hBad
+        $bBad = Invoke-CasIntBuilder -Harness $hBad
+        $tidBad = [string]$bBad.json.thread_id
+        $badHold = Join-Path $hBad.root 'overlap-corrupt-hold'
+        $badLog = Join-Path $hBad.root 'overlap-corrupt-events.log'
+        $env:TELEPHONE_TEST_APP_SERVER_HOLD_COMPLETED_PATH = $badHold
+        $env:TELEPHONE_TEST_APP_SERVER_EVENT_LOG = $badLog
+        $env:TELEPHONE_TEST_APP_SERVER_OWNER_IDLE_MS = '8000'
+        $firstBad = Invoke-CasIntLauncher -Harness $hBad -ThreadId $tidBad -RunId 'run-overlap-corrupt-a'
+        Assert-CasInt ($firstBad.exit_code -eq 0) ("Corrupt-window A failed: $($firstBad.stderr) $($firstBad.stdout)")
+        Assert-CasInt (Test-CasIntThreadOwnerAlive -Harness $hBad -ThreadId $tidBad) 'Corrupt-window A has no live thread owner.'
+        $pathsBadB = Get-CodexAppServerRunPaths -StateRoot ([string]$hBad.state) -RunId 'run-overlap-corrupt-b'
+        $procBad1 = Start-CasIntLauncherProcess -Harness $hBad -ThreadId $tidBad -RunId 'run-overlap-corrupt-b'
+        $queuedBy = [DateTimeOffset]::UtcNow.AddSeconds(15)
+        while ([DateTimeOffset]::UtcNow -lt $queuedBy) {
+            if (
+                [IO.File]::Exists($pathsBadB.intent) -and
+                [IO.File]::Exists($pathsBadB.run) -and
+                -not $procBad1.process.HasExited
+            ) { break }
+            Start-Sleep -Milliseconds 50
+        }
+        Assert-CasInt (-not $procBad1.process.HasExited) 'Corrupt-window B1 exited before the queued observation window.'
+        Assert-CasInt ([IO.File]::Exists($pathsBadB.run)) 'Corrupt-window B1 dropped the durable run.'
+        $runNow = (Read-TelephoneJson -Path $pathsBadB.run -SchemaName 'codex-app-server-lead-run').value
+        $runNow.callback_write_phase = 'turn_start_sending'
+        [IO.File]::WriteAllText($pathsBadB.run, (($runNow | ConvertTo-Json -Depth 32 -Compress) + "`n"), [Text.UTF8Encoding]::new($false))
+        $foreignBound = [ordered]@{
+            protocol_version = 'telephone-line-codex-app-server-lead-bound-turn-v1'
+            thread_id = '00000000-0000-4000-8000-ffffffffffff'
+            turn_id = 'turn-foreign-overlap'
+            state = 'active'
+            bound_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+        }
+        [IO.File]::WriteAllText($pathsBadB.bound_turn, (($foreignBound | ConvertTo-Json -Compress) + "`n"), [Text.UTF8Encoding]::new($false))
+        $procBad2 = Start-CasIntLauncherProcess -Harness $hBad -ThreadId $tidBad -RunId 'run-overlap-corrupt-b'
+        $null = $procBad2.process.WaitForExit(60000)
+        $bad2Exit = [int]$procBad2.process.ExitCode
+        $bad2Out = [string]$procBad2.stdout.GetAwaiter().GetResult()
+        $bad2Err = [string]$procBad2.stderr.GetAwaiter().GetResult()
+        $procBad2.process.Dispose()
+        $chainMsg = Get-CodexAppServerPublicMessage -Code 'DURABLE_CHAIN_INVALID'
+        Assert-CasInt ($bad2Exit -ne 0) 'Corrupt/foreign same-window chain was accepted.'
+        Assert-CasInt (($bad2Out + $bad2Err).Contains($chainMsg)) 'Corrupt/foreign same-window data did not reject as DURABLE_CHAIN_INVALID.'
+        [IO.File]::WriteAllText($badHold, "release`n", [Text.UTF8Encoding]::new($false))
+        if (-not $procBad1.process.HasExited) { $null = $procBad1.process.WaitForExit(120000) }
+        $procBad1.process.Dispose()
+        Stop-CasIntRun -Harness $hBad -RunId 'run-overlap-corrupt-a'
+        Stop-CasIntRun -Harness $hBad -RunId 'run-overlap-corrupt-b'
+        $overlapCorruptChainRejects = 1
         Clear-CasIntTestEnv
 
         $hSt = New-CasIntHarness -Name 'owner-status-authoritative'
@@ -6788,6 +6849,8 @@ Set-StrictMode -Version Latest
             live_owner_conflict = 1
             queued_behind_active = 1
             overlap_same_run_attach = 1
+            overlap_no_swallowed_chain_error = [int]$overlapNoSwallowedChainError
+            overlap_corrupt_chain_rejects = [int]$overlapCorruptChainRejects
             f1_gate_released_before_ack_wait = [int]$f1GateReleasedBeforeAckWait
             thread_owner_quiet_observation_only = 1
             queued_status_durable = 1

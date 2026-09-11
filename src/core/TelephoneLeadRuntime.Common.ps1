@@ -1090,13 +1090,14 @@ function Complete-TelephoneLeadOpenDrain {
     $stdoutEof = $false
     $stderrEof = $false
     $streamMs = if ($boundMs -gt 0) { $boundMs } else { 5000 }
+    $hostRole = ([string]$drain.role -ceq 'host')
     try {
         if ($null -ne $drain.stdout_task) {
             if ($drain.stdout_task.Wait($streamMs)) {
                 $null = $drain.stdout_task.GetAwaiter().GetResult()
                 $stdoutEof = $true
             }
-        } else {
+        } elseif (-not $hostRole) {
             $stdoutEof = $true
         }
     } catch { }
@@ -1106,7 +1107,7 @@ function Complete-TelephoneLeadOpenDrain {
                 $null = $drain.stderr_task.GetAwaiter().GetResult()
                 $stderrEof = $true
             }
-        } else {
+        } elseif (-not $hostRole) {
             $stderrEof = $true
         }
     } catch { }
@@ -1152,6 +1153,7 @@ function Complete-TelephoneLeadOpenDrain {
                 exit_code = [int]$exitCode
                 stdout_eof = [bool]$stdoutEof
                 stderr_eof = [bool]$stderrEof
+                recorded_by = 'open_drain_completion'
                 recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
             }
             [IO.File]::WriteAllText([string]$drain.handoff_path, (($done | ConvertTo-Json -Compress) + "`n"), [Text.UTF8Encoding]::new($false))
@@ -1159,7 +1161,6 @@ function Complete-TelephoneLeadOpenDrain {
     }
     try { if ($null -ne $drain.stdout_file) { $drain.stdout_file.Dispose() } } catch { }
     try { if ($null -ne $drain.stderr_file) { $drain.stderr_file.Dispose() } } catch { }
-    try { if ($null -ne $process) { $process.Dispose() } } catch { }
     $script:TelephoneLeadOpenDrains.Remove($key)
     return [ordered]@{
         found = $true
@@ -1314,6 +1315,15 @@ function Test-TelephoneLeadExactProcessAlive {
     return ([string]$obs.status -ceq 'alive')
 }
 
+function Test-TelephoneLeadHostStreamObserverRecordedBy {
+    [CmdletBinding()]
+    param([AllowNull()][object]$Doc)
+    if ($null -eq $Doc -or $Doc -isnot [Collections.IDictionary]) { return $false }
+    if (-not $Doc.Contains('recorded_by')) { return $false }
+    $by = [string]$Doc['recorded_by']
+    return ($by -ceq 'owner_reader_completion' -or $by -ceq 'open_drain_completion')
+}
+
 function Test-TelephoneLeadBoundHostTerminalRecord {
     [CmdletBinding()]
     param(
@@ -1326,6 +1336,10 @@ function Test-TelephoneLeadBoundHostTerminalRecord {
     $proto = ''
     if ($Doc.Contains('protocol_version')) { $proto = [string]$Doc['protocol_version'] }
     if ($proto -cne 'telephone-line-host-terminal-v1') { return $false }
+    $role = ''
+    try { if ($Doc.Contains('role')) { $role = [string]$Doc['role'] } } catch { $role = '' }
+    if (-not [string]::IsNullOrWhiteSpace($role) -and $role -cne 'host') { return $false }
+    if (-not (Test-TelephoneLeadHostStreamObserverRecordedBy -Doc $Doc)) { return $false }
     return (Test-TelephoneLeadDurableDrainTerminal -Doc $Doc -SessionId $SessionId -RunId $RunId -ExpectedIdentity $ExpectedIdentity)
 }
 

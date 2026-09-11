@@ -2314,16 +2314,22 @@ function Start-TelephoneHiddenPowerShell {
     $info = [Diagnostics.ProcessStartInfo]::new()
     $info.FileName = $powerShellPath
     $supervised = -not [string]::IsNullOrWhiteSpace([string]$env:TELEPHONE_LINE_SUPERVISOR_RUN_ID)
+    $argv = @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + @($Arguments)
     if ($supervised) {
         $info.UseShellExecute = $false
         $info.CreateNoWindow = $true
+        foreach ($argument in $argv) { [void]$info.ArgumentList.Add([string]$argument) }
     } else {
         $info.UseShellExecute = $true
         $info.CreateNoWindow = $false
         $info.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
-    }
-    foreach ($argument in @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + $Arguments) {
-        [void]$info.ArgumentList.Add([string]$argument)
+        $quoted = [Collections.Generic.List[string]]::new()
+        foreach ($argument in $argv) {
+            $one = [string]$argument
+            if ($one -match '[\s"]') { [void]$quoted.Add('"' + ($one.Replace('"', '"')) + '"') }
+            else { [void]$quoted.Add($one) }
+        }
+        $info.Arguments = [string]::Join(' ', $quoted)
     }
     $process = [Diagnostics.Process]::Start($info)
     if ($null -eq $process) { throw "Failed to start telephone-line process: $ScriptPath" }
@@ -3565,6 +3571,23 @@ function Restore-TelephoneExactJobRelay {
         $newRelay = Start-TelephoneHiddenPowerShell -ScriptPath $scriptPath -Arguments @('-JobRoot', $root)
         $attemptPath = Join-Path $root ('relay-resume-' + [DateTimeOffset]::UtcNow.ToString('yyyyMMddTHHmmssfffffffZ') + '.json')
         try { $null = Write-TelephoneJsonCreateNew -Path $attemptPath -Value $newRelay } catch { }
+        if (-not (Test-TelephoneOwnerAlive -Owner $newRelay)) {
+            $result.reason = 'relay_launch_not_alive'
+            $result.owner = $newRelay
+            return $result
+        }
+        $lineagePath = Join-Path $root 'supervisor-lineage.json'
+        if ([IO.File]::Exists($lineagePath) -and [int]$newRelay.pid -gt 0) {
+            $prevRun = [string]$env:TELEPHONE_LINE_SUPERVISOR_RUN_ID
+            try {
+                $lineage = (Read-TelephoneJson -Path $lineagePath).value
+                if ($lineage -is [Collections.IDictionary] -and -not [string]::IsNullOrWhiteSpace([string]$lineage.supervisor_run_id)) {
+                    $env:TELEPHONE_LINE_SUPERVISOR_RUN_ID = [string]$lineage.supervisor_run_id
+                    $null = Add-TelephoneProcessToSupervisorRunJob -ProcessId ([int]$newRelay.pid)
+                }
+            } catch { }
+            finally { $env:TELEPHONE_LINE_SUPERVISOR_RUN_ID = $prevRun }
+        }
         try { $null = Write-TelephoneJsonReplace -Path $paths.relay_owner -Value $newRelay } catch {
             try { $null = Write-TelephoneJsonCreateNew -Path $paths.relay_owner -Value $newRelay } catch { }
         }

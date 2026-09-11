@@ -2425,32 +2425,72 @@ function Test-TelephoneSupervisorBoundJobValidCompletedDelivery {
     if (-not [IO.File]::Exists($jobPaths.dispatch)) { return $false }
     if (-not [IO.File]::Exists($jobPaths.lead_binding)) { return $false }
     if (-not [IO.File]::Exists($jobPaths.receipt)) { return $false }
-    try { $delivery = (Read-TelephoneJson -Path $jobPaths.delivery).value } catch { return $false }
-    if ($delivery -isnot [Collections.IDictionary]) { return $false }
+    try { $dispatchRead = Read-TelephoneJson -Path $jobPaths.dispatch -SchemaName 'dispatch' } catch { return $false }
+    try { $bindingRead = Read-TelephoneJson -Path $jobPaths.lead_binding -SchemaName 'lead-binding' } catch { return $false }
+    try { $receiptRead = Read-TelephoneJson -Path $jobPaths.receipt -SchemaName 'receipt' } catch { return $false }
+    try { $deliveryRead = Read-TelephoneJson -Path $jobPaths.delivery } catch { return $false }
+    $disp = $dispatchRead.value
+    $binding = $bindingRead.value
+    $receipt = $receiptRead.value
+    $delivery = $deliveryRead.value
+    if ($disp -isnot [Collections.IDictionary] -or $binding -isnot [Collections.IDictionary] -or $receipt -isnot [Collections.IDictionary] -or $delivery -isnot [Collections.IDictionary]) { return $false }
     if ([string]$delivery.protocol_version -cne 'telephone-line-delivery-v1') { return $false }
-    try { $disp = (Read-TelephoneJson -Path $jobPaths.dispatch).value } catch { return $false }
-    if ($disp -isnot [Collections.IDictionary] -or -not $disp.Contains('line_job_id') -or [string]::IsNullOrWhiteSpace([string]$disp.line_job_id)) { return $false }
     $dispId = [string]$disp.line_job_id
-    if (-not $delivery.Contains('line_job_id') -or [string]::IsNullOrWhiteSpace([string]$delivery.line_job_id) -or [string]$delivery.line_job_id -cne $dispId) { return $false }
-    try { $binding = (Read-TelephoneJson -Path $jobPaths.lead_binding).value } catch { return $false }
-    if ($binding -isnot [Collections.IDictionary] -or [string]$binding.protocol_version -cne 'telephone-line-lead-binding-v1') { return $false }
-    try { $receipt = (Read-TelephoneJson -Path $jobPaths.receipt).value } catch { return $false }
-    if ($receipt -isnot [Collections.IDictionary] -or [string]$receipt.protocol_version -cne 'telephone-line-receipt-v1') { return $false }
-    if (-not $receipt.Contains('line_job_id') -or [string]$receipt.line_job_id -cne $dispId) { return $false }
+    if ([string]::IsNullOrWhiteSpace($dispId)) { return $false }
+    if ([string]$receipt.line_job_id -cne $dispId) { return $false }
+    if (-not $delivery.Contains('line_job_id') -or [string]$delivery.line_job_id -cne $dispId) { return $false }
+    $lead = $null
+    if ($disp.Contains('lead')) { $lead = $disp.lead }
+    if ($lead -isnot [Collections.IDictionary]) { return $false }
+    $session = [string]$lead.session_id
+    if ([string]::IsNullOrWhiteSpace($session) -or [string]$binding.session_id -cne $session) { return $false }
+    if ([string]$binding.worktree -cne [string]$lead.worktree) { return $false }
+    $launcherPath = ''
+    if ($lead.Contains('launcher') -and $lead.launcher -is [Collections.IDictionary] -and $lead.launcher.Contains('path')) { $launcherPath = [string]$lead.launcher.path }
+    $boundLauncher = ''
+    if ($binding.Contains('launcher') -and $binding.launcher -is [Collections.IDictionary] -and $binding.launcher.Contains('path')) { $boundLauncher = [string]$binding.launcher.path }
+    if ([string]::IsNullOrWhiteSpace($launcherPath) -or $boundLauncher -cne $launcherPath) { return $false }
+    $receiptDispatch = $null
+    if ($receipt.Contains('dispatch')) { $receiptDispatch = $receipt.dispatch }
+    if ($receiptDispatch -isnot [Collections.IDictionary]) { return $false }
+    if ([string]$receiptDispatch.sha256 -cne [string]$dispatchRead.identity.sha256) { return $false }
+    if ([int64]$receiptDispatch.bytes -ne [int64]$dispatchRead.identity.bytes) { return $false }
+    $receiptSha = [string]$receiptRead.identity.sha256
+    if ($delivery.Contains('lead_session_id') -and [string]$delivery.lead_session_id -cne $session) { return $false }
+    if ($delivery.Contains('receipt_sha256') -and -not [string]::IsNullOrWhiteSpace([string]$delivery.receipt_sha256) -and [string]$delivery.receipt_sha256 -cne $receiptSha) { return $false }
     $wakeOk = $false
     if ([IO.File]::Exists($jobPaths.mailbox_ref)) {
         try {
             $ref = (Read-TelephoneJson -Path $jobPaths.mailbox_ref).value
-            if ($ref -is [Collections.IDictionary] -and [string]$ref.protocol_version -ceq 'telephone-line-mailbox-ref-v1') { $wakeOk = $true }
+            if ($ref -is [Collections.IDictionary] -and [string]$ref.protocol_version -ceq 'telephone-line-mailbox-ref-v1') {
+                $itemPath = ''
+                if ($ref.Contains('item_path')) { $itemPath = [string]$ref.item_path }
+                if (-not [string]::IsNullOrWhiteSpace($itemPath) -and [IO.File]::Exists($itemPath)) {
+                    $item = (Read-TelephoneJson -Path $itemPath).value
+                    if ($item -is [Collections.IDictionary] -and [string]$item.line_job_id -ceq $dispId) {
+                        $itemReceipt = $null
+                        if ($item.Contains('receipt')) { $itemReceipt = $item.receipt }
+                        if ($itemReceipt -is [Collections.IDictionary] -and [string]$itemReceipt.sha256 -ceq $receiptSha -and [string]$item.lead_session_id -ceq $session) { $wakeOk = $true }
+                    }
+                }
+            }
         } catch { $wakeOk = $false }
     }
     if (-not $wakeOk -and [IO.File]::Exists($jobPaths.wake_attempt)) {
         try {
             $wake = (Read-TelephoneJson -Path $jobPaths.wake_attempt).value
-            if ($wake -is [Collections.IDictionary] -and [string]$wake.protocol_version -ceq 'telephone-line-wake-attempt-v1') { $wakeOk = $true }
+            if ($wake -is [Collections.IDictionary] -and [string]$wake.protocol_version -ceq 'telephone-line-wake-attempt-v1') {
+                if ([string]$wake.line_job_id -ceq $dispId -and [string]$wake.lead_session_id -ceq $session) {
+                    $wakeReceipt = $null
+                    if ($wake.Contains('receipt')) { $wakeReceipt = $wake.receipt }
+                    if ($wakeReceipt -is [Collections.IDictionary] -and [string]$wakeReceipt.sha256 -ceq $receiptSha) { $wakeOk = $true }
+                }
+            }
         } catch { $wakeOk = $false }
     }
-    if (-not $wakeOk -and (Test-TelephoneMailboxItemConsumed -Item $delivery)) { $wakeOk = $true }
+    if (-not $wakeOk -and (Test-TelephoneMailboxItemConsumed -Item $delivery)) {
+        if ($delivery.Contains('receipt_sha256') -and [string]$delivery.receipt_sha256 -ceq $receiptSha -and [string]$delivery.lead_session_id -ceq $session) { $wakeOk = $true }
+    }
     if (-not $wakeOk) { return $false }
     $transport = $false
     if ($delivery.Contains('transport_complete')) { $transport = [bool]$delivery.transport_complete }
@@ -2976,14 +3016,83 @@ function Reconcile-TelephoneSupervisorClaimed {
             $left = @()
             if ($null -ne $job -and [IntPtr]$job.handle -ne [IntPtr]::Zero) { $left = @(Get-TelephoneSupervisorJobProcessIds -Job $job) }
             $boundSettled = Test-TelephoneSupervisorBoundJobsSettled -StateRoot $StateRoot -RunId $runId
-            if (($liveMembers -or $survivors.Count -gt 0 -or $left.Count -gt 0) -and -not [bool]$boundSettled.settled) {
+            $commandRelayLive = $false
+            $extraDeclaredLive = $false
+            $memberValue = $null
+            if ($null -ne $memberRead) {
+                $memberValue = if ($memberRead -is [Collections.IDictionary] -and $memberRead.Contains('value')) { $memberRead.value } else { $memberRead }
+            }
+            foreach ($oneState in @(Get-TelephoneSupervisorBoundLineStateRoots -StateRoot $StateRoot -RunId $runId)) {
+                $jobsRoot = Join-Path $oneState 'jobs'
+                if (-not [IO.Directory]::Exists($jobsRoot)) { continue }
+                foreach ($dir in @([IO.Directory]::GetDirectories($jobsRoot))) {
+                    $lineagePath = Join-Path $dir 'supervisor-lineage.json'
+                    if (-not [IO.File]::Exists($lineagePath)) { continue }
+                    try {
+                        $lineage = (Read-TelephoneJson -Path $lineagePath).value
+                        if ($lineage -isnot [Collections.IDictionary] -or [string]$lineage.supervisor_run_id -cne [string]$runId) { continue }
+                    } catch { continue }
+                    if (Test-TelephoneSupervisorBoundJobCommandAlive -JobRoot $dir) { $commandRelayLive = $true; break }
+                }
+                if ($commandRelayLive) { break }
+            }
+            $helperPids = [Collections.Generic.HashSet[int]]::new()
+            $mailboxHintPath = Join-Path $runDir 'mailbox.json'
+            if ([IO.File]::Exists($mailboxHintPath)) {
+                try {
+                    $mailboxHint = (Read-TelephoneJson -Path $mailboxHintPath).value
+                    if ($mailboxHint -is [Collections.IDictionary] -and $mailboxHint.Contains('collector_pid') -and [int]$mailboxHint.collector_pid -gt 0) {
+                        [void]$helperPids.Add([int]$mailboxHint.collector_pid)
+                    }
+                } catch { }
+            }
+            foreach ($oneState in @(Get-TelephoneSupervisorBoundLineStateRoots -StateRoot $StateRoot -RunId $runId)) {
+                $leadsRoot = Join-Path $oneState 'leads'
+                if (-not [IO.Directory]::Exists($leadsRoot)) { continue }
+                foreach ($leadDir in @([IO.Directory]::GetDirectories($leadsRoot))) {
+                    $collectorOwnerPath = Join-Path $leadDir 'owner.json'
+                    if (-not [IO.File]::Exists($collectorOwnerPath)) { continue }
+                    try {
+                        $collectorOwner = (Read-TelephoneJson -Path $collectorOwnerPath).value
+                        if ($collectorOwner -is [Collections.IDictionary] -and $collectorOwner.Contains('pid') -and [int]$collectorOwner.pid -gt 0) {
+                            [void]$helperPids.Add([int]$collectorOwner.pid)
+                        }
+                    } catch { }
+                }
+            }
+            $jobHandleValid = ($null -ne $job -and $null -ne $job.handle -and [IntPtr]$job.handle -ne [IntPtr]::Zero)
+            $extraLivePids = [Collections.Generic.List[int]]::new()
+            if ($memberValue -is [Collections.IDictionary] -and $memberValue.Contains('members')) {
+                foreach ($row in @($memberValue.members)) {
+                    if ($row -isnot [Collections.IDictionary] -or -not $row.Contains('pid')) { continue }
+                    if (-not (Test-TelephoneOwnerAlive -Owner $row)) { continue }
+                    $memberPid = [int]$row.pid
+                    if ($helperPids.Contains($memberPid)) { continue }
+                    if ($jobHandleValid) {
+                        $inNamedJob = $false
+                        try { $inNamedJob = Test-TelephoneSupervisorPidInJob -Job $job -ProcessId $memberPid } catch { $inNamedJob = $false }
+                        if ($inNamedJob) { continue }
+                    }
+                    $extraDeclaredLive = $true
+                    if (-not $extraLivePids.Contains($memberPid)) { [void]$extraLivePids.Add($memberPid) }
+                }
+            }
+            $retainOwned = $false
+            if (-not [bool]$boundSettled.settled) {
+                $retainOwned = ($liveMembers -or $survivors.Count -gt 0 -or $left.Count -gt 0)
+            } else {
+                $retainOwned = [bool]$extraDeclaredLive
+            }
+            if ($retainOwned) {
                 if ($null -eq $job -or [IntPtr]$job.handle -eq [IntPtr]::Zero) {
                     $job = New-TelephoneSupervisorRunJob -RunId $runId
                     $createdJob = $true
                 }
                 $null = Repair-TelephoneSupervisorOrphanedRunJob -StateRoot $StateRoot -RunId $runId -Job $job
-                $relayScript = Get-TelephoneSupervisorRelayScriptPath -Request $claimed.value
-                try { $null = Sync-TelephoneSupervisorMailboxBinding -StateRoot $StateRoot -RunId $runId -Job $job -RelayScript $relayScript } catch { }
+                if (-not [bool]$boundSettled.settled) {
+                    $relayScript = Get-TelephoneSupervisorRelayScriptPath -Request $claimed.value
+                    try { $null = Sync-TelephoneSupervisorMailboxBinding -StateRoot $StateRoot -RunId $runId -Job $job -RelayScript $relayScript } catch { }
+                }
                 $memberPath = Join-Path $runDir 'job-members.json'
                 try { $null = Write-TelephoneSupervisorJobMembers -Path $memberPath -RunId $runId -Job $job -LeadIdentity $null } catch { }
                 $retainPath = Join-Path $runDir 'claimed-reconcile.json'
@@ -2996,6 +3105,10 @@ function Reconcile-TelephoneSupervisorClaimed {
                         replay = $false
                         silent_skip = $false
                         launch_intent_present = [bool]$hasIntent
+                        bound_settled = [bool]$boundSettled.settled
+                        extra_declared_live = [bool]$extraDeclaredLive
+                        extra_declared_live_pids = @($extraLivePids)
+                        left_count = [int]$left.Count
                         recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
                     })
                 } catch { }
