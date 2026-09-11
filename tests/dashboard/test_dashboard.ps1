@@ -19,7 +19,9 @@ $previous = [ordered]@{
     state = [Environment]::GetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_STATE', 'Process')
     config = [Environment]::GetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_CONFIG', 'Process')
     headless = [Environment]::GetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_HEADLESS', 'Process')
+    supervisor_run_id = [Environment]::GetEnvironmentVariable('TELEPHONE_LINE_SUPERVISOR_RUN_ID', 'Process')
 }
+[Environment]::SetEnvironmentVariable('TELEPHONE_LINE_SUPERVISOR_RUN_ID', '', 'Process')
 $claimed = [Collections.Generic.List[object]]::new()
 
 function Assert-Dash {
@@ -29,7 +31,7 @@ function Assert-Dash {
 }
 
 function Restore-DashEnv {
-    foreach ($key in @('TELEPHONE_LINE_DASHBOARD_PROCESS_ENV_ONLY','TELEPHONE_LINE_DASHBOARD_OPT_OUT','TELEPHONE_LINE_DASHBOARD_ENSURE_SCRIPT','TELEPHONE_LINE_DASHBOARD_STATE','TELEPHONE_LINE_DASHBOARD_CONFIG','TELEPHONE_LINE_DASHBOARD_HEADLESS')) {
+    foreach ($key in @('TELEPHONE_LINE_DASHBOARD_PROCESS_ENV_ONLY','TELEPHONE_LINE_DASHBOARD_OPT_OUT','TELEPHONE_LINE_DASHBOARD_ENSURE_SCRIPT','TELEPHONE_LINE_DASHBOARD_STATE','TELEPHONE_LINE_DASHBOARD_CONFIG','TELEPHONE_LINE_DASHBOARD_HEADLESS','TELEPHONE_LINE_SUPERVISOR_RUN_ID')) {
         $map = @{
             TELEPHONE_LINE_DASHBOARD_PROCESS_ENV_ONLY = $previous.process_env_only
             TELEPHONE_LINE_DASHBOARD_OPT_OUT = $previous.opt_out
@@ -37,6 +39,7 @@ function Restore-DashEnv {
             TELEPHONE_LINE_DASHBOARD_STATE = $previous.state
             TELEPHONE_LINE_DASHBOARD_CONFIG = $previous.config
             TELEPHONE_LINE_DASHBOARD_HEADLESS = $previous.headless
+            TELEPHONE_LINE_SUPERVISOR_RUN_ID = $previous.supervisor_run_id
         }
         [Environment]::SetEnvironmentVariable($key, [string]$map[$key], 'Process')
     }
@@ -519,6 +522,119 @@ try {
     Assert-Dash ($oldVisible.Count -eq 0) 'Exact successor did not retire the old receipt+relay-error lineage.'
     Assert-Dash ([IO.File]::Exists((Join-Path $oldJob 'receipt.json')) -and [IO.File]::Exists((Join-Path $oldJob 'relay-error.json'))) 'Successor retirement deleted evidence.'
     $historical_successor_retires = 1
+    $liveSuccRoot = Join-Path $testRoot 'live-succ'
+    $deadJobId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee10'
+    $liveJobId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeee11'
+    $deadJob = Join-Path $liveSuccRoot ('jobs\' + $deadJobId)
+    $liveJob = Join-Path $liveSuccRoot ('jobs\' + $liveJobId)
+    [IO.Directory]::CreateDirectory($deadJob) | Out-Null
+    [IO.Directory]::CreateDirectory($liveJob) | Out-Null
+    $selfProc = Get-Process -Id $PID
+    try {
+        $liveOwner = [ordered]@{
+            pid = [int]$PID
+            start_time_utc_ticks = [int64]$selfProc.StartTime.ToUniversalTime().Ticks
+            started_at_utc = $selfProc.StartTime.ToUniversalTime().ToString('o')
+        }
+    } finally { $selfProc.Dispose() }
+    $deadOwner = [ordered]@{ pid = 1; start_time_utc_ticks = 1; started_at_utc = '2026-01-01T00:00:00Z' }
+    $dispDead = $dispatch | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $dispLive = $dispatch | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $dispDead.project = 'live-succ-project'
+    $dispLive.project = 'live-succ-project'
+    $dispDead.line_job_id = $deadJobId
+    $dispLive.line_job_id = $liveJobId
+    $dispDead.created_at_utc = [DateTimeOffset]::UtcNow.AddMinutes(-10).ToString('o')
+    $dispLive.created_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+    $bindDead = $binding | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $bindLive = $binding | ConvertTo-Json -Depth 32 | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $bindDead.session_id = 'session-dead'
+    $bindLive.session_id = 'session-live'
+    $bindDead.worktree = $liveSuccRoot
+    $bindLive.worktree = $liveSuccRoot
+    $dispDead.lead = $bindDead
+    $dispLive.lead = $bindLive
+    Write-DashUtf8 -Path (Join-Path $deadJob 'dispatch.json') -Value $dispDead
+    Write-DashUtf8 -Path (Join-Path $deadJob 'lead-binding.json') -Value $bindDead
+    Write-DashUtf8 -Path (Join-Path $deadJob 'command-owner.json') -Value $deadOwner
+    Write-DashUtf8 -Path (Join-Path $liveJob 'dispatch.json') -Value $dispLive
+    Write-DashUtf8 -Path (Join-Path $liveJob 'lead-binding.json') -Value $bindLive
+    Write-DashUtf8 -Path (Join-Path $liveJob 'command-owner.json') -Value $liveOwner
+    $liveDesc = Join-Path $testRoot 'live-succ-desc.json'
+    $liveCfg = Join-Path $testRoot 'live-succ-config.json'
+    Write-DashUtf8 -Path $liveDesc -Value ([ordered]@{ protocol_version = 'telephone-line-dashboard-project-descriptor-v1'; project = 'live-succ-project'; state_root = $liveSuccRoot; terminal_state = 'active' })
+    Write-DashUtf8 -Path $liveCfg -Value ([ordered]@{ protocol_version = 'telephone-line-dashboard-config-v1'; projects = @(@{ descriptor_file = $liveDesc }) })
+    $liveProj = Get-TelephoneDashboardProjection -ConfigPath $liveCfg
+    $liveGroups = @($liveProj.groups | Where-Object { [string]$_.project -ceq 'live-succ-project' })
+    $deadVisible = @($liveGroups | Where-Object { [string]$_.line_job_id -ceq $deadJobId })
+    $liveVisible = @($liveGroups | Where-Object { [string]$_.line_job_id -ceq $liveJobId })
+    Assert-Dash ($deadVisible.Count -eq 0) 'Live successor on the same worktree did not hide the ended interrupt.'
+    Assert-Dash ($liveVisible.Count -eq 1) 'Current live successor was not shown.'
+    Write-DashUtf8 -Path (Join-Path $liveJob 'command-owner.json') -Value $deadOwner
+    $failReceipt = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'tests\contracts\fixtures\valid\receipt.json') | ConvertFrom-Json -AsHashtable -Depth 32 -DateKind String
+    $failReceipt.project = 'live-succ-project'
+    $failReceipt.line_job_id = $liveJobId
+    $failReceipt.command_exit_code = 1
+    Write-DashUtf8 -Path (Join-Path $liveJob 'receipt.json') -Value $failReceipt
+    Write-DashUtf8 -Path (Join-Path $liveJob 'relay-error.json') -Value ([ordered]@{ protocol_version = 'telephone-line-relay-error-v1'; retrying = $false; error_code = 'LEAD_WAKE_FAILED' })
+    $failNow = Get-TelephoneDashboardProjection -ConfigPath $liveCfg
+    $failGroups = @($failNow.groups | Where-Object { [string]$_.project -ceq 'live-succ-project' })
+    $currentFail = @($failGroups | Where-Object { [string]$_.line_job_id -ceq $liveJobId })
+    Assert-Dash ($currentFail.Count -eq 1) 'Current-task failure after recovery was hidden.'
+    $live_successor_hides_ended = 1
+    $watchState = Join-Path $testRoot 'watch-interval-state'
+    [IO.Directory]::CreateDirectory($watchState) | Out-Null
+    $watchScript = Join-Path $repoRoot 'src\dashboard\Watch-TelephoneDashboard.ps1'
+    $watchProc = Start-Process -FilePath $pwsh -ArgumentList @(
+        '-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$watchScript,
+        '-StateRoot',$watchState,'-ConfigPath',$liveCfg,'-Headless','-IntervalMilliseconds','800'
+    ) -PassThru -WindowStyle Hidden
+    $null = Register-DashClaimedWatcher -PidHint ([int]$watchProc.Id) -StateRoot $watchState
+    $projPath = Join-Path $watchState 'projection.json'
+    $readyDeadline = [DateTimeOffset]::UtcNow.AddSeconds(10)
+    while (-not [IO.File]::Exists($projPath) -and [DateTimeOffset]::UtcNow -lt $readyDeadline) { Start-Sleep -Milliseconds 50 }
+    Assert-Dash ([IO.File]::Exists($projPath)) 'Watcher did not publish a projection.'
+    $first = Get-Content -LiteralPath $projPath -Raw | ConvertFrom-Json -AsHashtable
+    $firstStart = [DateTimeOffset]::Parse([string]$first.observation_started_at_utc)
+    $second = $null
+    $secondDeadline = [DateTimeOffset]::UtcNow.AddSeconds(5)
+    while ([DateTimeOffset]::UtcNow -lt $secondDeadline) {
+        Start-Sleep -Milliseconds 100
+        $peek = Get-Content -LiteralPath $projPath -Raw | ConvertFrom-Json -AsHashtable
+        $nextStart = [DateTimeOffset]::Parse([string]$peek.observation_started_at_utc)
+        if ($nextStart -gt $firstStart) { $second = $peek; break }
+    }
+    Assert-Dash ($null -ne $second) 'Watcher did not refresh on the configured interval.'
+    $deltaMs = [int](([DateTimeOffset]::Parse([string]$second.observation_started_at_utc) - $firstStart).TotalMilliseconds)
+    Assert-Dash ($deltaMs -ge 500 -and $deltaMs -le 2500) ('Watcher refresh lag was not the configured remainder interval: ' + $deltaMs)
+    $watcher_interval_remainder = 1
+    $zipPath = Join-Path $testRoot 'packaged-windows.zip'
+    $extractRoot = Join-Path $testRoot 'windows-extract'
+    $packScript = Join-Path $repoRoot 'src\packaging\New-TelephoneReleaseZip.ps1'
+    $null = & $pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $packScript -SourceRoot $repoRoot -OutputPath $zipPath -Force
+    Assert-Dash ([IO.File]::Exists($zipPath)) 'Windows ZIP was not produced from the current candidate.'
+    [IO.Directory]::CreateDirectory($extractRoot) | Out-Null
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $extractRoot)
+    $packWatch = Join-Path $extractRoot 'src\dashboard\Watch-TelephoneDashboard.ps1'
+    Assert-Dash ([IO.File]::Exists($packWatch)) 'Extracted Windows package is missing the dashboard watcher entry.'
+    $packState = Join-Path $testRoot 'packaged-watch-state'
+    [IO.Directory]::CreateDirectory($packState) | Out-Null
+    $packOnce = Start-Process -FilePath $pwsh -ArgumentList @(
+        '-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$packWatch,
+        '-StateRoot',$packState,'-ConfigPath',$liveCfg,'-Headless','-Once'
+    ) -PassThru -WindowStyle Hidden
+    $null = Register-DashClaimedWatcher -PidHint ([int]$packOnce.Id) -StateRoot $packState
+    Assert-Dash ($packOnce.WaitForExit(30000)) 'Packaged dashboard watcher did not exit.'
+    Assert-Dash ([int]$packOnce.ExitCode -eq 0) 'Packaged dashboard watcher failed.'
+    $packProjPath = Join-Path $packState 'projection.json'
+    Assert-Dash ([IO.File]::Exists($packProjPath)) 'Packaged dashboard watcher did not publish a projection.'
+    $packProj = Get-Content -LiteralPath $packProjPath -Raw | ConvertFrom-Json -AsHashtable
+    $packFail = @($packProj.groups | Where-Object { [string]$_.project -ceq 'live-succ-project' -and [string]$_.line_job_id -ceq $liveJobId })
+    $packDead = @($packProj.groups | Where-Object { [string]$_.project -ceq 'live-succ-project' -and [string]$_.line_job_id -ceq $deadJobId })
+    Assert-Dash ($packFail.Count -eq 1) 'Packaged Windows dashboard hid the current-task failure.'
+    Assert-Dash ($packDead.Count -eq 0) 'Packaged Windows dashboard still listed the superseded interrupt.'
+    $packaged_windows_dashboard_current_state = 1
     Write-DashUtf8 -Path $histDesc -Value ([ordered]@{ protocol_version = 'telephone-line-dashboard-project-descriptor-v1'; project = 'hist-project'; state_root = $histRoot; successor_lead_session_id = 'session-wrong'; successor_line_job_id = $newJobId; terminal_state = 'active' })
     $mismatchProj = Get-TelephoneDashboardProjection -ConfigPath $histCfg
     $mismatchOld = @($mismatchProj.groups | Where-Object { [string]$_.lead_session_id -ceq 'session-old' })
@@ -2300,6 +2416,9 @@ try {
         privacy_no_user_path = $privacy_no_user_path
         durable_duplicate_restart = $durable_duplicate_restart
         historical_successor_retires = $historical_successor_retires
+        live_successor_hides_ended = $live_successor_hides_ended
+        watcher_interval_remainder = $watcher_interval_remainder
+        packaged_windows_dashboard_current_state = $packaged_windows_dashboard_current_state
         historical_mismatch_stays_yellow = $historical_mismatch_stays_yellow
         historical_terminal_retires = $historical_terminal_retires
         historical_missing_proof_yellow = $historical_missing_proof_yellow

@@ -487,8 +487,9 @@ try {
         $outputPath = Join-Path $workRoot 'output.json'
         $stdoutPath = Join-Path $workRoot 'stdout.txt'
         $stderrPath = Join-Path $workRoot 'stderr.txt'
-        $terminalPath = Join-Path $workRoot 'terminal.json'
+        $observationPath = Join-Path $workRoot 'pipe-observation.json'
         $workerPath = Join-Path $workRoot 'Invoke-PublicInstallLifecycleWork.ps1'
+        $capturePath = Join-Path $workRoot 'Invoke-PublicInstallLifecycleCapture.ps1'
         $wiredPath = Join-Path $workRoot 'wired-request.json'
         $inputDoc = [ordered]@{
             protocol_version = 'telephone-line-public-install-lifecycle-input-v1'
@@ -503,14 +504,9 @@ try {
         $worker = @'
 # SPDX-License-Identifier: MPL-2.0
 # Public install/background verification worker. Not an AI task and not an original Lead callback.
+# Writes only to real stdout/stderr pipes. Does not self-report EOF or exit success into observation files.
 [CmdletBinding()]
-param(
-    [Parameter(Mandatory = $true)][string]$InputFile,
-    [Parameter(Mandatory = $true)][string]$OutputFile,
-    [Parameter(Mandatory = $true)][string]$StdoutFile,
-    [Parameter(Mandatory = $true)][string]$StderrFile,
-    [Parameter(Mandatory = $true)][string]$TerminalFile
-)
+param([Parameter(Mandatory = $true)][string]$InputFile)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $raw = [IO.File]::ReadAllBytes($InputFile)
@@ -532,24 +528,93 @@ try {
         exit_code_intent = 0
     }
     $text = (($out | ConvertTo-Json -Depth 8) + "`n")
-    $bytes = [Text.UTF8Encoding]::new($false).GetBytes($text)
-    [IO.File]::WriteAllBytes($OutputFile, $bytes)
-    [IO.File]::WriteAllBytes($StdoutFile, $bytes)
-    [IO.File]::WriteAllBytes($StderrFile, [byte[]]@())
-    $term = [ordered]@{
-        protocol_version = 'telephone-line-public-install-lifecycle-terminal-v1'
-        eof = $true
-        exit_code_intent = 0
-        stdout_sha256 = ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))).ToLowerInvariant()
-        stderr_bytes = 0
-        written_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
-    }
-    [IO.File]::WriteAllBytes($TerminalFile, [Text.UTF8Encoding]::new($false).GetBytes((($term | ConvertTo-Json -Depth 8) + "`n")))
+    [Console]::Out.Write($text)
+    [Console]::Out.Flush()
+    [Console]::Error.Write(('TELEPHONE-LIFECYCLE-STDERR:' + [string]$doc.nonce + "`n"))
+    [Console]::Error.Flush()
 } finally { $proc.Dispose() }
-Start-Sleep -Seconds 8
+Start-Sleep -Seconds 2
+exit 0
+'@
+        $capture = @'
+# SPDX-License-Identifier: MPL-2.0
+# Capture parent owns Process plus stdout/stderr readers. Observation is written only after both readers reach EOF.
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory = $true)][string]$WorkerFile,
+    [Parameter(Mandatory = $true)][string]$InputFile,
+    [Parameter(Mandatory = $true)][string]$ObservationFile,
+    [Parameter(Mandatory = $true)][string]$StdoutFile,
+    [Parameter(Mandatory = $true)][string]$StderrFile,
+    [Parameter(Mandatory = $true)][string]$OutputFile
+)
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$self = Get-Process -Id $PID
+try {
+    $parentPid = [int]$self.Id
+    $parentTicks = [int64]$self.StartTime.ToUniversalTime().Ticks
+    $parentStarted = $self.StartTime.ToUniversalTime().ToString('o')
+} finally { $self.Dispose() }
+$pwshExe = [string]([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
+$info = [Diagnostics.ProcessStartInfo]::new()
+$info.FileName = $pwshExe
+$info.UseShellExecute = $false
+$info.CreateNoWindow = $true
+$info.RedirectStandardOutput = $true
+$info.RedirectStandardError = $true
+$info.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+$info.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
+foreach ($item in @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $WorkerFile, '-InputFile', $InputFile)) {
+    [void]$info.ArgumentList.Add([string]$item)
+}
+$workerProc = [Diagnostics.Process]::Start($info)
+if ($null -eq $workerProc) { throw 'Capture parent could not start the worker.' }
+$stdoutTask = $workerProc.StandardOutput.ReadToEndAsync()
+$stderrTask = $workerProc.StandardError.ReadToEndAsync()
+$workerPid = [int]$workerProc.Id
+$workerTicks = [int64]$workerProc.StartTime.ToUniversalTime().Ticks
+$workerStarted = $workerProc.StartTime.ToUniversalTime().ToString('o')
+$exited = $workerProc.WaitForExit(180000)
+if (-not $exited) {
+    try { $workerProc.Kill($true) } catch { }
+    $null = $workerProc.WaitForExit(5000)
+}
+$stdoutText = [string]$stdoutTask.GetAwaiter().GetResult()
+$stderrText = [string]$stderrTask.GetAwaiter().GetResult()
+$stdoutEof = [bool]$stdoutTask.IsCompleted
+$stderrEof = [bool]$stderrTask.IsCompleted
+$workerExit = if ($workerProc.HasExited) { [int]$workerProc.ExitCode } else { 1 }
+$utf8 = [Text.UTF8Encoding]::new($false)
+[IO.File]::WriteAllBytes($StdoutFile, $utf8.GetBytes($stdoutText))
+[IO.File]::WriteAllBytes($StderrFile, $utf8.GetBytes($stderrText))
+[IO.File]::WriteAllBytes($OutputFile, $utf8.GetBytes($stdoutText))
+$stdoutSha = ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($utf8.GetBytes($stdoutText)))).ToLowerInvariant()
+$obs = [ordered]@{
+    protocol_version = 'telephone-line-public-install-lifecycle-pipe-observation-v1'
+    eof_from_readers = [bool]($stdoutEof -and $stderrEof)
+    stdout_eof = [bool]$stdoutEof
+    stderr_eof = [bool]$stderrEof
+    capture_pid = $parentPid
+    capture_start_time_utc_ticks = $parentTicks
+    capture_started_at_utc = $parentStarted
+    worker_pid = $workerPid
+    worker_start_time_utc_ticks = $workerTicks
+    worker_started_at_utc = $workerStarted
+    worker_os_exit_code = [int]$workerExit
+    capture_os_exit_intent = 0
+    stdout_sha256 = $stdoutSha
+    stderr_bytes = [int64]$utf8.GetByteCount($stderrText)
+    recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+    worker_self_reported_eof = $false
+}
+[IO.File]::WriteAllText($ObservationFile, (($obs | ConvertTo-Json -Depth 8) + "`n"), $utf8)
+$workerProc.Dispose()
+Start-Sleep -Seconds 1
 exit 0
 '@
         [IO.File]::WriteAllText($workerPath, $worker.Replace("`n", "`r`n"), [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($capturePath, $capture.Replace("`n", "`r`n"), [Text.UTF8Encoding]::new($false))
         $sessionId = 'ci-windows-lifecycle-not-ai'
         $wiredRunId = [guid]::NewGuid().ToString()
         $wired = [ordered]@{
@@ -566,12 +631,13 @@ exit 0
                 working_directory = $workRoot
                 arguments = @(
                     '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-                    '-File', $workerPath,
+                    '-File', $capturePath,
+                    '-WorkerFile', $workerPath,
                     '-InputFile', $inputPath,
-                    '-OutputFile', $outputPath,
+                    '-ObservationFile', $observationPath,
                     '-StdoutFile', $stdoutPath,
                     '-StderrFile', $stderrPath,
-                    '-TerminalFile', $terminalPath
+                    '-OutputFile', $outputPath
                 )
             }
             installed_version = [ordered]@{
@@ -636,18 +702,22 @@ exit 0
             $collect = [ordered]@{ status = 'IN_PROGRESS'; pass = $false }
             $workerProc = $null
             $wrapperProc = $null
+            $captureProc = $null
             $workerExit = $null
             $wrapperExit = $null
+            $captureExit = $null
             $workerDisappeared = $false
             $wrapperDisappeared = $false
+            $captureDisappeared = $false
             $workerMismatch = $false
             $wrapperMismatch = $false
+            $captureMismatch = $false
             try {
                 while ([DateTimeOffset]::UtcNow -lt $deadline) {
                     $owner = Read-JsonOrNull -Path $ownerPath
                     $launch = Read-JsonOrNull -Path $launchPath
                     $outDoc = Read-JsonOrNull -Path $outputPath
-                    $termDoc = Read-JsonOrNull -Path $terminalPath
+                    $obsDoc = Read-JsonOrNull -Path $observationPath
                     $outbox = Read-JsonOrNull -Path $outboxPath
                     if ($null -eq $wrapperProc -and -not $wrapperDisappeared -and $null -ne $owner -and $owner.Contains('pid') -and $owner.Contains('start_time_utc_ticks')) {
                         $opened = Open-ExactProcess -ProcessId ([int]$owner.pid) -StartTicks ([int64]$owner.start_time_utc_ticks)
@@ -655,8 +725,14 @@ exit 0
                         if ($null -ne $opened -and $null -ne $opened.process) { $wrapperProc = $opened.process }
                         elseif ($null -ne $opened -and [bool]$opened.disappeared) { $wrapperDisappeared = $true }
                     }
-                    if ($null -eq $workerProc -and -not $workerDisappeared -and $null -ne $outDoc -and $outDoc.Contains('pid') -and $outDoc.Contains('start_time_utc_ticks')) {
-                        $opened = Open-ExactProcess -ProcessId ([int]$outDoc.pid) -StartTicks ([int64]$outDoc.start_time_utc_ticks)
+                    if ($null -eq $captureProc -and -not $captureDisappeared -and $null -ne $owner -and $owner.Contains('lead_pid') -and $owner.Contains('lead_start_time_utc_ticks')) {
+                        $opened = Open-ExactProcess -ProcessId ([int]$owner.lead_pid) -StartTicks ([int64]$owner.lead_start_time_utc_ticks)
+                        if ($null -ne $opened -and [bool]$opened.mismatch) { $captureMismatch = $true; break }
+                        if ($null -ne $opened -and $null -ne $opened.process) { $captureProc = $opened.process }
+                        elseif ($null -ne $opened -and [bool]$opened.disappeared) { $captureDisappeared = $true }
+                    }
+                    if ($null -eq $workerProc -and -not $workerDisappeared -and $null -ne $obsDoc -and $obsDoc.Contains('worker_pid') -and $obsDoc.Contains('worker_start_time_utc_ticks')) {
+                        $opened = Open-ExactProcess -ProcessId ([int]$obsDoc.worker_pid) -StartTicks ([int64]$obsDoc.worker_start_time_utc_ticks)
                         if ($null -ne $opened -and [bool]$opened.mismatch) { $workerMismatch = $true; break }
                         if ($null -ne $opened -and $null -ne $opened.process) { $workerProc = $opened.process }
                         elseif ($null -ne $opened -and [bool]$opened.disappeared) { $workerDisappeared = $true }
@@ -671,6 +747,14 @@ exit 0
                             if ($wrapperProc.HasExited) { $wrapperExit = [int]$wrapperProc.ExitCode }
                         }
                     }
+                    if ($null -ne $captureProc -and $null -eq $captureExit) {
+                        if ($captureProc.HasExited -or $captureProc.WaitForExit(400)) {
+                            if ($captureProc.HasExited) { $captureExit = [int]$captureProc.ExitCode }
+                        }
+                    }
+                    if ($null -eq $workerExit -and $null -ne $obsDoc -and $obsDoc.Contains('worker_os_exit_code') -and $workerDisappeared) {
+                        $workerExit = [int]$obsDoc.worker_os_exit_code
+                    }
                     $contentOk = $false
                     if ($null -ne $outDoc) {
                         $contentOk = (
@@ -683,41 +767,48 @@ exit 0
                         )
                     }
                     $eofOk = $false
-                    if ($null -ne $termDoc -and [bool]$termDoc.eof -eq $true -and [int]$termDoc.exit_code_intent -eq 0) {
+                    if ($null -ne $obsDoc -and [bool]$obsDoc.eof_from_readers -eq $true -and [bool]$obsDoc.stdout_eof -eq $true -and [bool]$obsDoc.stderr_eof -eq $true -and [bool]$obsDoc.worker_self_reported_eof -eq $false) {
                         $stdoutSha = Get-Sha256File -Path $stdoutPath
                         $outputSha = Get-Sha256File -Path $outputPath
+                        $stderrText = if ([IO.File]::Exists($stderrPath)) { [IO.File]::ReadAllText($stderrPath) } else { '' }
                         $stderrBytes = if ([IO.File]::Exists($stderrPath)) { [int64](Get-Item -LiteralPath $stderrPath).Length } else { -1 }
                         $eofOk = (
                             -not [string]::IsNullOrWhiteSpace($stdoutSha) -and
                             $stdoutSha -ceq $outputSha -and
-                            $stdoutSha -ceq [string]$termDoc.stdout_sha256 -and
-                            $stderrBytes -eq 0 -and
-                            [int64]$termDoc.stderr_bytes -eq 0
+                            $stdoutSha -ceq [string]$obsDoc.stdout_sha256 -and
+                            $stderrBytes -gt 0 -and
+                            $stderrBytes -eq [int64]$obsDoc.stderr_bytes -and
+                            $stderrText.Contains(('TELEPHONE-LIFECYCLE-STDERR:' + $nonce))
                         )
                     }
                     $outboxOk = ($null -ne $outbox -and [string]$outbox.terminal -ceq 'completed' -and [string]$outbox.run_id -ceq $wiredRunId)
                     $ownerOk = $false
-                    if ($null -ne $owner -and $null -ne $outDoc -and $null -ne $launch) {
+                    if ($null -ne $owner -and $null -ne $obsDoc -and $null -ne $outDoc -and $null -ne $launch) {
                         $ownerOk = (
                             [string]$owner.run_id -ceq $wiredRunId -and
-                            [int]$owner.lead_pid -eq [int]$outDoc.pid -and
-                            [int64]$owner.lead_start_time_utc_ticks -eq [int64]$outDoc.start_time_utc_ticks -and
+                            [int]$owner.lead_pid -eq [int]$obsDoc.capture_pid -and
+                            [int64]$owner.lead_start_time_utc_ticks -eq [int64]$obsDoc.capture_start_time_utc_ticks -and
+                            [int]$outDoc.pid -eq [int]$obsDoc.worker_pid -and
+                            [int64]$outDoc.start_time_utc_ticks -eq [int64]$obsDoc.worker_start_time_utc_ticks -and
                             [int]$owner.pid -eq [int]$launch.pid -and
                             [int64]$owner.start_time_utc_ticks -eq [int64]$launch.start_time_utc_ticks
                         )
                     }
-                    if ($contentOk -and $eofOk -and $outboxOk -and $ownerOk -and $null -ne $workerExit -and $null -ne $wrapperExit) {
-                        if ([int]$workerExit -eq 0 -and [int]$wrapperExit -eq 0 -and [int]$outDoc.exit_code_intent -eq 0) {
+                    if ($contentOk -and $eofOk -and $outboxOk -and $ownerOk -and $null -ne $workerExit -and $null -ne $wrapperExit -and $null -ne $captureExit) {
+                        if ([int]$workerExit -eq 0 -and [int]$wrapperExit -eq 0 -and [int]$captureExit -eq 0 -and [int]$obsDoc.worker_os_exit_code -eq 0 -and [int]$outDoc.exit_code_intent -eq 0) {
                             $collect.status = 'PASS'
                             $collect.pass = $true
                             $collect.output = $outDoc
-                            $collect.terminal = $termDoc
+                            $collect.observation = $obsDoc
                             $collect.owner = $owner
                             $collect.launch_intent = $launch
                             $collect.outbox = $outbox
-                            $collect.worker_pid = [int]$outDoc.pid
-                            $collect.worker_start_time_utc_ticks = [int64]$outDoc.start_time_utc_ticks
+                            $collect.worker_pid = [int]$obsDoc.worker_pid
+                            $collect.worker_start_time_utc_ticks = [int64]$obsDoc.worker_start_time_utc_ticks
                             $collect.worker_exit_code = [int]$workerExit
+                            $collect.capture_pid = [int]$obsDoc.capture_pid
+                            $collect.capture_start_time_utc_ticks = [int64]$obsDoc.capture_start_time_utc_ticks
+                            $collect.capture_exit_code = [int]$captureExit
                             $collect.wrapper_pid = [int]$owner.pid
                             $collect.wrapper_start_time_utc_ticks = [int64]$owner.start_time_utc_ticks
                             $collect.wrapper_exit_code = [int]$wrapperExit
@@ -725,31 +816,34 @@ exit 0
                             $collect.stdout_sha256 = Get-Sha256File -Path $stdoutPath
                             $collect.stderr_bytes = [int64](Get-Item -LiteralPath $stderrPath).Length
                             $collect.input_sha256 = $inputSha
-                            $collect.independently_expected = [ordered]@{ nonce = $nonce; phrase = $phrase; input_sha256 = $inputSha }
+                            $collect.independently_expected = [ordered]@{ nonce = $nonce; phrase = $phrase; input_sha256 = $inputSha; stderr_token = ('TELEPHONE-LIFECYCLE-STDERR:' + $nonce) }
                             break
                         } else {
-                            $collect.detail = 'Measured exit codes were not both 0.'
+                            $collect.detail = 'Measured OS exit codes were not all 0.'
                             break
                         }
                     }
-                    if ($workerMismatch -or $wrapperMismatch) { break }
+                    if ($workerMismatch -or $wrapperMismatch -or $captureMismatch) { break }
                     Start-Sleep -Milliseconds 200
                 }
             } finally {
                 if ($null -ne $workerProc) { try { $workerProc.Dispose() } catch { } }
                 if ($null -ne $wrapperProc) { try { $wrapperProc.Dispose() } catch { } }
+                if ($null -ne $captureProc) { try { $captureProc.Dispose() } catch { } }
             }
             Copy-TreeIfPresent -From $runDir -To (Join-Path $evidence 'wired-run\run')
             if ([IO.File]::Exists($outboxPath)) { Copy-Item -LiteralPath $outboxPath -Destination (Join-Path $evidence 'wired-run\outbox.json') -Force }
             if ([IO.File]::Exists($outputPath)) { Copy-Item -LiteralPath $outputPath -Destination (Join-Path $evidence 'wired-run\output.json') -Force }
             if ([IO.File]::Exists($stdoutPath)) { Copy-Item -LiteralPath $stdoutPath -Destination (Join-Path $evidence 'wired-run\stdout.txt') -Force }
             if ([IO.File]::Exists($stderrPath)) { Copy-Item -LiteralPath $stderrPath -Destination (Join-Path $evidence 'wired-run\stderr.txt') -Force }
-            if ([IO.File]::Exists($terminalPath)) { Copy-Item -LiteralPath $terminalPath -Destination (Join-Path $evidence 'wired-run\terminal.json') -Force }
+            if ([IO.File]::Exists($observationPath)) { Copy-Item -LiteralPath $observationPath -Destination (Join-Path $evidence 'wired-run\pipe-observation.json') -Force }
             $collect.worker_exit_code = $workerExit
             $collect.wrapper_exit_code = $wrapperExit
+            $collect.capture_exit_code = $captureExit
             $collect.worker_disappeared_before_wait = $workerDisappeared
             $collect.wrapper_disappeared_before_wait = $wrapperDisappeared
-            $collect.pid_start_mismatch = ($workerMismatch -or $wrapperMismatch)
+            $collect.capture_disappeared_before_wait = $captureDisappeared
+            $collect.pid_start_mismatch = ($workerMismatch -or $wrapperMismatch -or $captureMismatch)
             $collect.members = Read-JsonOrNull -Path $membersPath
             $collect.task_after_start = $taskAfterStart.info
             $collect.task_last_run = $taskAfterStart.last_run

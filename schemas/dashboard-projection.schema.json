@@ -22,6 +22,9 @@
     "updated_at_utc": {
       "$ref": "#/$defs/utc_timestamp"
     },
+    "observation_started_at_utc": {
+      "$ref": "#/$defs/utc_timestamp"
+    },
     "config_present": {
       "type": "boolean"
     },

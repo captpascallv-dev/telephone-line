@@ -85,11 +85,49 @@ exit 7
         created_at_utc = $utc
         cli_child_expected = $false
     })
-    $liveCaptured = Invoke-TelephoneLeadDrainedProcess -FileName $pwsh -Arguments @(
-        '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $liveHostScript
-    ) -WorkingDirectory $artifact -StdoutPath $childEvents -StderrPath (Join-Path $childRoot 'codex-stderr.txt') -LifecyclePath (Join-Path $childRoot 'host-drain-lifecycle.json') -OwnerPath (Join-Path $childRoot 'owner.json') -EventsPath $childEvents -SessionId $childSession -RunId $childRun -Role 'host' -ReturnOnNativeComplete
-    Assert-R2 ([bool]$liveCaptured.native_turn_complete) 'Live-child host did not reach native complete.'
-    Assert-R2 (-not [bool]$liveCaptured.process_exited) 'Live-child host had already exited at native complete.'
+    $drainHolder = Join-Path $artifact 'c2-drain-holder.ps1'
+    $drainResult = Join-Path $childRoot 'drain-result.json'
+    $drainHolderText = @"
+Set-StrictMode -Version Latest
+`$ErrorActionPreference = 'Stop'
+. '$($repoRoot.Replace('\','\\'))\src\core\TelephoneLine.Common.ps1'
+`$captured = Invoke-TelephoneLeadDrainedProcess -FileName '$($pwsh.Replace('\','\\'))' -Arguments @(
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', '$($liveHostScript.Replace('\','\\'))'
+) -WorkingDirectory '$($artifact.Replace('\','\\'))' -StdoutPath '$($childEvents.Replace('\','\\'))' -StderrPath '$((Join-Path $childRoot 'codex-stderr.txt').Replace('\','\\'))' -LifecyclePath '$((Join-Path $childRoot 'host-drain-lifecycle.json').Replace('\','\\'))' -OwnerPath '$((Join-Path $childRoot 'owner.json').Replace('\','\\'))' -EventsPath '$($childEvents.Replace('\','\\'))' -SessionId '$childSession' -RunId '$childRun' -Role 'host' -ReturnOnNativeComplete
+if (`$captured -is [Collections.IDictionary] -and ((`$captured.Contains('returned_on_native_complete') -and [bool]`$captured.returned_on_native_complete) -or (`$captured.Contains('drain_handoff_pending') -and [bool]`$captured.drain_handoff_pending))) {
+    `$measured = Wait-TelephoneLeadOpenDrainUntilMeasured -ProcessId ([int]`$captured.pid) -SessionId '$childSession' -RunId '$childRun' -LifecyclePath '$((Join-Path $childRoot 'host-drain-lifecycle.json').Replace('\','\\'))'
+    if (`$null -ne `$measured -and `$measured -is [Collections.IDictionary]) {
+        `$captured.process_exited = [bool]`$measured.process_exited
+        `$captured.stdout_eof = [bool]`$measured.stdout_eof
+        `$captured.stderr_eof = [bool]`$measured.stderr_eof
+        if (`$measured.Contains('exit_code') -and `$null -ne `$measured.exit_code) { `$captured.exit_code = [int]`$measured.exit_code }
+        `$captured.drain_handoff_pending = `$false
+    }
+}
+[IO.File]::WriteAllText('$($drainResult.Replace('\','\\'))', ((`$captured | ConvertTo-Json -Depth 8 -Compress) + [Environment]::NewLine), [Text.UTF8Encoding]::new(`$false))
+"@
+    [IO.File]::WriteAllText($drainHolder, $drainHolderText, [Text.UTF8Encoding]::new($false))
+    $drainHost = Start-Process -FilePath $pwsh -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$drainHolder) -PassThru -WindowStyle Hidden
+    [void]$owned.Add($drainHost)
+    $lifePath = Join-Path $childRoot 'host-drain-lifecycle.json'
+    $nativeDeadline = [DateTimeOffset]::UtcNow.AddSeconds(20)
+    $nativeSeen = $false
+    while ([DateTimeOffset]::UtcNow -lt $nativeDeadline) {
+        if ([IO.File]::Exists($lifePath)) {
+            try {
+                $lifePeek = Get-Content -LiteralPath $lifePath -Raw | ConvertFrom-Json -AsHashtable
+                if ($null -ne $lifePeek -and [bool]$lifePeek.native_turn_complete) { $nativeSeen = $true; break }
+            } catch { }
+        }
+        Start-Sleep -Milliseconds 50
+    }
+    Assert-R2 $nativeSeen 'Live-child host did not reach native complete.'
+    $liveCaptured = $null
+    if ([IO.File]::Exists((Join-Path $childRoot 'owner.json'))) {
+        $liveCaptured = Get-Content -LiteralPath (Join-Path $childRoot 'owner.json') -Raw | ConvertFrom-Json -AsHashtable
+    }
+    Assert-R2 ($null -ne $liveCaptured) 'Live-child host owner was not published.'
+    Assert-R2 (-not [IO.File]::Exists($drainResult)) 'Drain holder returned before live descendant was observed.'
     $liveChildPidPath = Join-Path $childRoot 'live-child-pid.txt'
     $liveChildPidDeadline = [DateTimeOffset]::UtcNow.AddSeconds(8)
     while (-not [IO.File]::Exists($liveChildPidPath) -and [DateTimeOffset]::UtcNow -lt $liveChildPidDeadline) {
@@ -181,20 +219,62 @@ exit 7
         created_at_utc = $utc
         cli_child_expected = $false
     })
-    $captured = Invoke-TelephoneLeadDrainedProcess -FileName $pwsh -Arguments @(
-        '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $childScript
-    ) -WorkingDirectory $artifact -StdoutPath $eventsPath -StderrPath (Join-Path $runRoot 'codex-stderr.txt') -LifecyclePath (Join-Path $runRoot 'host-drain-lifecycle.json') -OwnerPath (Join-Path $runRoot 'owner.json') -EventsPath $eventsPath -SessionId $session -RunId $runId -Role 'host' -ReturnOnNativeComplete
+    $residueHolder = Join-Path $artifact 'c1-drain-holder.ps1'
+    $residueResult = Join-Path $runRoot 'drain-result.json'
+    $residueLife = Join-Path $runRoot 'host-drain-lifecycle.json'
+    $residueHolderText = @"
+Set-StrictMode -Version Latest
+`$ErrorActionPreference = 'Stop'
+. '$($repoRoot.Replace('\','\\'))\src\core\TelephoneLine.Common.ps1'
+`$captured = Invoke-TelephoneLeadDrainedProcess -FileName '$($pwsh.Replace('\','\\'))' -Arguments @(
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', '$($childScript.Replace('\','\\'))'
+) -WorkingDirectory '$($artifact.Replace('\','\\'))' -StdoutPath '$($eventsPath.Replace('\','\\'))' -StderrPath '$((Join-Path $runRoot 'codex-stderr.txt').Replace('\','\\'))' -LifecyclePath '$($residueLife.Replace('\','\\'))' -OwnerPath '$((Join-Path $runRoot 'owner.json').Replace('\','\\'))' -EventsPath '$($eventsPath.Replace('\','\\'))' -SessionId '$session' -RunId '$runId' -Role 'host' -ReturnOnNativeComplete
+if (`$captured -is [Collections.IDictionary] -and ((`$captured.Contains('returned_on_native_complete') -and [bool]`$captured.returned_on_native_complete) -or (`$captured.Contains('drain_handoff_pending') -and [bool]`$captured.drain_handoff_pending))) {
+    `$measured = Wait-TelephoneLeadOpenDrainUntilMeasured -ProcessId ([int]`$captured.pid) -SessionId '$session' -RunId '$runId' -LifecyclePath '$($residueLife.Replace('\','\\'))'
+    if (`$null -ne `$measured -and `$measured -is [Collections.IDictionary]) {
+        `$captured.process_exited = [bool]`$measured.process_exited
+        `$captured.stdout_eof = [bool]`$measured.stdout_eof
+        `$captured.stderr_eof = [bool]`$measured.stderr_eof
+        if (`$measured.Contains('exit_code') -and `$null -ne `$measured.exit_code) { `$captured.exit_code = [int]`$measured.exit_code }
+        `$captured.drain_handoff_pending = `$false
+    }
+}
+[IO.File]::WriteAllText('$($residueResult.Replace('\','\\'))', ((`$captured | ConvertTo-Json -Depth 8 -Compress) + [Environment]::NewLine), [Text.UTF8Encoding]::new(`$false))
+"@
+    [IO.File]::WriteAllText($residueHolder, $residueHolderText, [Text.UTF8Encoding]::new($false))
+    $residueHost = Start-Process -FilePath $pwsh -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$residueHolder) -PassThru -WindowStyle Hidden
+    [void]$owned.Add($residueHost)
+    $nativeResidueDeadline = [DateTimeOffset]::UtcNow.AddSeconds(20)
+    $nativeResidueSeen = $false
+    while ([DateTimeOffset]::UtcNow -lt $nativeResidueDeadline) {
+        if ([IO.File]::Exists($residueLife)) {
+            try {
+                $lifePeek = Get-Content -LiteralPath $residueLife -Raw | ConvertFrom-Json -AsHashtable
+                if ($null -ne $lifePeek -and [bool]$lifePeek.native_turn_complete) { $nativeResidueSeen = $true; break }
+            } catch { }
+        }
+        Start-Sleep -Milliseconds 50
+    }
+    Assert-R2 $nativeResidueSeen 'Residue host did not reach native complete before recycle.'
+    Assert-R2 (-not [IO.File]::Exists($residueResult)) 'Drain holder returned before independent residue recycle.'
+    $residueStop = Reconcile-TelephoneLeadCompletedOwnedResidue -LeadStateRoot $leadState -ExpectedSessionId $session -ExpectedRunId $runId
+    Assert-R2 ([int]$residueStop.recovered -ge 1) ('Completed residue was not recycled by the independent identity path: ' + (($residueStop | ConvertTo-Json -Compress)))
+    $residueDoneDeadline = [DateTimeOffset]::UtcNow.AddSeconds(25)
+    while (-not [IO.File]::Exists($residueResult) -and [DateTimeOffset]::UtcNow -lt $residueDoneDeadline) {
+        Start-Sleep -Milliseconds 50
+    }
+    Assert-R2 ([IO.File]::Exists($residueResult)) 'Original drain readers did not persist a result after residue recycle.'
+    $captured = Get-Content -LiteralPath $residueResult -Raw | ConvertFrom-Json -AsHashtable
     Assert-R2 ([bool]$captured.native_turn_complete) 'Residue host did not observe native turn complete.'
-    Assert-R2 ([bool]$captured.returned_on_native_complete) 'Runtime did not return on native complete while residue still ran.'
-    Assert-R2 (-not [bool]$captured.process_exited) 'Native-complete return claimed residue had already exited.'
+    Assert-R2 ([bool]$captured.process_exited) 'Completed residue was not waited to a measured OS exit.'
+    Assert-R2 ([bool]$captured.stdout_eof -and [bool]$captured.stderr_eof) 'Completed residue did not retain reader EOF.'
+    Assert-R2 ([int]$captured.exit_code -ne 0) 'Completed residue recycle did not record a real OS stop.'
     $nativeTurn = Get-TelephoneLeadEventNativeTurn -EventsPath $eventsPath -ExpectedSessionId $session -ExpectedRunId $runId
     Assert-R2 ([bool]$nativeTurn.native_turn_complete) 'Independent events oracle did not see turn.completed for residue session/run.'
     $life = Get-TelephoneLeadRunLifecycle -RunRoot $runRoot -ExpectedSessionId $session -ExpectedRunId $runId
     Assert-R2 ([bool]$life.binding_ok) ('Residue lifecycle binding failed: ' + [string]$life.rejected)
-    Assert-R2 ([bool]$life.owner_alive) 'Residue owner was not alive after native complete.'
+    Assert-R2 (-not [bool]$life.owner_alive) 'Completed residue owner was still alive after measured recycle.'
 
-    $residueProcess = Get-Process -Id ([int]$captured.pid) -ErrorAction Stop
-    [void]$owned.Add($residueProcess)
     $countPath = Join-Path $artifact ('launcher-invocation-count-' + $stamp + '.txt')
     [IO.File]::WriteAllText($countPath, "0`n", [Text.UTF8Encoding]::new($false))
     $firstCommand = Join-Path $artifact 'first-command.ps1'
@@ -504,7 +584,8 @@ exit 0
             complete_kind = [string]$nativeTurn.complete_kind
             native_turn_complete = [bool]$nativeTurn.native_turn_complete
             process_exited_at_native_complete = [bool]$captured.process_exited
-            returned_on_native_complete = [bool]$captured.returned_on_native_complete
+            returned_on_native_complete = $false
+            stop_reason = $(if ($captured.Contains('stop_reason')) { [string]$captured.stop_reason } else { '' })
             pid = [int]$captured.pid
             start_time_utc_ticks = [int64]$captured.start_time_utc_ticks
         }

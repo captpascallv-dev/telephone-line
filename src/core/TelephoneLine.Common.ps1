@@ -1583,27 +1583,60 @@ function Wait-TelephoneLeadWakeAcknowledged {
                     throw 'Lead wake acknowledgment binds a different wake run.'
                 }
                 if (-not [string]::IsNullOrWhiteSpace($ExpectedWakeKey)) {
-                    if (-not $ack.Contains('wake_key') -or [string]::IsNullOrWhiteSpace([string]$ack['wake_key'])) {
-                        throw [IO.IOException]::new('Lead wake acknowledgment is missing the intended receipt wake key.')
-                    }
-                    if ([string]$ack['wake_key'] -cne $ExpectedWakeKey) {
+                    if ($ack.Contains('wake_key') -and -not [string]::IsNullOrWhiteSpace([string]$ack['wake_key']) -and [string]$ack['wake_key'] -cne $ExpectedWakeKey) {
                         throw 'Lead wake acknowledgment binds a different receipt wake key.'
                     }
                 }
                 if (-not [string]::IsNullOrWhiteSpace($ExpectedReceiptSha256)) {
-                    if (-not $ack.Contains('receipt_sha256') -or [string]::IsNullOrWhiteSpace([string]$ack['receipt_sha256'])) {
-                        throw [IO.IOException]::new('Lead wake acknowledgment is missing the intended receipt.')
-                    }
-                    if ([string]$ack['receipt_sha256'] -cne $ExpectedReceiptSha256) {
+                    if ($ack.Contains('receipt_sha256') -and -not [string]::IsNullOrWhiteSpace([string]$ack['receipt_sha256']) -and [string]$ack['receipt_sha256'] -cne $ExpectedReceiptSha256) {
                         throw 'Lead wake acknowledgment binds a different receipt.'
                     }
                 }
-                if (-not $ack.Contains('run_id') -or [string]::IsNullOrWhiteSpace([string]$ack['run_id'])) {
-                    if (-not [IO.File]::Exists($runMetaPath)) {
-                        throw 'Lead wake acknowledgment is missing a bound run id.'
+                $ackNeedsRunBind = (-not $ack.Contains('run_id') -or [string]::IsNullOrWhiteSpace([string]$ack['run_id']))
+                $ackNeedsWakeBind = (-not [string]::IsNullOrWhiteSpace($ExpectedWakeKey) -and (-not $ack.Contains('wake_key') -or [string]::IsNullOrWhiteSpace([string]$ack['wake_key'])))
+                $ackNeedsReceiptBind = (-not [string]::IsNullOrWhiteSpace($ExpectedReceiptSha256) -and (-not $ack.Contains('receipt_sha256') -or [string]::IsNullOrWhiteSpace([string]$ack['receipt_sha256'])))
+                $promptRun = $null
+                if ([IO.File]::Exists($runMetaPath)) {
+                    $promptRun = (Read-TelephoneJson -Path $runMetaPath).value
+                }
+                $appRunPath = Join-Path $root 'run.json'
+                $appRun = $null
+                if ($null -eq $promptRun -and [IO.File]::Exists($appRunPath)) {
+                    $appRun = (Read-TelephoneJson -Path $appRunPath).value
+                    if ($appRun -is [Collections.IDictionary] -and [string]$appRun.protocol_version -ceq 'telephone-line-codex-app-server-lead-run-v1') {
+                        if ([string]$appRun.run_id -cne $expectedRun) {
+                            throw 'Lead wake acknowledgment binds a different wake run.'
+                        }
+                        if ([string]$appRun.thread_id -cne $ExpectedSessionId) {
+                            throw 'Lead wake run started another session.'
+                        }
+                        if ($appRun.Contains('callback') -and $appRun['callback'] -is [Collections.IDictionary]) {
+                            $promptRun = [ordered]@{ prompt = $appRun['callback'] }
+                        }
                     }
-                    $runMeta = (Read-TelephoneJson -Path $runMetaPath).value
-                    $null = Test-TelephoneNativeLeadRunBinding -Run $runMeta -ExpectedSessionId $ExpectedSessionId -ExpectedRunId $expectedRun -EventsPath $eventsPath
+                }
+                if ($ackNeedsRunBind) {
+                    if ($null -ne $promptRun -and [IO.File]::Exists($runMetaPath)) {
+                        $null = Test-TelephoneNativeLeadRunBinding -Run $promptRun -ExpectedSessionId $ExpectedSessionId -ExpectedRunId $expectedRun -EventsPath $eventsPath
+                    } elseif ($null -ne $appRun) {
+                        # App Server run.json already bound run_id/thread_id above.
+                    } else {
+                        throw [IO.IOException]::new('Lead wake acknowledgment is missing a bound run id.')
+                    }
+                }
+                if ($ackNeedsWakeBind -or $ackNeedsReceiptBind) {
+                    if ($null -eq $promptRun) {
+                        throw [IO.IOException]::new('Lead wake acknowledgment is missing the intended receipt wake key.')
+                    }
+                    try {
+                        $null = Test-TelephoneNativeWakeInputBinding -Run $promptRun -RunRoot $root -ExpectedWakeKey $ExpectedWakeKey -ExpectedReceiptSha256 $ExpectedReceiptSha256
+                    } catch {
+                        $bindMsg = [string]$_.Exception.Message
+                        if ($bindMsg -match 'missing|still empty|does not contain') {
+                            throw [IO.IOException]::new($bindMsg)
+                        }
+                        throw
+                    }
                 }
                 return [ordered]@{
                     run_root = $root

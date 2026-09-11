@@ -19,6 +19,8 @@ $sleeper = $null
 $previousStable = [Environment]::GetEnvironmentVariable('TELEPHONE_LINE_STABLE_CLI', 'Process')
 $previousPolicy = [Environment]::GetEnvironmentVariable('TELEPHONE_LINE_STABLE_CLI_POLICY', 'Process')
 $previousLeadState = [Environment]::GetEnvironmentVariable('TELEPHONE_LINE_LEAD_STATE_ROOT', 'Process')
+$previousSupervisorRunId = [Environment]::GetEnvironmentVariable('TELEPHONE_LINE_SUPERVISOR_RUN_ID', 'Process')
+[Environment]::SetEnvironmentVariable('TELEPHONE_LINE_SUPERVISOR_RUN_ID', '', 'Process')
 
 function Assert-Hardening {
     param([bool]$Condition, [string]$Message)
@@ -342,6 +344,97 @@ param([string]`$WorktreePath,[string]`$PromptFile,[string]`$ResumeSessionId,[str
     Assert-Hardening ([bool]$fromPolicy.present) 'Policy file was not read.'
     Assert-Hardening ([string]::Equals([string]$fromPolicy.executable, $pwsh, [StringComparison]::OrdinalIgnoreCase)) 'Policy executable drifted.'
 
+    $holderRoot = Join-Path $testRoot 'independent-parent'
+    [IO.Directory]::CreateDirectory($holderRoot) | Out-Null
+    $lateSession = [Guid]::NewGuid().ToString('D')
+    $lateRun = 'independent-parent-drain'
+    $lateRunRoot = Join-Path $holderRoot $lateRun
+    [IO.Directory]::CreateDirectory($lateRunRoot) | Out-Null
+    $childScript = Join-Path $holderRoot 'late-child.ps1'
+    [IO.File]::WriteAllText($childScript, @"
+Set-StrictMode -Version Latest
+`$session = '$lateSession'
+`$runId = '$lateRun'
+Write-Output ('{"type":"thread.started","thread_id":"' + `$session + '"}')
+Start-Sleep -Milliseconds 50
+Write-Output ('{"type":"turn.started","turn_id":"indep-turn","session_id":"' + `$session + '","run_id":"' + `$runId + '"}')
+Start-Sleep -Milliseconds 50
+Write-Output ('{"type":"turn.completed","turn_id":"indep-turn","session_id":"' + `$session + '","run_id":"' + `$runId + '"}')
+[Console]::Out.Flush()
+Start-Sleep -Seconds 2
+Write-Output 'LATE-STDOUT-INDEPENDENT'
+[Console]::Out.Flush()
+[Console]::Error.WriteLine('LATE-STDERR-INDEPENDENT')
+[Console]::Error.Flush()
+exit 11
+"@, [Text.UTF8Encoding]::new($false))
+    $holderScript = Join-Path $holderRoot 'drain-holder.ps1'
+    $holderOut = Join-Path $holderRoot 'holder-result.json'
+    $eventsPath = Join-Path $lateRunRoot 'codex-events.jsonl'
+    $errPath = Join-Path $lateRunRoot 'codex-stderr.txt'
+    $lifePath = Join-Path $lateRunRoot 'cli-drain-lifecycle.json'
+    $null = Write-TelephoneJsonCreateNew -Path (Join-Path $lateRunRoot 'lead-run.json') -Value ([ordered]@{
+        protocol_version = 'huhu-concerto-cli-lead-run-v1'
+        run_id = $lateRun
+        requested_run_id = $lateRun
+        worktree = $holderRoot
+        resume_session_id = $lateSession
+        events_path = $eventsPath
+        created_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+    })
+    [IO.File]::WriteAllText($holderScript, @"
+Set-StrictMode -Version Latest
+`$ErrorActionPreference = 'Stop'
+. '$($repoRoot.Replace('\','\\'))\src\core\TelephoneLine.Common.ps1'
+`$captured = Invoke-TelephoneLeadDrainedProcess -FileName '$($pwsh.Replace('\','\\'))' -Arguments @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File','$($childScript.Replace('\','\\'))') -WorkingDirectory '$($holderRoot.Replace('\','\\'))' -StdoutPath '$($eventsPath.Replace('\','\\'))' -StderrPath '$($errPath.Replace('\','\\'))' -LifecyclePath '$($lifePath.Replace('\','\\'))' -OwnerPath '$((Join-Path $lateRunRoot 'owner.json').Replace('\','\\'))' -EventsPath '$($eventsPath.Replace('\','\\'))' -SessionId '$lateSession' -RunId '$lateRun' -Role 'cli' -ReturnOnNativeComplete
+if (`$captured -is [Collections.IDictionary] -and ((`$captured.Contains('returned_on_native_complete') -and [bool]`$captured.returned_on_native_complete) -or (`$captured.Contains('drain_handoff_pending') -and [bool]`$captured.drain_handoff_pending))) {
+    `$measured = Wait-TelephoneLeadOpenDrainUntilMeasured -ProcessId ([int]`$captured.pid) -SessionId '$lateSession' -RunId '$lateRun' -LifecyclePath '$($lifePath.Replace('\','\\'))'
+    if (`$null -ne `$measured -and `$measured -is [Collections.IDictionary]) {
+        `$captured.process_exited = [bool]`$measured.process_exited
+        `$captured.stdout_eof = [bool]`$measured.stdout_eof
+        `$captured.stderr_eof = [bool]`$measured.stderr_eof
+        if (`$measured.Contains('exit_code') -and `$null -ne `$measured.exit_code) { `$captured.exit_code = [int]`$measured.exit_code }
+        `$captured.drain_handoff_pending = `$false
+    }
+}
+[IO.File]::WriteAllText('$($holderOut.Replace('\','\\'))', ((`$captured | ConvertTo-Json -Depth 8 -Compress) + [Environment]::NewLine), [Text.UTF8Encoding]::new(`$false))
+exit 0
+"@, [Text.UTF8Encoding]::new($false))
+    $holder = Start-Process -FilePath $pwsh -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$holderScript) -PassThru -WindowStyle Hidden
+    Add-HardeningTracked -Owner ([ordered]@{ pid = [int]$holder.Id; start_time_utc_ticks = [int64]$holder.StartTime.ToUniversalTime().Ticks })
+    Assert-Hardening ($holder.WaitForExit(30000)) 'Independent drain parent did not exit.'
+    Assert-Hardening ([int]$holder.ExitCode -eq 0) 'Independent drain parent did not exit 0 after measured EOF.'
+    Assert-Hardening ([IO.File]::Exists($holderOut)) 'Independent drain parent did not persist its result after exit.'
+    $holderDoc = Get-Content -LiteralPath $holderOut -Raw | ConvertFrom-Json -AsHashtable
+    Assert-Hardening ([bool]$holderDoc.process_exited -and [bool]$holderDoc.stdout_eof -and [bool]$holderDoc.stderr_eof) 'Independent parent did not retain measured exit and EOF after it disappeared.'
+    Assert-Hardening ([int]$holderDoc.exit_code -eq 11) 'Independent parent did not retain the child OS exit.'
+    $stdoutText = [IO.File]::ReadAllText($eventsPath)
+    $stderrText = [IO.File]::ReadAllText($errPath)
+    Assert-Hardening ($stdoutText.Contains('LATE-STDOUT-INDEPENDENT')) 'Independent parent truncated stdout after native complete.'
+    Assert-Hardening ($stderrText.Contains('LATE-STDERR-INDEPENDENT')) 'Independent parent truncated stderr after native complete.'
+    $pending = [ordered]@{
+        pid = [int]$holderDoc.pid
+        start_time_utc_ticks = [int64]$holderDoc.start_time_utc_ticks
+        started_at_utc = [string]$holderDoc.started_at_utc
+        executable_path = [string]$holderDoc.executable_path
+    }
+    Write-TelephoneLeadDrainLifecycleFile -Path $lifePath -Identity $pending -ProcessExited $false -StdoutEof $false -StderrEof $false -NativeTurnComplete $true -Role 'cli' -SessionId $lateSession -RunId $lateRun
+    $lifeAfter = Get-Content -LiteralPath $lifePath -Raw | ConvertFrom-Json -AsHashtable
+    Assert-Hardening ([bool]$lifeAfter.process_exited -and [bool]$lifeAfter.stdout_eof -and [bool]$lifeAfter.stderr_eof) 'Old pending snapshot overwrote the independent measured terminal.'
+
+    $foreignHold = Join-Path $testRoot 'foreign-hold.ps1'
+    [IO.File]::WriteAllText($foreignHold, "Start-Sleep -Seconds 30`n", [Text.UTF8Encoding]::new($false))
+    $foreignProc = Start-Process -FilePath $pwsh -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$foreignHold) -PassThru -WindowStyle Hidden
+    Add-HardeningTracked -Owner ([ordered]@{ pid = [int]$foreignProc.Id; start_time_utc_ticks = [int64]$foreignProc.StartTime.ToUniversalTime().Ticks })
+    $foreignId = [ordered]@{
+        pid = [int]$foreignProc.Id
+        start_time_utc_ticks = ([int64]$foreignProc.StartTime.ToUniversalTime().Ticks - 1)
+        executable_path = $pwsh
+    }
+    $foreignStop = Stop-TelephoneLeadExactOwnedIdentity -Identity $foreignId
+    Assert-Hardening (-not [bool]$foreignStop.stopped) 'Foreign PID identity was stopped.'
+    Assert-Hardening ([string]$foreignStop.refused -ceq 'pid_reuse_or_exe_mismatch') 'Foreign PID refusal drifted.'
+
     Write-Output (([ordered]@{
         protocol_version = 'telephone-line-lead-runtime-hardening-test-v1'
         success = $true
@@ -359,4 +452,5 @@ finally {
     [Environment]::SetEnvironmentVariable('TELEPHONE_LINE_STABLE_CLI', $previousStable, 'Process')
     [Environment]::SetEnvironmentVariable('TELEPHONE_LINE_STABLE_CLI_POLICY', $previousPolicy, 'Process')
     [Environment]::SetEnvironmentVariable('TELEPHONE_LINE_LEAD_STATE_ROOT', $previousLeadState, 'Process')
+    [Environment]::SetEnvironmentVariable('TELEPHONE_LINE_SUPERVISOR_RUN_ID', $previousSupervisorRunId, 'Process')
 }

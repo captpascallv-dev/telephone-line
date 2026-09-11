@@ -23,6 +23,24 @@ $eventsPath = Join-Path $runRoot 'codex-events.jsonl'
 $nativeEvents = [string]$env:TELEPHONE_TEST_LEAD_NATIVE_EVENTS -ceq '1'
 $createdNewTurn = -not [IO.File]::Exists($ackPath)
 if ($nativeEvents) { $createdNewTurn = $createdNewTurn -and -not [IO.File]::Exists($eventsPath) }
+$promptText = ''
+$promptIdentity = $null
+if ([IO.File]::Exists($PromptFile)) {
+    $fullPrompt = [IO.Path]::GetFullPath($PromptFile)
+    $promptBytes = [IO.File]::ReadAllBytes($fullPrompt)
+    $promptText = [Text.UTF8Encoding]::new($false, $false).GetString($promptBytes)
+    $promptIdentity = [ordered]@{
+        path = $fullPrompt
+        bytes = [int64]$promptBytes.Length
+        sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($promptBytes)).ToLowerInvariant()
+    }
+}
+$wakeKey = ''
+$receiptSha = ''
+foreach ($line in ($promptText -split '\r?\n')) {
+    if ($line -match '^- wake_key:\s*([0-9a-fA-F]{64})\s*$') { $wakeKey = $Matches[1].ToLowerInvariant() }
+    if ($line -match '^- receipt_sha256:\s*([0-9a-fA-F]{64})\s*$') { $receiptSha = $Matches[1].ToLowerInvariant() }
+}
 $entry = [ordered]@{
     session_id = $ResumeSessionId
     run_id = $RunId
@@ -77,6 +95,7 @@ if ($createdNewTurn -and $nativeEvents) {
         events_path = $eventsPath
         created_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
     }
+    if ($null -ne $promptIdentity) { $leadRun['prompt'] = $promptIdentity }
     [IO.File]::WriteAllText((Join-Path $runRoot 'lead-run.json'), (($leadRun | ConvertTo-Json -Depth 8) + "`n"), $utf8)
     $eventsStream = [IO.FileStream]::new($eventsPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::ReadWrite)
     $eventBytes = $utf8.GetBytes(('{"type":"thread.started","thread_id":"' + $ResumeSessionId + '"}' + "`n" + '{"type":"turn.started"}' + "`n"))
@@ -95,10 +114,24 @@ if ($createdNewTurn -and $nativeEvents) {
     $ack = [ordered]@{
         protocol_version = 'telephone-line-lead-wake-ack-v1'
         session_id = $ResumeSessionId
+        run_id = $RunId
         event = 'turn.started'
         acknowledged_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
     }
+    if (-not [string]::IsNullOrWhiteSpace($wakeKey)) { $ack['wake_key'] = $wakeKey }
+    if (-not [string]::IsNullOrWhiteSpace($receiptSha)) { $ack['receipt_sha256'] = $receiptSha }
     [IO.File]::WriteAllText($ackPath, (($ack | ConvertTo-Json -Depth 8) + "`n"), [Text.UTF8Encoding]::new($false))
+    $leadRun = [ordered]@{
+        protocol_version = 'huhu-concerto-cli-lead-run-v1'
+        run_id = $RunId
+        requested_run_id = $RunId
+        worktree = [IO.Path]::GetFullPath($WorktreePath).TrimEnd('\')
+        resume_session_id = $ResumeSessionId
+        events_path = $eventsPath
+        created_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+    }
+    if ($null -ne $promptIdentity) { $leadRun['prompt'] = $promptIdentity }
+    [IO.File]::WriteAllText((Join-Path $runRoot 'lead-run.json'), (($leadRun | ConvertTo-Json -Depth 8) + "`n"), [Text.UTF8Encoding]::new($false))
     if (-not [string]::IsNullOrWhiteSpace($turnLog)) {
         $turnEntry = [ordered]@{
             run_id = $RunId
@@ -106,6 +139,25 @@ if ($createdNewTurn -and $nativeEvents) {
             created_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
         }
         [IO.File]::AppendAllText($turnLog, (($turnEntry | ConvertTo-Json -Compress) + "`n"), [Text.UTF8Encoding]::new($false))
+    }
+} elseif (-not $createdNewTurn -and [IO.File]::Exists($ackPath) -and (-not [string]::IsNullOrWhiteSpace($wakeKey) -or -not [string]::IsNullOrWhiteSpace($receiptSha))) {
+    try {
+        $existingAck = (Get-Content -LiteralPath $ackPath -Raw -Encoding utf8) | ConvertFrom-Json -AsHashtable -Depth 8 -DateKind String
+        $changed = $false
+        if ($existingAck -is [Collections.IDictionary]) {
+            if (-not [string]::IsNullOrWhiteSpace($wakeKey) -and (-not $existingAck.Contains('wake_key') -or [string]::IsNullOrWhiteSpace([string]$existingAck['wake_key']))) {
+                $existingAck['wake_key'] = $wakeKey
+                $changed = $true
+            }
+            if (-not [string]::IsNullOrWhiteSpace($receiptSha) -and (-not $existingAck.Contains('receipt_sha256') -or [string]::IsNullOrWhiteSpace([string]$existingAck['receipt_sha256']))) {
+                $existingAck['receipt_sha256'] = $receiptSha
+                $changed = $true
+            }
+            if ($changed) {
+                [IO.File]::WriteAllText($ackPath, (($existingAck | ConvertTo-Json -Depth 8) + "`n"), [Text.UTF8Encoding]::new($false))
+            }
+        }
+    } catch {
     }
 }
 if ($createdNewTurn -and -not [string]::IsNullOrWhiteSpace([string]$env:TELEPHONE_TEST_LEAD_THROW_AFTER_WAKE)) {

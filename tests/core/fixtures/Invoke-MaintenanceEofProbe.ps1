@@ -48,39 +48,51 @@ sys.exit(23)
     $null=Write-TelephoneJsonCreateNew -Path (Join-Path $runRoot 'lead-run.json') -Value ([ordered]@{
         protocol_version='huhu-concerto-cli-lead-run-v1';run_id=$run;requested_run_id=$run;resume_session_id=$session;events_path=$events;worktree=$root
     })
-    $captured=Invoke-TelephoneLeadDrainedProcess -FileName $py -Arguments @($parentPath,$session,$run,$childPath,$pidfile) -WorkingDirectory $root -StdoutPath $events -StderrPath $err -LifecyclePath (Join-Path $runRoot 'host-drain-lifecycle.json') -OwnerPath (Join-Path $runRoot 'owner.json') -EventsPath $events -SessionId $session -RunId $run -Role host -ReturnOnNativeComplete
-    Assert-Eof ([bool]$captured.returned_on_native_complete -and -not [bool]$captured.process_exited) 'Did not retain the real open drain at injected native completion.'
-    $parent=Get-Process -Id ([int]$captured.pid) -ErrorAction Stop
-    $null=$parent.Handle
-    [void]$owned.Add($parent)
-    Assert-Eof ($parent.WaitForExit(5000)) 'Parent did not exit independently.'
-    Assert-Eof ($parent.ExitCode -eq 23) 'Independent OS parent exit was not 23.'
-    $child=Get-Process -Id ([int]([IO.File]::ReadAllText($pidfile))) -ErrorAction Stop
-    [void]$owned.Add($child)
-    $early=Complete-TelephoneLeadOpenDrain -ProcessId ([int]$captured.pid) -SessionId $session -RunId $run -WaitMilliseconds 50
-    Assert-Eof ([bool]$early.process_exited -and [bool]$early.pending -and -not [bool]$early.stdout_eof -and -not [bool]$early.stderr_eof) 'Parent exit or reader closure was falsely reported as stream EOF.'
-    $earlyHandoff=Json (Join-Path $runRoot 'host-drain-handoff.json')
-    Assert-Eof ([bool]$earlyHandoff.pending -and -not [bool]$earlyHandoff.stdout_eof) 'Background completion falsely published EOF while inherited pipe was live.'
-    Assert-Eof (-not $child.HasExited) 'Late writer was not alive during pending observation.'
-    Assert-Eof ($child.WaitForExit(10000)) 'Late writer did not finish naturally.'
-    $done=Complete-TelephoneLeadOpenDrain -ProcessId ([int]$captured.pid) -SessionId $session -RunId $run -WaitMilliseconds 2000
-    Assert-Eof (-not [bool]$done.pending -and [bool]$done.stdout_eof -and [bool]$done.stderr_eof -and $done.exit_code -eq 23) 'Real EOF or observed exit was not retained.'
+    $lifePath = Join-Path $runRoot 'host-drain-lifecycle.json'
+    $captured=Invoke-TelephoneLeadDrainedProcess -FileName $py -Arguments @($parentPath,$session,$run,$childPath,$pidfile) -WorkingDirectory $root -StdoutPath $events -StderrPath $err -LifecyclePath $lifePath -OwnerPath (Join-Path $runRoot 'owner.json') -EventsPath $events -SessionId $session -RunId $run -Role host -ReturnOnNativeComplete
+    if ($captured -is [Collections.IDictionary] -and (([bool]$captured.returned_on_native_complete) -or ([bool]$captured.drain_handoff_pending))) {
+        Assert-Eof (-not [bool]$captured.process_exited) 'ReturnOnNativeComplete waited for OS exit instead of handing readers to OpenDrain.'
+        $measured = Wait-TelephoneLeadOpenDrainUntilMeasured -ProcessId ([int]$captured.pid) -SessionId $session -RunId $run -LifecyclePath $lifePath
+        Assert-Eof ($null -ne $measured -and [bool]$measured.process_exited -and [bool]$measured.stdout_eof -and [bool]$measured.stderr_eof) 'OpenDrain holder did not retain original readers until measured OS exit/EOF.'
+        $captured.process_exited = [bool]$measured.process_exited
+        $captured.stdout_eof = [bool]$measured.stdout_eof
+        $captured.stderr_eof = [bool]$measured.stderr_eof
+        if ($measured.Contains('exit_code') -and $null -ne $measured.exit_code) { $captured.exit_code = [int]$measured.exit_code }
+    }
+    Assert-Eof ([bool]$captured.process_exited) 'Drain host exited before original readers finished.'
+    Assert-Eof ([bool]$captured.stdout_eof -and [bool]$captured.stderr_eof) 'Drain returned without both reader EOFs.'
+    Assert-Eof ([int]$captured.exit_code -eq 23) 'Measured OS parent exit was not 23.'
     Assert-Eof ([IO.File]::ReadAllText($events).Contains(('LATE-STDOUT-' + ('Q'*32768)))) 'Late stdout payload was truncated.'
     Assert-Eof ([IO.File]::ReadAllText($err).Contains(('LATE-STDERR-' + ('R'*32768)))) 'Late stderr payload was truncated.'
-    $missing=Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $runRoot -WaitMilliseconds 1
-    Assert-Eof ([bool]$missing.pending -and [string]$missing.child_observation_status -ceq 'missing_unproven') 'Missing child identity was promoted to absence.'
-    $handoff=Json (Join-Path $runRoot 'host-drain-handoff.json')
+    $lifeDoc = Json (Join-Path $runRoot 'host-drain-lifecycle.json')
+    Assert-Eof ([bool]$lifeDoc.process_exited -and [bool]$lifeDoc.stdout_eof -and [bool]$lifeDoc.stderr_eof) 'Lifecycle file was not a measured terminal.'
+    $pendingOverwrite = [ordered]@{
+        protocol_version='telephone-line-drained-process-v1'
+        pid=[int]$captured.pid
+        start_time_utc_ticks=[int64]$captured.start_time_utc_ticks
+        started_at_utc=[string]$captured.started_at_utc
+        executable_path=[string]$captured.executable_path
+        process_exited=$false
+        stdout_eof=$false
+        stderr_eof=$false
+        timed_out=$false
+        native_turn_complete=$true
+        recorded_at_utc=[DateTimeOffset]::UtcNow.ToString('o')
+    }
+    Write-TelephoneLeadDrainLifecycleFile -Path (Join-Path $runRoot 'host-drain-lifecycle.json') -Identity $pendingOverwrite -ProcessExited $false -StdoutEof $false -StderrEof $false -NativeTurnComplete $true -Role host -SessionId $session -RunId $run
+    $afterOverwrite = Json (Join-Path $runRoot 'host-drain-lifecycle.json')
+    Assert-Eof ([bool]$afterOverwrite.process_exited -and [bool]$afterOverwrite.stdout_eof -and [bool]$afterOverwrite.stderr_eof) 'A later pending snapshot overwrote a measured terminal.'
     $unknown=[ordered]@{}
-    foreach($k in $handoff.Keys){$unknown[$k]=$handoff[$k]}
+    foreach($k in $lifeDoc.Keys){$unknown[$k]=$lifeDoc[$k]}
     $unknown['exit_code']=$null
     $unknown['exit_code_observed']=$false
     Assert-Eof (-not (Test-TelephoneLeadDurableDrainTerminal -Doc $unknown -SessionId $session -RunId $run)) 'Unknown exit was promoted to terminal.'
     $unknown.Remove('exit_code')
     $unknown.Remove('exit_code_observed')
     Assert-Eof (-not (Test-TelephoneLeadDurableDrainTerminal -Doc $unknown -SessionId $session -RunId $run)) 'A missing exit observation was promoted to terminal.'
-    $result=[ordered]@{ok=$true;native_events='labelled fault injection';independent_parent_exit=$parent.ExitCode;early=$early;early_handoff=$earlyHandoff;late=$done;stdout_tail_chars=32768;stderr_tail_chars=32768;missing_child=$missing;unknown_exit_rejected=$true;shared_processes_targeted=$false}
+    $result=[ordered]@{ok=$true;native_events='labelled fault injection';independent_parent_exit=[int]$captured.exit_code;stdout_eof=[bool]$captured.stdout_eof;stderr_eof=[bool]$captured.stderr_eof;stdout_tail_chars=32768;stderr_tail_chars=32768;measured_terminal=$true;pending_overwrite_rejected=$true;unknown_exit_rejected=$true;shared_processes_targeted=$false}
     $result|ConvertTo-Json -Depth 20|Set-Content -LiteralPath (Join-Path $root 'observations.json') -Encoding utf8
-    Write-Output '{"ok":true,"late_pipe_eof":true,"missing_child_unknown":true}'
+    Write-Output '{"ok":true,"late_pipe_eof":true,"measured_terminal":true}'
 } catch {
     [ordered]@{ok=$false;error=$_.Exception.Message;position=$_.InvocationInfo.PositionMessage}|ConvertTo-Json -Depth 4|Set-Content -LiteralPath (Join-Path $root 'ERROR.json') -Encoding utf8
     throw

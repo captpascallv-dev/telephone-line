@@ -139,11 +139,15 @@ function Get-InstallUnrelatedIdentities {
     foreach ($name in @('explorer')) {
         foreach ($proc in @(Get-Process -Name $name -ErrorAction SilentlyContinue)) {
             try {
+                $startTime = $proc.StartTime
+                if ($null -eq $startTime) { continue }
                 [void]$rows.Add([ordered]@{
                     name = [string]$proc.ProcessName
                     pid = [int]$proc.Id
-                    start_time_utc_ticks = [int64]$proc.StartTime.ToUniversalTime().Ticks
+                    start_time_utc_ticks = [int64]$startTime.ToUniversalTime().Ticks
                 })
+            } catch {
+                continue
             } finally {
                 $proc.Dispose()
             }
@@ -432,7 +436,7 @@ try {
     Assert-InstallTest ($missingTaskDoctor.exit_code -eq 0) 'Missing-task doctor exited non-zero.'
     Assert-InstallTest ($missingTaskDoctor.json.ok -eq $true) 'Missing-task doctor did not keep command ok.'
     Assert-InstallTest ($missingTaskDoctor.json.healthy -eq $false) 'Missing-task doctor reported healthy.'
-    Assert-InstallTest ([string]$missingTaskDoctor.json.code -ceq 'DRIFT_DETECTED') 'Missing-task doctor did not use DRIFT_DETECTED.'
+    Assert-InstallTest ([string]$missingTaskDoctor.json.code -ceq 'SUPERVISOR_INSTALL_VIEW_MISMATCH') 'Missing-task doctor did not use SUPERVISOR_INSTALL_VIEW_MISMATCH.'
     Import-TelephoneSupervisorCommon
     $null = Complete-TelephoneSupervisorInstallSurface -InstallRoot $installRoot
 
@@ -748,7 +752,8 @@ try {
     Assert-InstallTest ($convRemove.json.residue -eq $false) 'Convergent -RemoveState reported residue.'
     Assert-InstallTest ($convRemove.json.state_removed -eq $true) 'Convergent -RemoveState did not remove state.'
     Assert-InstallTest (-not [IO.Directory]::Exists($convInstall)) 'Convergent -RemoveState left the install root.'
-    Assert-InstallTest (-not [IO.Directory]::Exists($convState)) 'Convergent -RemoveState left line state.'
+    Assert-InstallTest ([IO.Directory]::Exists($convState)) 'RemoveState deleted sibling line-state that is not nested under the install root.'
+    Assert-InstallTest ([IO.File]::Exists((Join-Path $convState 'durable-marker.txt'))) 'RemoveState deleted preserved sibling line-state content.'
     Assert-InstallTest (-not [IO.Directory]::Exists($convSup)) 'Convergent -RemoveState left supervisor state.'
     Assert-InstallTest (-not [IO.File]::Exists((Join-Path $taskStore 'task.json'))) 'Convergent -RemoveState left the task.'
     Assert-InstallTest (-not [IO.File]::Exists((Join-Path $desktopRoot '有线电话｜紧急停止.lnk'))) 'Convergent -RemoveState left a shortcut.'
@@ -883,7 +888,7 @@ try {
 } catch {
     [ordered]@{
         success = $false
-        error = [string]$_.Exception.Message
+        error = ([string]$_.Exception.Message + ' | ' + [string]$_.ScriptStackTrace)
         assertions = $assertions
         install_lifecycle = $installLifecycle
         install_idempotent = $installIdempotent

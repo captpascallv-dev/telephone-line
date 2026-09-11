@@ -275,7 +275,8 @@ function Get-SupLeadLogWakeCount {
 }
 
 try {
-    $script:supState = Join-Path $testRoot 'supervisor-state'
+    $script:supState = Join-Path $repoRoot 'supervisor-state'
+    $script:supStateCreatedForTest = -not [IO.Directory]::Exists($script:supState)
     $taskStore = Join-Path $testRoot 'task-store'
     $desktop = Join-Path $testRoot 'desktop'
     $recycle = Join-Path $testRoot 'recycle'
@@ -1477,4 +1478,12 @@ try {
         )
     } catch { }
     try { Unregister-TelephoneSupervisorInstallSurface -InstallRoot $repoRoot } catch { }
+    if (-not [string]::IsNullOrWhiteSpace([string]$script:supState) -and [IO.Directory]::Exists($script:supState)) {
+        $expected = Join-Path $repoRoot 'supervisor-state'
+        if ([string]::Equals($script:supState, $expected, [StringComparison]::OrdinalIgnoreCase)) {
+            try { [IO.Directory]::Delete($script:supState, $true) } catch {
+                try { Remove-Item -LiteralPath $script:supState -Recurse -Force -ErrorAction SilentlyContinue } catch { }
+            }
+        }
+    }
 }

@@ -370,6 +370,17 @@ function Test-TelephoneLeadOwnerIdentityAlive {
     return ([string]$obs.status -ceq 'alive')
 }
 
+function Test-TelephoneLeadSharedCodexAppExecutable {
+    [CmdletBinding()]
+    param([string]$Path = '')
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    $full = [string]$Path
+    try { $full = [IO.Path]::GetFullPath($Path) } catch { $full = [string]$Path }
+    if ($full.IndexOf('\Packages\OpenAI.Codex', [StringComparison]::OrdinalIgnoreCase) -ge 0) { return $true }
+    if ($full.IndexOf('\WindowsApps\OpenAI.Codex', [StringComparison]::OrdinalIgnoreCase) -ge 0) { return $true }
+    return $false
+}
+
 function Test-TelephoneLeadWindowsConsoleHostExecutable {
     [CmdletBinding()]
     param([string]$Path = '')
@@ -495,7 +506,7 @@ function ConvertTo-TelephonePersistableRecord {
 function Write-TelephoneLeadOwnedRecoveryRecord {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)][string]$RunRoot,
+        [AllowEmptyString()][string]$RunRoot,
         [Parameter(Mandatory = $true)][object]$Record
     )
     if ([string]::IsNullOrWhiteSpace($RunRoot) -or -not [IO.Directory]::Exists($RunRoot)) { return }
@@ -851,6 +862,25 @@ function Write-TelephoneLeadDrainLifecycleFile {
     try {
         $full = [IO.Path]::GetFullPath($Path)
         [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($full)) | Out-Null
+        if ([IO.File]::Exists($full)) {
+            try {
+                $existing = [IO.File]::ReadAllText($full) | ConvertFrom-Json -AsHashtable -Depth 8
+                if ($existing -is [Collections.IDictionary]) {
+                    $hadExit = $false
+                    $hadStdout = $false
+                    $hadStderr = $false
+                    if ($existing.Contains('process_exited')) { $hadExit = [bool]$existing['process_exited'] }
+                    if ($existing.Contains('stdout_eof')) { $hadStdout = [bool]$existing['stdout_eof'] }
+                    if ($existing.Contains('stderr_eof')) { $hadStderr = [bool]$existing['stderr_eof'] }
+                    if (($hadExit -or $hadStdout -or $hadStderr) -and -not $ProcessExited -and -not $StdoutEof -and -not $StderrEof) {
+                        return
+                    }
+                    if ($hadStdout -and -not $StdoutEof) { return }
+                    if ($hadStderr -and -not $StderrEof) { return }
+                    if ($hadExit -and -not $ProcessExited) { return }
+                }
+            } catch { }
+        }
         $json = ($record | ConvertTo-Json -Depth 8 -Compress)
         [IO.File]::WriteAllText($full, ($json + "`n"), [Text.UTF8Encoding]::new($false))
     } catch { }
@@ -1139,6 +1169,43 @@ function Complete-TelephoneLeadOpenDrain {
         stderr_eof = [bool]$stderrEof
         pending = $false
         pid = [int]$ProcessId
+    }
+}
+
+function Wait-TelephoneLeadOpenDrainUntilMeasured {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][int]$ProcessId,
+        [AllowNull()][object]$Identity = $null,
+        [string]$SessionId = '',
+        [string]$RunId = '',
+        [string]$LifecyclePath = ''
+    )
+    while ($true) {
+        $done = Complete-TelephoneLeadOpenDrain -ProcessId $ProcessId -Identity $Identity -SessionId $SessionId -RunId $RunId -Wait -WaitMilliseconds 1000
+        if ($null -ne $done -and [bool]$done.found -and [bool]$done.process_exited -and [bool]$done.stdout_eof -and [bool]$done.stderr_eof -and -not [bool]$done.pending) {
+            return $done
+        }
+        if (-not [string]::IsNullOrWhiteSpace($LifecyclePath) -and [IO.File]::Exists($LifecyclePath)) {
+            $life = $null
+            try { $life = Get-Content -LiteralPath $LifecyclePath -Raw | ConvertFrom-Json -AsHashtable } catch { $life = $null }
+            if ($null -ne $life -and [bool]$life.process_exited -and [bool]$life.stdout_eof -and [bool]$life.stderr_eof) {
+                $exit = $null
+                if ($life.Contains('exit_code') -and $null -ne $life['exit_code']) {
+                    try { $exit = [int]$life['exit_code'] } catch { $exit = $null }
+                }
+                return [ordered]@{
+                    found = $true
+                    process_exited = $true
+                    stdout_eof = $true
+                    stderr_eof = $true
+                    pending = $false
+                    exit_code = $exit
+                    pid = [int]$ProcessId
+                    recorded_by = 'lifecycle_file'
+                }
+            }
+        }
     }
 }
 
@@ -1479,6 +1546,40 @@ function Get-TelephoneLeadOwnedDrainSnapshot {
     }
 }
 
+function Test-TelephoneLeadOwnedDrainRecordsPresent {
+    [CmdletBinding()]
+    param([string]$RunRoot)
+    if ([string]::IsNullOrWhiteSpace($RunRoot)) { return $false }
+    try { $root = [IO.Path]::GetFullPath($RunRoot).TrimEnd('\') } catch { return $false }
+    foreach ($name in @('host-drain-lifecycle.json', 'cli-drain-lifecycle.json', 'drain-lifecycle.json')) {
+        if ([IO.File]::Exists((Join-Path $root $name))) { return $true }
+    }
+    return $false
+}
+
+function Test-TelephoneLeadCallbackQueueStillOpen {
+    [CmdletBinding()]
+    param([string]$RunRoot)
+    if ([string]::IsNullOrWhiteSpace($RunRoot)) { return $false }
+    try { $root = [IO.Path]::GetFullPath($RunRoot).TrimEnd('\') } catch { return $false }
+    $runPath = Join-Path $root 'run.json'
+    if (-not [IO.File]::Exists($runPath)) { return $false }
+    $run = $null
+    try { $run = (Read-TelephoneJson -Path $runPath).value } catch { return $false }
+    if ($run -isnot [Collections.IDictionary]) { return $false }
+    $queueState = ''
+    $phase = ''
+    if ($run.Contains('queue_state')) { $queueState = [string]$run['queue_state'] }
+    if ($run.Contains('callback_write_phase')) { $phase = [string]$run['callback_write_phase'] }
+    if ($queueState -ceq 'queued') { return $true }
+    if ($phase -cin @('turn_start_sending', 'turn_bound', 'turn_start_ambiguous')) { return $true }
+    if ($queueState -ceq 'in_progress' -and $phase -cne 'terminal') { return $true }
+    $intentPath = Join-Path $root 'intent.json'
+    $ackPath = Join-Path $root 'lead-wake-ack.json'
+    if ([IO.File]::Exists($intentPath) -and -not [IO.File]::Exists($ackPath) -and $queueState -cne 'retired') { return $true }
+    return $false
+}
+
 function Wait-TelephoneLeadOwnedDrainTerminal {
     [CmdletBinding()]
     param(
@@ -1734,6 +1835,7 @@ function Invoke-TelephoneLeadDrainedProcess {
         }
         $exited = $false
         $nativeComplete = $false
+        $stopReason = ''
         $deadline = [DateTimeOffset]::MaxValue
         if ($TimeoutMilliseconds -gt 0) {
             $deadline = [DateTimeOffset]::UtcNow.AddMilliseconds($TimeoutMilliseconds)
@@ -1789,6 +1891,8 @@ function Invoke-TelephoneLeadDrainedProcess {
                     returned_on_native_complete = $true
                     drain_handoff_pending = $true
                     drain_owner_pid = [int]$PID
+                    stop_reason = $(if (-not [string]::IsNullOrWhiteSpace($stopReason)) { [string]$stopReason } else { 'native_complete_open_drain' })
+                    recycle_attempted = $false
                 }
             }
         }
@@ -1844,6 +1948,8 @@ function Invoke-TelephoneLeadDrainedProcess {
             timed_out = (-not $exited)
             native_turn_complete = [bool]$nativeComplete
             returned_on_native_complete = $false
+            stop_reason = $(if (-not [string]::IsNullOrWhiteSpace($stopReason)) { [string]$stopReason } elseif (-not $exited) { 'timeout' } else { 'natural_exit' })
+            recycle_attempted = $false
         }
     } finally {
         if (-not $abandon) {
@@ -2129,6 +2235,16 @@ function Stop-TelephoneLeadExactOwnedIdentity {
     }
     $record.attempted = $true
     $record.target = $obs.snapshot
+    $exeNow = ''
+    try {
+        if ($obs.snapshot -is [Collections.IDictionary] -and $obs.snapshot.Contains('executable_path')) {
+            $exeNow = [string]$obs.snapshot['executable_path']
+        }
+    } catch { $exeNow = '' }
+    if (Test-TelephoneLeadSharedCodexAppExecutable -Path $exeNow) {
+        $record.refused = 'shared_codex_app'
+        return $record
+    }
     try {
         $againObs = Get-TelephoneLeadOwnerIdentityObservation -Owner $Identity
         if ([string]$againObs.status -ceq 'query_error') {
@@ -2237,6 +2353,11 @@ function Stop-TelephoneLeadCompletedOwnProcess {
     }
     $runRoot = ''
     if ($Lifecycle.Contains('run_root')) { $runRoot = [string]$Lifecycle['run_root'] }
+    if (-not [string]::IsNullOrWhiteSpace($runRoot) -and (Test-TelephoneLeadCallbackQueueStillOpen -RunRoot $runRoot)) {
+        $record.refused = 'queued_callback'
+        Write-TelephoneLeadOwnedRecoveryRecord -RunRoot $runRoot -Record $record
+        return $record
+    }
     $child = $null
     if ($Lifecycle.Contains('cli_child')) { $child = $Lifecycle.cli_child }
     if ($null -ne $child) {
@@ -2278,7 +2399,7 @@ function Stop-TelephoneLeadCompletedOwnProcess {
         return $record
     }
     if ($null -eq $owner -or [string]$ownerObs.status -cne 'alive') {
-        if ([bool]$record.attempted -and [string]::IsNullOrWhiteSpace([string]$record.refused) -and -not [string]::IsNullOrWhiteSpace($runRoot)) {
+        if ([bool]$record.attempted -and [string]::IsNullOrWhiteSpace([string]$record.refused) -and -not [string]::IsNullOrWhiteSpace($runRoot) -and (Test-TelephoneLeadOwnedDrainRecordsPresent -RunRoot $runRoot)) {
             $drainGone = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $runRoot -WaitMilliseconds $DrainWaitMilliseconds
             $record.drain = $drainGone
             if ($null -ne $drainGone -and $drainGone -is [Collections.IDictionary]) {
@@ -2290,6 +2411,9 @@ function Stop-TelephoneLeadCompletedOwnProcess {
                 }
                 if (-not [bool]$record.drain_pending -and [bool]$drainGone.process_exited -and [bool]$record.stdout_eof -and [bool]$record.stderr_eof -and $null -ne $record.measured_os_exit_code) { $record.recovered = $true }
             }
+        } elseif ([bool]$record.attempted -and [string]::IsNullOrWhiteSpace([string]$record.refused) -and -not (Test-TelephoneLeadOwnedDrainRecordsPresent -RunRoot $runRoot)) {
+            $record.drain_pending = $false
+            $record.recovered = $true
         } elseif (-not [bool]$record.attempted) {
             $record.refused = 'owner_not_alive'
         }
@@ -2305,19 +2429,24 @@ function Stop-TelephoneLeadCompletedOwnProcess {
         Write-TelephoneLeadOwnedRecoveryRecord -RunRoot $runRoot -Record $record
         return $record
     }
-    if ([bool]$hostStop.stopped -and -not [string]::IsNullOrWhiteSpace($runRoot)) {
-        $drain = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $runRoot -WaitMilliseconds $DrainWaitMilliseconds
-        $record.drain = $drain
-        if ($null -ne $drain -and $drain -is [Collections.IDictionary]) {
-            if ($drain.Contains('pending')) { $record.drain_pending = [bool]$drain['pending'] }
-            if ($drain.Contains('stdout_eof')) { $record.stdout_eof = [bool]$drain['stdout_eof'] }
-            if ($drain.Contains('stderr_eof')) { $record.stderr_eof = [bool]$drain['stderr_eof'] }
-            if ($drain.Contains('measured_os_exit_code') -and $null -ne $drain['measured_os_exit_code']) {
-                $record.measured_os_exit_code = [int]$drain['measured_os_exit_code']
+    if ([bool]$hostStop.stopped) {
+        if (-not [string]::IsNullOrWhiteSpace($runRoot) -and (Test-TelephoneLeadOwnedDrainRecordsPresent -RunRoot $runRoot)) {
+            $drain = Wait-TelephoneLeadOwnedDrainTerminal -RunRoot $runRoot -WaitMilliseconds $DrainWaitMilliseconds
+            $record.drain = $drain
+            if ($null -ne $drain -and $drain -is [Collections.IDictionary]) {
+                if ($drain.Contains('pending')) { $record.drain_pending = [bool]$drain['pending'] }
+                if ($drain.Contains('stdout_eof')) { $record.stdout_eof = [bool]$drain['stdout_eof'] }
+                if ($drain.Contains('stderr_eof')) { $record.stderr_eof = [bool]$drain['stderr_eof'] }
+                if ($drain.Contains('measured_os_exit_code') -and $null -ne $drain['measured_os_exit_code']) {
+                    $record.measured_os_exit_code = [int]$drain['measured_os_exit_code']
+                }
+                if (-not [bool]$record.drain_pending -and [bool]$drain.process_exited -and [bool]$record.stdout_eof -and [bool]$record.stderr_eof -and $null -ne $record.measured_os_exit_code) {
+                    $record.recovered = $true
+                }
             }
-            if (-not [bool]$record.drain_pending -and [bool]$drain.process_exited -and [bool]$record.stdout_eof -and [bool]$record.stderr_eof -and $null -ne $record.measured_os_exit_code) {
-                $record.recovered = $true
-            }
+        } else {
+            $record.drain_pending = $false
+            $record.recovered = $true
         }
     }
     Write-TelephoneLeadOwnedRecoveryRecord -RunRoot $runRoot -Record $record
@@ -2382,6 +2511,10 @@ function Reconcile-TelephoneLeadCompletedOwnedResidue {
             continue
         }
         if (-not [bool]$life.native_turn_complete) {
+            $result.skipped_active += 1
+            continue
+        }
+        if (Test-TelephoneLeadCallbackQueueStillOpen -RunRoot $runRoot) {
             $result.skipped_active += 1
             continue
         }
@@ -2727,13 +2860,20 @@ function New-TelephoneLeadLaunchDiagnostic {
             try { $started = [string]$Captured.started_at_utc } catch { }
         }
     }
+    $stdoutPreview = $(if ([string]$stdout.Length -gt 2048) { [string]$stdout.Substring(0, 2048) } else { [string]$stdout })
+    $createError = [string]$CreateProcessError
+    if (Get-Command -Name Get-TelephoneSanitizedMessage -ErrorAction SilentlyContinue) {
+        if (-not [string]::IsNullOrWhiteSpace($stderr)) { $stderr = Get-TelephoneSanitizedMessage -Message $stderr }
+        if (-not [string]::IsNullOrWhiteSpace($stdoutPreview)) { $stdoutPreview = Get-TelephoneSanitizedMessage -Message $stdoutPreview }
+        if (-not [string]::IsNullOrWhiteSpace($createError)) { $createError = Get-TelephoneSanitizedMessage -Message $createError }
+    }
     return [ordered]@{
         protocol_version = 'telephone-line-lead-launch-diagnostic-v1'
         error_code = [string]$Code
         language_mode = Get-TelephoneLeadLanguageMode
         executable = [string]$Executable
         working_directory = [string]$WorkingDirectory
-        create_process_error = [string]$CreateProcessError
+        create_process_error = [string]$createError
         win32_error = [int]$Win32Error
         process_exited = [bool]$processExited
         native_turn_complete = [bool]$nativeTurn
@@ -2747,7 +2887,7 @@ function New-TelephoneLeadLaunchDiagnostic {
         session_id = [string]$SessionId
         run_root = [string]$RunRoot
         stderr = [string]$stderr
-        stdout_preview = $(if ([string]$stdout.Length -gt 2048) { [string]$stdout.Substring(0, 2048) } else { [string]$stdout })
+        stdout_preview = [string]$stdoutPreview
         recorded_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
     }
 }

@@ -12,8 +12,12 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:PreviousDashboardProcessEnvOnly = [Environment]::GetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_PROCESS_ENV_ONLY', 'Process')
 $script:PreviousDashboardOptOut = [Environment]::GetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_OPT_OUT', 'Process')
+$script:PreviousSupervisorRunId = [Environment]::GetEnvironmentVariable('TELEPHONE_LINE_SUPERVISOR_RUN_ID', 'Process')
+$script:PreviousSupervisorStateRoot = [Environment]::GetEnvironmentVariable('TELEPHONE_LINE_SUPERVISOR_STATE_ROOT', 'Process')
 [Environment]::SetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_PROCESS_ENV_ONLY', '1', 'Process')
 [Environment]::SetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_OPT_OUT', '1', 'Process')
+[Environment]::SetEnvironmentVariable('TELEPHONE_LINE_SUPERVISOR_RUN_ID', '', 'Process')
+[Environment]::SetEnvironmentVariable('TELEPHONE_LINE_SUPERVISOR_STATE_ROOT', '', 'Process')
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..')).TrimEnd('\')
 . (Join-Path $repoRoot 'src\core\TelephoneLine.Common.ps1')
 $starter = Join-Path $repoRoot 'src\core\Start-TelephoneLineJob.ps1'
@@ -513,6 +517,7 @@ try {
     $ackBytes = [Text.UTF8Encoding]::new($false).GetBytes((([ordered]@{
         protocol_version = 'telephone-line-lead-wake-ack-v1'
         session_id = $sessionId
+        run_id = 'origin-wake'
         event = 'turn.started'
         acknowledged_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
     } | ConvertTo-Json -Compress) + "`n"))
@@ -1131,7 +1136,12 @@ throw [string]`$env:TELEPHONE_TEST_LEAD_THROW_MESSAGE
     $attemptReceiptRead = Read-TelephoneJson -Path $attemptPaths.receipt -SchemaName 'receipt'
     $attemptWake = New-TelephoneWakeIdentity -LineJobId $attemptJob -ReceiptIdentity $attemptReceiptRead.identity -LeadSessionId $sessionId
     $preWakePrompt = Join-Path $testRoot ('pre-wake-' + $attemptJob + '.md')
-    [IO.File]::WriteAllText($preWakePrompt, 'pre-wake', [Text.UTF8Encoding]::new($false))
+    $preWakeText = @(
+        'pre-wake'
+        ('- receipt_sha256: ' + [string]$attemptReceiptRead.identity.sha256)
+        ('- wake_key: ' + [string]$attemptWake.wake_key)
+    ) -join "`n"
+    [IO.File]::WriteAllText($preWakePrompt, $preWakeText, [Text.UTF8Encoding]::new($false))
     $null = & $mockLead -WorktreePath $worktree -PromptFile $preWakePrompt -ResumeSessionId $sessionId -RunId ([string]$attemptWake.wake_run_id)
     Assert-TelephoneTest ((Get-TelephoneTestTurnCount -RunId ([string]$attemptWake.wake_run_id)) -eq 1) 'Pre-crash launcher side effect did not create the first Lead turn.'
     $null = Write-TelephoneJsonCreateNew -Path $attemptPaths.delivery_claim -Value ([ordered]@{
@@ -1402,6 +1412,8 @@ if (`$StateRoot -cne '$($namedArgsState.Replace("'", "''"))' -or `$CodexCommand 
     }
     [Environment]::SetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_PROCESS_ENV_ONLY', $script:PreviousDashboardProcessEnvOnly, 'Process')
     [Environment]::SetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_OPT_OUT', $script:PreviousDashboardOptOut, 'Process')
+    [Environment]::SetEnvironmentVariable('TELEPHONE_LINE_SUPERVISOR_RUN_ID', $script:PreviousSupervisorRunId, 'Process')
+    [Environment]::SetEnvironmentVariable('TELEPHONE_LINE_SUPERVISOR_STATE_ROOT', $script:PreviousSupervisorStateRoot, 'Process')
     Remove-Item Env:TELEPHONE_TEST_LEAD_LOG -ErrorAction SilentlyContinue
     Remove-Item Env:TELEPHONE_TEST_LEAD_RUNS -ErrorAction SilentlyContinue
     Remove-Item Env:TELEPHONE_TEST_LEAD_TURNS -ErrorAction SilentlyContinue

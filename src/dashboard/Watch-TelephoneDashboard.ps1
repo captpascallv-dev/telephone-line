@@ -89,7 +89,7 @@ function Publish-TelephoneDashboardWatchOnce {
         if (-not [string]::IsNullOrWhiteSpace($injected) -and -not $Recover) {
             throw $injected
         }
-        $projection = Get-TelephoneDashboardProjection -ConfigPath $ConfigPath -DashboardStateRoot $root
+        $projection = Get-TelephoneDashboardProjection -ConfigPath $ConfigPath -DashboardStateRoot $root -ObservationStartedAt ([DateTimeOffset]::UtcNow)
         $jsonText = (($projection | ConvertTo-Json -Depth 32).Replace("`r`n", "`n") + "`n")
         Assert-TelephoneJsonSchema -JsonText $jsonText -SchemaName 'dashboard-projection' -Label 'dashboard projection'
     } catch {
@@ -112,6 +112,8 @@ function Publish-TelephoneDashboardWatchOnce {
         try {
             if ($projectionFailed) {
                 Update-TelephoneDashboardLineSourceObservation -DashboardStateRoot $root -ReadError
+            } elseif ($null -ne $projection -and (([bool](Get-TelephoneDashboardMapFlag -Map $projection -Name 'stale')) -or ([bool](Get-TelephoneDashboardMapFlag -Map $projection -Name 'source_stale')))) {
+                # Stale or failed observations keep their prior success stamp.
             } else {
                 Update-TelephoneDashboardLineSourceObservation -DashboardStateRoot $root -Success
             }
@@ -133,6 +135,7 @@ if ($Once) {
 }
 
 while ($true) {
+    $observationStartedAt = [DateTimeOffset]::UtcNow
     try {
         $null = Publish-TelephoneDashboardWatchOnce
     } catch {
@@ -144,5 +147,9 @@ while ($true) {
             Invalidate-TelephoneDashboardWatcherIdentity -Path $paths.watcher
         }
     }
-    Start-Sleep -Milliseconds $IntervalMilliseconds
+    $elapsed = [int]([DateTimeOffset]::UtcNow - $observationStartedAt).TotalMilliseconds
+    $remain = [int]$IntervalMilliseconds - $elapsed
+    if ($remain -gt 0) {
+        Start-Sleep -Milliseconds $remain
+    }
 }

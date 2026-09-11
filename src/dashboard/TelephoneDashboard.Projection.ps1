@@ -708,6 +708,8 @@ function Get-TelephoneDashboardDirectRouteScan {
     $jobId = Get-TelephoneDashboardMapText -Map $requestValue -Name 'job_id'
     if ([string]::IsNullOrWhiteSpace($jobId)) { $jobId = [IO.Path]::GetFileName($JobRoot.TrimEnd('\')) }
     $events = Read-TelephoneDashboardLifecycleEvents -Path (Join-Path $JobRoot 'lifecycle-events.jsonl') -Root $JobRoot
+    $createdAt = Get-TelephoneDashboardMapText -Map $requestValue -Name 'created_at_utc'
+    $worktree = Get-TelephoneDashboardMapText -Map $requestValue -Name 'workspace'
     return [ordered]@{
         job_root = $JobRoot
         project = ''
@@ -729,6 +731,8 @@ function Get-TelephoneDashboardDirectRouteScan {
         direct_route = $true
         direct_session_id = $session
         direct_resume = (Get-TelephoneDashboardMapFlag -Map $requestValue -Name 'resume')
+        created_at_utc = $createdAt
+        worktree = $worktree
     }
 }
 
@@ -867,6 +871,20 @@ function Get-TelephoneDashboardJobScan {
             if ([string]::IsNullOrWhiteSpace($session)) { $session = $directSessionId }
         }
     }
+    $createdAt = ''
+    $worktree = ''
+    if ([bool]$dispatch.valid) {
+        $createdAt = Get-TelephoneDashboardMapText -Map $dispatch.value -Name 'created_at_utc'
+        if ([bool]$dispatch.valid -and $null -ne $dispatch.value.lead) {
+            $worktree = Get-TelephoneDashboardMapText -Map $dispatch.value.lead -Name 'worktree'
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($createdAt) -and [bool]$directRequest.valid) {
+        $createdAt = Get-TelephoneDashboardMapText -Map $directRequest.value -Name 'created_at_utc'
+    }
+    if ([string]::IsNullOrWhiteSpace($worktree) -and [bool]$directRequest.valid) {
+        $worktree = Get-TelephoneDashboardMapText -Map $directRequest.value -Name 'workspace'
+    }
     return [ordered]@{
         job_root = $JobRoot
         project = $project
@@ -888,6 +906,8 @@ function Get-TelephoneDashboardJobScan {
         direct_route = [bool]$directRoute
         direct_session_id = $directSessionId
         direct_resume = [bool]$directResume
+        created_at_utc = $createdAt
+        worktree = $worktree
     }
 }
 
@@ -1490,6 +1510,7 @@ function Test-TelephoneDashboardSupersededFailure {
         [AllowNull()][object]$Closure
     )
     $failureLineage = [bool]$Job.receipt.present -and -not [bool]$Job.delivery -and [bool]$Job.relay_error
+    if (Test-TelephoneDashboardJobSupersededByLiveSuccessor -Job $Job -AllJobs $AllJobs -Descriptor $Descriptor) { return $true }
     if (-not $failureLineage) { return $false }
 
     $terminalState = if ($Descriptor.Contains('terminal_state')) { [string]$Descriptor.terminal_state } else { 'active' }
@@ -1527,7 +1548,7 @@ function Get-TelephoneDashboardPairedDirectJob {
         [Parameter(Mandatory = $true)][object]$Job,
         [AllowNull()][hashtable]$DirectByJobId
     )
-    if ([bool]$Job.direct_route) { return $Job }
+    if (Get-TelephoneDashboardMapFlag -Map $Job -Name 'direct_route') { return $Job }
     $jobId = [string]$Job.job_id
     if ([string]::IsNullOrWhiteSpace($jobId) -or $null -eq $DirectByJobId -or -not $DirectByJobId.Contains($jobId)) { return $null }
     return $DirectByJobId[$jobId]
@@ -1545,7 +1566,7 @@ function Get-TelephoneDashboardJobDirectSession {
     if ($null -ne $paired -and -not [object]::ReferenceEquals($paired, $Job)) {
         return Get-TelephoneDashboardMapText -Map $paired -Name 'direct_session_id'
     }
-    if ([bool]$Job.direct_route) { return [string]$Job.session_id }
+    if (Get-TelephoneDashboardMapFlag -Map $Job -Name 'direct_route') { return (Get-TelephoneDashboardMapText -Map $Job -Name 'session_id') }
     return ''
 }
 
@@ -1623,19 +1644,79 @@ function Test-TelephoneDashboardDirectPackageOwner {
         if (-not [string]::IsNullOrWhiteSpace($pairedJobId) -and $pairedJobId -ceq [string]$exactId) { $exactJob = $true; break }
     }
     if (-not $exactJob) { return $false }
-    foreach ($other in @($AllJobs)) {
-        $otherPaired = Get-TelephoneDashboardPairedDirectJob -Job $other -DirectByJobId $DirectByJobId
-        if ($null -eq $otherPaired) { continue }
-        if ([string]$otherPaired.job_root -ceq [string]$paired.job_root) { continue }
-        if (Get-TelephoneDashboardMapFlag -Map $otherPaired -Name 'direct_resume') { continue }
-        $otherReceipt = $null
-        if ([bool]$otherPaired.receipt.valid) { $otherReceipt = $otherPaired.receipt.value }
-        if (-not (Test-TelephoneDashboardDirectReceiptSuccess -Receipt $otherReceipt)) { continue }
-        if (-not (Test-TelephoneDashboardJobMatchesDescriptorLineage -Job $other -Descriptor $Descriptor -TelephoneByJobId $TelephoneByJobId -DirectByJobId $DirectByJobId)) {
-            continue
+    return $true
+}
+
+function Get-TelephoneDashboardJobCreatedAt {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][object]$Job)
+    $text = Get-TelephoneDashboardMapText -Map $Job -Name 'created_at_utc'
+    if ([string]::IsNullOrWhiteSpace($text) -and $Job -is [Collections.IDictionary] -and $Job.Contains('dispatch') -and $null -ne $Job.dispatch) {
+        $disp = $Job.dispatch
+        if ($disp -is [Collections.IDictionary] -and $disp.Contains('value') -and $null -ne $disp.value) {
+            $text = Get-TelephoneDashboardMapText -Map $disp.value -Name 'created_at_utc'
         }
-        $otherSession = Get-TelephoneDashboardJobDirectSession -Job $otherPaired -DirectByJobId $DirectByJobId
-        if ($otherSession -ceq $session) { return $true }
+    }
+    if ([string]::IsNullOrWhiteSpace($text)) { return [DateTimeOffset]::MinValue }
+    try { return [DateTimeOffset]::Parse($text, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind) } catch { return [DateTimeOffset]::MinValue }
+}
+
+function Get-TelephoneDashboardJobWorktreeKey {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][object]$Job)
+    $wt = Get-TelephoneDashboardMapText -Map $Job -Name 'worktree'
+    if ([string]::IsNullOrWhiteSpace($wt) -and $Job -is [Collections.IDictionary] -and $Job.Contains('dispatch') -and $null -ne $Job.dispatch -and $Job.dispatch -is [Collections.IDictionary] -and $Job.dispatch.Contains('value') -and $null -ne $Job.dispatch.value) {
+        $lead = $null
+        $disp = $Job.dispatch.value
+        if ($disp -is [Collections.IDictionary] -and $disp.Contains('lead')) { $lead = $disp['lead'] }
+        if ($null -ne $lead) { $wt = Get-TelephoneDashboardMapText -Map $lead -Name 'worktree' }
+        if ([string]::IsNullOrWhiteSpace($wt)) {
+            $cmd = $null
+            if ($disp -is [Collections.IDictionary] -and $disp.Contains('command')) { $cmd = $disp['command'] }
+            if ($null -ne $cmd) { $wt = Get-TelephoneDashboardMapText -Map $cmd -Name 'working_directory' }
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($wt)) { return '' }
+    try { return [IO.Path]::GetFullPath($wt).TrimEnd('\').ToLowerInvariant() } catch { return $wt.ToLowerInvariant() }
+}
+
+function Test-TelephoneDashboardJobIsLiveNow {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][object]$Job)
+    if (Get-TelephoneDashboardMapFlag -Map $Job -Name 'command_alive') { return $true }
+    if (Get-TelephoneDashboardMapFlag -Map $Job -Name 'relay_alive') { return $true }
+    return $false
+}
+
+function Test-TelephoneDashboardJobSupersededByLiveSuccessor {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][object]$Job,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$AllJobs,
+        [AllowNull()][object]$Descriptor = $null
+    )
+    if (Test-TelephoneDashboardJobIsLiveNow -Job $Job) { return $false }
+    if ($null -ne $Descriptor -and (Test-TelephoneDashboardExactSuccessorJob -Candidate $Job -Descriptor $Descriptor)) { return $false }
+    $project = Get-TelephoneDashboardMapText -Map $Job -Name 'project'
+    $session = Get-TelephoneDashboardMapText -Map $Job -Name 'session_id'
+    $worktree = Get-TelephoneDashboardJobWorktreeKey -Job $Job
+    $created = Get-TelephoneDashboardJobCreatedAt -Job $Job
+    foreach ($other in @($AllJobs)) {
+        if ($null -eq $other) { continue }
+        if ([string]$other.job_root -ceq [string]$Job.job_root) { continue }
+        if (-not [string]::IsNullOrWhiteSpace($project) -and -not [string]::IsNullOrWhiteSpace([string]$other.project) -and [string]$other.project -cne $project) { continue }
+        $otherWorktree = Get-TelephoneDashboardJobWorktreeKey -Job $other
+        $sameLane = $false
+        if (-not [string]::IsNullOrWhiteSpace($worktree) -and $worktree -ceq $otherWorktree -and -not [string]::IsNullOrWhiteSpace($project) -and [string]$other.project -ceq $project) {
+            $sameLane = $true
+        }
+        if (-not $sameLane) { continue }
+        $otherCreated = Get-TelephoneDashboardJobCreatedAt -Job $other
+        if ($created -gt [DateTimeOffset]::MinValue -and $otherCreated -gt [DateTimeOffset]::MinValue -and $otherCreated -le $created) { continue }
+        if ($created -eq [DateTimeOffset]::MinValue -or $otherCreated -eq [DateTimeOffset]::MinValue) {
+            if (-not (Test-TelephoneDashboardJobIsLiveNow -Job $other)) { continue }
+        }
+        return $true
     }
     return $false
 }
@@ -1643,8 +1724,8 @@ function Test-TelephoneDashboardDirectPackageOwner {
 function Test-TelephoneDashboardJobMustRemainVisible {
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][object]$Job)
-    if ([bool]$Job.command_alive) { return $true }
-    if ([bool]$Job.relay_alive) { return $true }
+    if (Get-TelephoneDashboardMapFlag -Map $Job -Name 'command_alive') { return $true }
+    if (Get-TelephoneDashboardMapFlag -Map $Job -Name 'relay_alive') { return $true }
     $codes = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($finding in @($Job.findings)) {
         if ($null -eq $finding) { continue }
@@ -1664,7 +1745,7 @@ function Test-TelephoneDashboardJobMustRemainVisible {
     $delivery = $false
     if ($Job -is [Collections.IDictionary] -and $Job.Contains('delivery')) { $delivery = [bool]$Job['delivery'] }
     elseif ($null -ne $Job.PSObject.Properties['delivery']) { $delivery = [bool]$Job.delivery }
-    if ($receiptPresent -and -not $delivery) { return $true }
+    if ($receiptPresent -and -not $delivery -and -not (Get-TelephoneDashboardMapFlag -Map $Job -Name 'direct_route')) { return $true }
     return $false
 }
 
@@ -1678,7 +1759,7 @@ function Test-TelephoneDashboardDirectHistoryRetired {
         [AllowEmptyCollection()][string[]]$ProofJobIds = @(),
         [AllowEmptyCollection()][string[]]$ProofDirectSessions = @()
     )
-    if (Test-TelephoneDashboardJobMustRemainVisible -Job $Job) { return $false }
+    if (Test-TelephoneDashboardJobSupersededByLiveSuccessor -Job $Job -AllJobs $AllJobs -Descriptor $Descriptor) { return $true }
     $proofJobSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($id in @($ProofJobIds)) {
         if (-not [string]::IsNullOrWhiteSpace([string]$id)) { [void]$proofJobSet.Add([string]$id) }
@@ -1687,17 +1768,21 @@ function Test-TelephoneDashboardDirectHistoryRetired {
     foreach ($sid in @($ProofDirectSessions)) {
         if (-not [string]::IsNullOrWhiteSpace([string]$sid)) { [void]$proofSessionSet.Add([string]$sid) }
     }
-    if ($proofJobSet.Count -eq 0 -and $proofSessionSet.Count -eq 0) { return $false }
-    $jobId = [string]$Job.job_id
-    if (-not [string]::IsNullOrWhiteSpace($jobId) -and $proofJobSet.Contains($jobId)) { return $false }
-    foreach ($exactId in @(Get-TelephoneDashboardDescriptorExactJobIds -Descriptor $Descriptor)) {
-        if (-not [string]::IsNullOrWhiteSpace($jobId) -and $jobId -ceq [string]$exactId) { return $false }
-    }
     $directSession = Get-TelephoneDashboardJobDirectSession -Job $Job -DirectByJobId $DirectByJobId
     $authority = Get-TelephoneDashboardDirectRouteAuthority -Descriptor $Descriptor
     $sessionRetired = $false
     foreach ($retired in @($authority.retired_session_ids)) {
         if (-not [string]::IsNullOrWhiteSpace($directSession) -and $directSession -ceq [string]$retired) { $sessionRetired = $true; break }
+    }
+    if ($sessionRetired -and ($proofJobSet.Count -gt 0 -or $proofSessionSet.Count -gt 0)) { return $true }
+    if ($proofJobSet.Count -eq 0 -and $proofSessionSet.Count -eq 0) {
+        if (Test-TelephoneDashboardJobMustRemainVisible -Job $Job) { return $false }
+        return $false
+    }
+    $jobId = [string]$Job.job_id
+    if (-not [string]::IsNullOrWhiteSpace($jobId) -and $proofJobSet.Contains($jobId)) { return $false }
+    foreach ($exactId in @(Get-TelephoneDashboardDescriptorExactJobIds -Descriptor $Descriptor)) {
+        if (-not [string]::IsNullOrWhiteSpace($jobId) -and $jobId -ceq [string]$exactId) { return $false }
     }
     $onProofSession = (-not [string]::IsNullOrWhiteSpace($directSession) -and $proofSessionSet.Contains($directSession) -and -not $sessionRetired)
     $supersededByExactSuccessor = $false
@@ -1720,13 +1805,14 @@ function Test-TelephoneDashboardDirectHistoryRetired {
         }
         if ($exactOnProvenSession) { $supersededByExactSuccessor = $true; break }
     }
+    if ($onProofSession -and $supersededByExactSuccessor) { return $true }
+    if (Test-TelephoneDashboardJobMustRemainVisible -Job $Job) { return $false }
     $paired = Get-TelephoneDashboardPairedDirectJob -Job $Job -DirectByJobId $DirectByJobId
     if ($null -eq $paired) { return $false }
     $failed = $false
     if ([bool]$paired.receipt.valid) { $failed = Test-TelephoneDashboardDirectReceiptFailed -Receipt $paired.receipt.value }
     $noReceipt = -not [bool]$paired.receipt.present
     $stale = (-not [bool]$paired.command_alive) -and $noReceipt
-    if ($onProofSession -and $supersededByExactSuccessor) { return $true }
     if (-not ($sessionRetired -or $failed -or $noReceipt -or $stale)) { return $false }
     if ($sessionRetired) { return $true }
     if (-not $onProofSession) { return $true }
@@ -1741,7 +1827,7 @@ function Get-TelephoneDashboardCorrelatedLeadSession {
         [Parameter(Mandatory = $true)][object]$Descriptor,
         [string]$FilterSession = ''
     )
-    if (-not [bool]$Job.direct_route) { return [string]$Job.session_id }
+    if (-not (Get-TelephoneDashboardMapFlag -Map $Job -Name 'direct_route')) { return (Get-TelephoneDashboardMapText -Map $Job -Name 'session_id') }
     $jobId = [string]$Job.job_id
     if (-not [string]::IsNullOrWhiteSpace($jobId) -and $null -ne $TelephoneByJobId -and $TelephoneByJobId.Contains($jobId)) {
         return [string]$TelephoneByJobId[$jobId].session_id
@@ -1990,8 +2076,11 @@ function Get-TelephoneDashboardProjection {
     param(
         [string]$ConfigPath,
         [string]$StateRoot,
-        [string]$DashboardStateRoot
+        [string]$DashboardStateRoot,
+        [DateTimeOffset]$ObservationStartedAt = [DateTimeOffset]::MinValue
     )
+
+    if ($ObservationStartedAt -eq [DateTimeOffset]::MinValue) { $ObservationStartedAt = [DateTimeOffset]::UtcNow }
 
     $groups = [Collections.Generic.List[object]]::new()
     $configPresent = $false
@@ -2299,7 +2388,12 @@ function Get-TelephoneDashboardProjection {
         foreach ($job in $jobScans) {
             $jid = [string]$job.job_id
             if ([string]::IsNullOrWhiteSpace($jid)) { continue }
-            if ([bool]$job.direct_route -and -not [bool]$job.dispatch.valid) {
+            $jobDispatch = $null
+            if ($job -is [Collections.IDictionary] -and $job.Contains('dispatch')) { $jobDispatch = $job['dispatch'] }
+            elseif ($null -ne $job.PSObject.Properties['dispatch']) { $jobDispatch = $job.dispatch }
+            $dispatchValid = $false
+            if ($null -ne $jobDispatch) { $dispatchValid = Get-TelephoneDashboardMapFlag -Map $jobDispatch -Name 'valid' }
+            if ((Get-TelephoneDashboardMapFlag -Map $job -Name 'direct_route') -and -not $dispatchValid) {
                 $directByJobId[$jid] = $job
             } else {
                 $telephoneByJobId[$jid] = $job
@@ -2318,6 +2412,9 @@ function Get-TelephoneDashboardProjection {
             if (-not [string]::IsNullOrWhiteSpace($ownerSession)) { [void]$proofDirectSessions.Add($ownerSession) }
         }
         foreach ($job in $jobScans) {
+            if (Test-TelephoneDashboardJobSupersededByLiveSuccessor -Job $job -AllJobs @($jobScans) -Descriptor $descriptor) {
+                continue
+            }
             if (Test-TelephoneDashboardSupersededFailure -Job $job -AllJobs @($jobScans) -Descriptor $descriptor -StateRoot $root -Closure $closure) {
                 continue
             }
@@ -2348,6 +2445,7 @@ function Get-TelephoneDashboardProjection {
             $stripFresh = $false
             if (-not [string]::IsNullOrWhiteSpace($ownerJobId) -and $proofJobIds.Contains($ownerJobId)) { $stripFresh = $true }
             elseif ($isExactAuthorizedJob -and $onProvenFreshSession) { $stripFresh = $true }
+            elseif ($isExactAuthorizedJob) { $stripFresh = $true }
             if ($stripFresh) {
                 $job.findings = @($job.findings | Where-Object { [string]$_.code -cne 'FRESH_DIRECT_SESSION_REQUIRED' })
             }
@@ -2397,7 +2495,8 @@ function Get-TelephoneDashboardProjection {
             if (@($jobScans).Count -gt 0) {
                 $supersededOnly = $true
                 foreach ($job in $jobScans) {
-                    $hidden = (Test-TelephoneDashboardSupersededFailure -Job $job -AllJobs @($jobScans) -Descriptor $descriptor -StateRoot $root -Closure $closure) -or
+                    $hidden = (Test-TelephoneDashboardJobSupersededByLiveSuccessor -Job $job -AllJobs @($jobScans) -Descriptor $descriptor) -or
+                        (Test-TelephoneDashboardSupersededFailure -Job $job -AllJobs @($jobScans) -Descriptor $descriptor -StateRoot $root -Closure $closure) -or
                         (Test-TelephoneDashboardDirectHistoryRetired -Job $job -AllJobs @($jobScans) -Descriptor $descriptor -DirectByJobId $directByJobId -ProofJobIds @($proofJobIds) -ProofDirectSessions @($proofDirectSessions))
                     if (-not $hidden) {
                         $supersededOnly = $false
@@ -2524,6 +2623,7 @@ function Get-TelephoneDashboardProjection {
     }
 
     $updated = [DateTimeOffset]::UtcNow.ToString('o')
+    $observed = $ObservationStartedAt.ToUniversalTime().ToString('o')
     $stale = $false
     if (-not [string]::IsNullOrWhiteSpace($lastReadErrorAt)) { $stale = $true; $sourceStale = $true }
     if (-not $sourceStale -and -not [string]::IsNullOrWhiteSpace($lastSuccessAt)) {
@@ -2536,6 +2636,7 @@ function Get-TelephoneDashboardProjection {
         protocol_version = 'telephone-line-dashboard-projection-v1'
         observational = $true
         updated_at_utc = $updated
+        observation_started_at_utc = $observed
         config_present = [bool]$configPresent
         stale = [bool]$stale
         source_stale = [bool]$sourceStale

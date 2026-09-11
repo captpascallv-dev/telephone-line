@@ -77,8 +77,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 24035,
-      "sha256": "19c173191d6b4dadf1d2745ee31495e22e07688de34b0e44c2180ee65e87bf82"
+      "bytes": 24306,
+      "sha256": "71ae77371b213a03bbbc5525a38684973f55eead70d8e706dcf487248b921426"
     },
     {
       "path": "SECURITY.md",
@@ -92,8 +92,8 @@
     },
     {
       "path": "docs/README.zh-CN.md",
-      "bytes": 22597,
-      "sha256": "0b6e18fb7c885fb7a2ba3a35b1e00087190a0bf5d1cc7143db297de8c3009acb"
+      "bytes": 22751,
+      "sha256": "b78a27e46496dc88310e46cae4b1b8d02c119f683496260f35f909bd3822a01a"
     },
     {
       "path": "docs/adapter-authoring.md",
@@ -172,8 +172,8 @@
     },
     {
       "path": "docs/dashboard.md",
-      "bytes": 12128,
-      "sha256": "c606bbd13348d2d468cdffa0077a10764b9a9e308af033c83886055611f59582"
+      "bytes": 12882,
+      "sha256": "5c865249dd8f370d9e2001cb938ad7757a13ef1d306ce5c3c3b97794d2c46da3"
     },
     {
       "path": "docs/examples/caller-supplied-lead/Invoke-GenericLeadLauncher.ps1",
@@ -282,8 +282,8 @@
     },
     {
       "path": "docs/releases/v0.1.3.md",
-      "bytes": 5641,
-      "sha256": "87ebfba22f5c0a0a13e042f455adefa2e5bbc72e7cc9b4edfc889003f505b6e1"
+      "bytes": 7144,
+      "sha256": "0b2414d4e07c63d1d278da4c69a81aa490d70536f470c018156b94115c53d092"
     },
     {
       "path": "docs/routes.md",
@@ -452,8 +452,8 @@
     },
     {
       "path": "schemas/dashboard-projection.schema.json",
-      "bytes": 8855,
-      "sha256": "53efd57c98303b6d37a1d9b9cc516cc71a85214f1074a240511d3228e4c654d8"
+      "bytes": 8936,
+      "sha256": "76349c22820dd80d0d52365743113b6baba6973f79cffd4447bfc4b5d5a149a8"
     },
     {
       "path": "schemas/dispatch.schema.json",
@@ -797,13 +797,13 @@
     },
     {
       "path": "src/core/TelephoneLeadRuntime.Common.ps1",
-      "bytes": 143904,
-      "sha256": "ecd706d0617cf6bea82ec1563bfe86eca0104246a73965333d38102c77c3c05d"
+      "bytes": 151256,
+      "sha256": "80a5ff662f708cf84e243d2a916fef2df5bb68e8c83464d3a7b43125e63ff9bc"
     },
     {
       "path": "src/core/TelephoneLine.Common.ps1",
-      "bytes": 288202,
-      "sha256": "41bb8d552ee951e51e32b953423b3e4f0019e070675232e900d7bff328e63879"
+      "bytes": 290492,
+      "sha256": "77fcc8dbad1544e30757725c9dc690dab6f6b8213511f752a3dea563bbca39c6"
     },
     {
       "path": "src/dashboard/Ensure-TelephoneDashboard.ps1",
@@ -822,8 +822,8 @@
     },
     {
       "path": "src/dashboard/TelephoneDashboard.Projection.ps1",
-      "bytes": 143912,
-      "sha256": "fe940b96f5133b5a372e7eb95c05cc07a6cdfc0ffafbeb9fed1498f61f1045a1"
+      "bytes": 150194,
+      "sha256": "b6033cb69213defb52c41ea0158f977d4a17e833550eaeebad521fba5d97aee7"
     },
     {
       "path": "src/dashboard/TelephoneDashboard.Reducer.ps1",
@@ -832,8 +832,8 @@
     },
     {
       "path": "src/dashboard/Watch-TelephoneDashboard.ps1",
-      "bytes": 6108,
-      "sha256": "b0b33d4d18f2f99ea3beeed7bcab9105e5b04102f38fcab3e85979785201643c"
+      "bytes": 6658,
+      "sha256": "48189cb821eb2cba87b8d22fe2759b993d99bcab7e9385e22f5ad9a46412504b"
     },
     {
       "path": "src/install/Install-TelephoneLine.ps1",
@@ -1122,8 +1122,8 @@
     },
     {
       "path": "tests/ci/Test-PublicWindowsLifecycle.ps1",
-      "bytes": 56402,
-      "sha256": "408914ba3c8932fb3cb7673ef1ad98f884b80b4236b92283ab3190b2fd62d6ce"
+      "bytes": 62243,
+      "sha256": "0ca344d10c38bc5f005b92f0d94ef8f2b65f503bfbec7eb95ad8a0b899320349"
     },
     {
       "path": "tests/compatibility/compatibility-contract.json",
@@ -1472,13 +1472,13 @@
     },
     {
       "path": "tests/core/fixtures/Invoke-MaintenanceEofProbe.ps1",
-      "bytes": 6277,
-      "sha256": "7092857cea124fc06d8c2fbcf9d7fe60d486afa2dea6ea901ae28071eb7b2394"
+      "bytes": 6979,
+      "sha256": "fcf3fda58b4aba45c629ff72ad9dccd3c287bbfe12b7e0c29becb6e82296febb"
     },
     {
       "path": "tests/core/fixtures/Invoke-MaintenanceLifecycleProbe.ps1",
-      "bytes": 34058,
-      "sha256": "0e108258807690c6a3e6b5be364ffedb394846e0f5b3fb6d04e2ae74aa311657"
+      "bytes": 40218,
+      "sha256": "687e141518f6574f4662762edf24cc5d6fc74b134f3103a7b6b24f447a49bc48"
     },
     {
       "path": "tests/core/fixtures/Invoke-MaintenanceStatusRaceProbe.ps1",
@@ -1487,8 +1487,8 @@
     },
     {
       "path": "tests/core/fixtures/mock-lead-launcher.ps1",
-      "bytes": 7007,
-      "sha256": "a632a8106e4e2dbf33d6e3079e46b1f5deb1915f013d97081c03c363caae9930"
+      "bytes": 9861,
+      "sha256": "4a43c07beb48b77806be3fd90eb2b9b267a17a103cb83c03a14e631727d1839a"
     },
     {
       "path": "tests/core/fixtures/mock-route.ps1",
@@ -1522,18 +1522,18 @@
     },
     {
       "path": "tests/core/test_lead_runtime_hardening.ps1",
-      "bytes": 24194,
-      "sha256": "8b210b43a1f7c8580edea70f82f97db1052293de4a17388bc4db093a0dbe3be6"
+      "bytes": 31389,
+      "sha256": "b3ac04c943f3fc038873200f14d8af31daa604e3781b027f79df932c3486345c"
     },
     {
       "path": "tests/core/test_telephone_line.ps1",
-      "bytes": 92408,
-      "sha256": "8994459fdd78ccc1086f981467b4cce5aeeb4a229cc83abcdbb9d38d1b92e061"
+      "bytes": 93313,
+      "sha256": "798c29a693e8aef9f64688b23e6cdbf02f098b3dce8973679a5516cca392cd79"
     },
     {
       "path": "tests/dashboard/test_dashboard.ps1",
-      "bytes": 172359,
-      "sha256": "bfc3bac334008e80edca541425d5e8dd2c581c9b29689c62d0b436da9f0250f6"
+      "bytes": 181515,
+      "sha256": "d3eef14eb03a094cd0518c05678eaabe374a58188902a802dedad950b99be4e5"
     },
     {
       "path": "tests/docs/test_public_docs.ps1",
@@ -1542,8 +1542,8 @@
     },
     {
       "path": "tests/install/test_install_lifecycle.ps1",
-      "bytes": 60658,
-      "sha256": "ba2c59790e73f004327ebd4d5df0d115be366f47a7cabb4c97764290aec898fd"
+      "bytes": 61060,
+      "sha256": "6f5650c1b0307973cee4e891f6e77498e074cd0660f51eaee425a0620ad95b29"
     },
     {
       "path": "tests/lead-side/codex-app-server/fixtures/Mock-CodexAppServer.ps1",
@@ -1607,13 +1607,13 @@
     },
     {
       "path": "tests/supervisor/test_wired_supervisor.ps1",
-      "bytes": 101416,
-      "sha256": "d7e6a50e556b3754a23b6b1a345a38036777eadd858812acd9687a15b08a198d"
+      "bytes": 102003,
+      "sha256": "dacf25846d0890a71efbe603816184ea89ff32032fe4b68ee6567c7af5e45478"
     }
   ],
   "counts": {
     "files": 316,
-    "bytes": 4808280
+    "bytes": 4861319
   },
   "excluded": [
     ".control/**",
