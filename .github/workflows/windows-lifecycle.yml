@@ -1,0 +1,168 @@
+name: windows-lifecycle
+
+on:
+  push:
+    branches:
+      - validation/telephone-windows-lifecycle-20260911
+  workflow_dispatch:
+
+concurrency:
+  group: telephone-windows-lifecycle-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  windows-lifecycle:
+    if: github.ref == 'refs/heads/validation/telephone-windows-lifecycle-20260911'
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - name: Record runner facts
+        shell: pwsh
+        run: |
+          $facts = [ordered]@{
+            protocol_version = 'telephone-line-windows-lifecycle-runner-facts-v1'
+            github_actions = [string]$env:GITHUB_ACTIONS
+            github_ref = [string]$env:GITHUB_REF
+            github_sha = [string]$env:GITHUB_SHA
+            github_run_id = [string]$env:GITHUB_RUN_ID
+            github_run_attempt = [string]$env:GITHUB_RUN_ATTEMPT
+            image_os = [string]$env:ImageOS
+            image_version = [string]$env:ImageVersion
+            runner_os = [string]$env:RUNNER_OS
+            runner_arch = [string]$env:RUNNER_ARCH
+            runner_name = [string]$env:RUNNER_NAME
+            computer_name = [string]$env:COMPUTERNAME
+            user_name = [string]([Security.Principal.WindowsIdentity]::GetCurrent().Name)
+            user_sid = [string]([Security.Principal.WindowsIdentity]::GetCurrent().User)
+            interactive = [bool][Environment]::UserInteractive
+            powershell = $PSVersionTable.PSVersion.ToString()
+            os_caption = [string](Get-CimInstance Win32_OperatingSystem).Caption
+            os_version = [string](Get-CimInstance Win32_OperatingSystem).Version
+          }
+          $text = (($facts | ConvertTo-Json -Depth 8) + "`n")
+          Write-Output $text.TrimEnd()
+          $outDir = Join-Path $env:RUNNER_TEMP 'telephone-lifecycle-evidence'
+          [IO.Directory]::CreateDirectory($outDir) | Out-Null
+          [IO.File]::WriteAllText((Join-Path $outDir 'runner-facts.json'), $text, [Text.UTF8Encoding]::new($false))
+
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Assert validation branch and required files
+        shell: pwsh
+        run: |
+          if ([string]$env:GITHUB_REF -cne 'refs/heads/validation/telephone-windows-lifecycle-20260911') {
+            throw 'windows-lifecycle runs only on validation/telephone-windows-lifecycle-20260911.'
+          }
+          $required = @(
+            '.github/workflows/ci.yml',
+            '.github/workflows/windows-lifecycle.yml',
+            'tests/ci/Test-PublicWindowsLifecycle.ps1',
+            'docs/releases/v0.1.3.md',
+            'src/packaging/New-TelephoneReleaseZip.ps1',
+            'src/install/Install-TelephoneLine.ps1'
+          )
+          foreach ($rel in $required) {
+            if (-not [IO.File]::Exists((Join-Path (Get-Location) ($rel.Replace('/', '\'))))) {
+              throw "Required file missing: $rel"
+            }
+          }
+          $tokens = $null
+          $errors = $null
+          $null = [Management.Automation.Language.Parser]::ParseFile((Join-Path (Get-Location) 'tests\ci\Test-PublicWindowsLifecycle.ps1'), [ref]$tokens, [ref]$errors)
+          if ($null -ne $errors -and @($errors).Count -gt 0) { throw ('Lifecycle test parse failed: ' + $errors[0].ToString()) }
+
+      - name: Generate official packages from this HEAD
+        shell: pwsh
+        run: |
+          $assetDir = Join-Path $env:RUNNER_TEMP 'telephone-lifecycle-assets'
+          $evidence = Join-Path $env:RUNNER_TEMP 'telephone-lifecycle-evidence'
+          [IO.Directory]::CreateDirectory($assetDir) | Out-Null
+          [IO.Directory]::CreateDirectory($evidence) | Out-Null
+          $pwsh = [string]([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
+          $pack = {
+            param([string]$Script, [string]$Out)
+            & $pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $Script -SourceRoot (Get-Location) -OutputPath $Out -Force
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          & $pack 'src/packaging/New-TelephoneReleaseManifest.ps1' (Join-Path $evidence 'repo-release-manifest.json')
+          Copy-Item -LiteralPath (Join-Path $evidence 'repo-release-manifest.json') -Destination (Join-Path $assetDir 'repo-release-manifest.json') -Force
+          & $pack 'src/packaging/New-TelephoneSourceArchive.ps1' (Join-Path $assetDir 'telephone-line-0.1.2-source.zip')
+          & $pack 'src/packaging/New-TelephoneReleaseZip.ps1' (Join-Path $assetDir 'telephone-line-0.1.2-windows.zip')
+          $rows = [Collections.Generic.List[string]]::new()
+          $extFiles = [Collections.Generic.List[object]]::new()
+          foreach ($name in @('telephone-line-0.1.2-source.zip', 'telephone-line-0.1.2-windows.zip')) {
+            $path = Join-Path $assetDir $name
+            $bytes = [IO.File]::ReadAllBytes($path)
+            $sha = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+            [void]$rows.Add(($sha + '  ' + $name))
+            [void]$extFiles.Add([ordered]@{ name = $name; bytes = [int64]$bytes.Length; sha256 = $sha })
+          }
+          $repoMan = Get-Content -LiteralPath (Join-Path $evidence 'repo-release-manifest.json') -Raw | ConvertFrom-Json -AsHashtable -Depth 32
+          $ext = [ordered]@{
+            protocol_version = [string]$repoMan.protocol_version
+            product = [string]$repoMan.product
+            version = [string]$repoMan.version
+            license = [string]$repoMan.license
+            platform = [string]$repoMan.platform
+            denominator = [int]$repoMan.denominator
+            route_ids = @($repoMan.route_ids)
+            artifact_identities = 'filled_for_external_assets'
+            repository_manifest_artifact_identities = 'null'
+            artifacts = @(
+              [ordered]@{ name = [string]$extFiles[0].name; bytes = [int64]$extFiles[0].bytes; sha256 = [string]$extFiles[0].sha256; contains = [string]$repoMan.artifacts[0].contains }
+              [ordered]@{ name = [string]$extFiles[1].name; bytes = [int64]$extFiles[1].bytes; sha256 = [string]$extFiles[1].sha256; contains = [string]$repoMan.artifacts[1].contains }
+            )
+          }
+          $extPath = Join-Path $assetDir 'release-manifest.json'
+          $extText = (($ext | ConvertTo-Json -Depth 16) + "`n")
+          [IO.File]::WriteAllText($extPath, $extText, [Text.UTF8Encoding]::new($false))
+          $extBytes = [IO.File]::ReadAllBytes($extPath)
+          $extSha = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($extBytes)).ToLowerInvariant()
+          [void]$rows.Add(($extSha + '  release-manifest.json'))
+          [IO.File]::WriteAllText((Join-Path $assetDir 'SHA256SUMS.txt'), (($rows -join "`n") + "`n"), [Text.UTF8Encoding]::new($false))
+          Write-Output (('source=' + [string]$extFiles[0].sha256 + ' windows=' + [string]$extFiles[1].sha256 + ' manifest=' + $extSha))
+
+      - name: Extract Windows ZIP
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $assetDir = Join-Path $env:RUNNER_TEMP 'telephone-lifecycle-assets'
+          $extract = Join-Path $env:RUNNER_TEMP 'telephone-lifecycle-extracted-windows'
+          if ([IO.Directory]::Exists($extract)) { Remove-Item -LiteralPath $extract -Recurse -Force }
+          [IO.Directory]::CreateDirectory($extract) | Out-Null
+          [IO.Compression.ZipFile]::ExtractToDirectory((Join-Path $assetDir 'telephone-line-0.1.2-windows.zip'), $extract, $true)
+          if (-not [IO.File]::Exists((Join-Path $extract 'src\install\Install-TelephoneLine.ps1'))) {
+            throw 'Extracted Windows ZIP is missing Install-TelephoneLine.ps1.'
+          }
+
+      - name: Run public install lifecycle
+        shell: pwsh
+        run: |
+          $assetDir = Join-Path $env:RUNNER_TEMP 'telephone-lifecycle-assets'
+          $extract = Join-Path $env:RUNNER_TEMP 'telephone-lifecycle-extracted-windows'
+          $evidence = Join-Path $env:RUNNER_TEMP 'telephone-lifecycle-evidence'
+          & pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/ci/Test-PublicWindowsLifecycle.ps1 `
+            -ExtractedWindowsRoot $extract `
+            -WindowsZip (Join-Path $assetDir 'telephone-line-0.1.2-windows.zip') `
+            -SourceZip (Join-Path $assetDir 'telephone-line-0.1.2-source.zip') `
+            -AssetRoot $assetDir `
+            -EvidenceRoot $evidence
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-lifecycle-evidence
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/telephone-lifecycle-evidence/**
+            ${{ runner.temp }}/telephone-lifecycle-assets/**
