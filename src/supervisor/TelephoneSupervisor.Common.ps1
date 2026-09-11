@@ -74,6 +74,43 @@ namespace TelephoneWiredSupervisorNative {
         public JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation; public IO_COUNTERS IoInfo;
         public UIntPtr ProcessMemoryLimit; public UIntPtr JobMemoryLimit; public UIntPtr PeakProcessMemoryUsed; public UIntPtr PeakJobMemoryUsed;
     }
+    [ComImport]
+    [Guid("00021401-0000-0000-C000-000000000046")]
+    public class CShellLink {}
+    [ComImport]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    [Guid("000214F9-0000-0000-C000-000000000046")]
+    public interface IShellLinkW {
+        void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszFile, int cch, IntPtr pfd, int fFlags);
+        void GetIDList(out IntPtr ppidl);
+        void SetIDList(IntPtr pidl);
+        void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszName, int cch);
+        void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string pszName);
+        void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszDir, int cch);
+        void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string pszDir);
+        void GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszArgs, int cch);
+        void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string pszArgs);
+        void GetHotkey(out short pwHotkey);
+        void SetHotkey(short wHotkey);
+        void GetShowCmd(out int piShowCmd);
+        void SetShowCmd(int iShowCmd);
+        void GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszIconPath, int cch, out int piIcon);
+        void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string pszIconPath, int iIcon);
+        void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string pszPathRel, int dwReserved);
+        void Resolve(IntPtr hwnd, int fFlags);
+        void SetPath([MarshalAs(UnmanagedType.LPWStr)] string pszFile);
+    }
+    [ComImport]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    [Guid("0000010b-0000-0000-C000-000000000046")]
+    public interface IPersistFile {
+        void GetClassID(out Guid pClassID);
+        [PreserveSig] int IsDirty();
+        void Load([MarshalAs(UnmanagedType.LPWStr)] string pszFileName, uint dwMode);
+        void Save([MarshalAs(UnmanagedType.LPWStr)] string pszFileName, [MarshalAs(UnmanagedType.Bool)] bool fRemember);
+        void SaveCompleted([MarshalAs(UnmanagedType.LPWStr)] string pszFileName);
+        void GetCurFile([MarshalAs(UnmanagedType.LPWStr)] out string ppszFileName);
+    }
     public static class Native {
         public const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
         public const int JobObjectExtendedLimitInformation = 9;
@@ -222,6 +259,29 @@ namespace TelephoneWiredSupervisorNative {
             op.pFrom = path + "\0\0";
             op.fFlags = (ushort)(FOF_SILENT | FOF_NOCONFIRMATION | FOF_ALLOWUNDO | FOF_NOERRORUI);
             return SHFileOperation(ref op);
+        }
+        [DllImport("ole32.dll")]
+        static extern int CoInitializeEx(IntPtr pvReserved, uint dwCoInit);
+        const uint COINIT_APARTMENTTHREADED = 0x2;
+        const int RPC_E_CHANGED_MODE = unchecked((int)0x80010106);
+        public static void WriteUnicodeShortcut(string path, string target, string arguments, string workingDirectory, int showCmd) {
+            if (string.IsNullOrEmpty(path)) { throw new ArgumentException("shortcut path is required"); }
+            int hr = CoInitializeEx(IntPtr.Zero, COINIT_APARTMENTTHREADED);
+            if (hr < 0 && hr != RPC_E_CHANGED_MODE) {
+                throw new Win32Exception(hr, "CoInitializeEx failed");
+            }
+            object raw = new CShellLink();
+            try {
+                IShellLinkW sl = (IShellLinkW)raw;
+                sl.SetPath(target ?? "");
+                sl.SetArguments(arguments ?? "");
+                sl.SetWorkingDirectory(workingDirectory ?? "");
+                sl.SetShowCmd(showCmd);
+                IPersistFile pf = (IPersistFile)raw;
+                pf.Save(path, true);
+            } finally {
+                if (raw != null) { Marshal.FinalReleaseComObject(raw); }
+            }
         }
     }
 }
@@ -1463,28 +1523,39 @@ function Get-TelephoneSupervisorDesktopRoot {
     return [IO.Path]::GetFullPath([Environment]::GetFolderPath('Desktop')).TrimEnd('\')
 }
 
+function Get-TelephoneSupervisorOwnedShortcutNames {
+    [CmdletBinding()]
+    param()
+    return @(
+        [string]$script:TelephoneSupervisorEmergencyShortcut,
+        [string]$script:TelephoneSupervisorConsoleShortcut
+    )
+}
+
 function Register-TelephoneSupervisorDesktopShortcuts {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$InstallRoot,
         [Parameter(Mandatory = $true)][string]$ControlScript
     )
+    Initialize-TelephoneSupervisorNative
     $desktop = Get-TelephoneSupervisorDesktopRoot
     if (-not [IO.Directory]::Exists($desktop)) { [IO.Directory]::CreateDirectory($desktop) | Out-Null }
     $pwsh = [string]([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
-    $shell = New-Object -ComObject WScript.Shell
     $rows = @(
-        @{ name = $script:TelephoneSupervisorEmergencyShortcut; extra = '-Mode Emergency' },
-        @{ name = $script:TelephoneSupervisorConsoleShortcut; extra = '-Mode Console' }
+        @{ name = $script:TelephoneSupervisorEmergencyShortcut; mode = 'Emergency' },
+        @{ name = $script:TelephoneSupervisorConsoleShortcut; mode = 'Console' }
     )
     foreach ($row in $rows) {
         $path = Join-Path $desktop ([string]$row.name)
-        $shortcut = $shell.CreateShortcut($path)
-        $shortcut.TargetPath = $pwsh
-        $shortcut.Arguments = ('-NoLogo -NoProfile -ExecutionPolicy Bypass -File "' + $ControlScript + '" ' + [string]$row.extra)
-        $shortcut.WorkingDirectory = $InstallRoot
-        $shortcut.WindowStyle = 1
-        $shortcut.Save()
+        $arguments = ('-NoLogo -NoProfile -ExecutionPolicy Bypass -File "' + $ControlScript + '" -Mode ' + [string]$row.mode)
+        [TelephoneWiredSupervisorNative.Native]::WriteUnicodeShortcut($path, $pwsh, $arguments, $InstallRoot, 1)
+        if (-not [IO.File]::Exists($path)) {
+            throw ('Unable to save desktop shortcut: ' + $path)
+        }
+        if ((Get-Item -LiteralPath $path).Length -lt 1) {
+            throw ('Desktop shortcut save produced an empty file: ' + $path)
+        }
     }
     return [ordered]@{ desktop = $desktop; emergency = $script:TelephoneSupervisorEmergencyShortcut; console = $script:TelephoneSupervisorConsoleShortcut }
 }
@@ -1493,7 +1564,7 @@ function Unregister-TelephoneSupervisorDesktopShortcuts {
     [CmdletBinding()]
     param()
     $desktop = Get-TelephoneSupervisorDesktopRoot
-    foreach ($name in @($script:TelephoneSupervisorEmergencyShortcut, $script:TelephoneSupervisorConsoleShortcut)) {
+    foreach ($name in @(Get-TelephoneSupervisorOwnedShortcutNames)) {
         $path = Join-Path $desktop $name
         if ([IO.File]::Exists($path)) {
             $null = Move-TelephonePathToRecycleBin -Path $path

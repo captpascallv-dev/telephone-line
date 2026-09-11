@@ -12,7 +12,6 @@ concurrency:
 
 permissions:
   contents: read
-  actions: write
 
 jobs:
   windows-lifecycle:
@@ -70,7 +69,9 @@ jobs:
             'tests/ci/Test-PublicWindowsLifecycle.ps1',
             'docs/releases/v0.1.3.md',
             'src/packaging/New-TelephoneReleaseZip.ps1',
-            'src/install/Install-TelephoneLine.ps1'
+            'src/install/Install-TelephoneLine.ps1',
+            'release-manifest.json',
+            'schemas/release-manifest.schema.json'
           )
           foreach ($rel in $required) {
             if (-not [IO.File]::Exists((Join-Path (Get-Location) ($rel.Replace('/', '\'))))) {
@@ -85,31 +86,144 @@ jobs:
       - name: Generate official packages from this HEAD
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -AssemblyName System.IO.Compression
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $root = [IO.Path]::GetFullPath((Get-Location))
           $assetDir = Join-Path $env:RUNNER_TEMP 'telephone-lifecycle-assets'
           $evidence = Join-Path $env:RUNNER_TEMP 'telephone-lifecycle-evidence'
           [IO.Directory]::CreateDirectory($assetDir) | Out-Null
           [IO.Directory]::CreateDirectory($evidence) | Out-Null
-          $pwsh = [string]([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
-          $pack = {
+          . (Join-Path $root 'src\core\TelephoneLine.Common.ps1')
+          . (Join-Path $root 'src\packaging\TelephonePackaging.Common.ps1')
+          $pwshExe = [string]([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
+          function Invoke-OfficialPackager {
             param([string]$Script, [string]$Out)
-            & $pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $Script -SourceRoot (Get-Location) -OutputPath $Out -Force
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & $pwshExe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $root $Script) -SourceRoot $root -OutputPath $Out -Force
+            if ($LASTEXITCODE -ne 0) { throw ("Packager failed: " + $Script) }
           }
-          & $pack 'src/packaging/New-TelephoneReleaseManifest.ps1' (Join-Path $evidence 'repo-release-manifest.json')
-          Copy-Item -LiteralPath (Join-Path $evidence 'repo-release-manifest.json') -Destination (Join-Path $assetDir 'repo-release-manifest.json') -Force
-          & $pack 'src/packaging/New-TelephoneSourceArchive.ps1' (Join-Path $assetDir 'telephone-line-0.1.2-source.zip')
-          & $pack 'src/packaging/New-TelephoneReleaseZip.ps1' (Join-Path $assetDir 'telephone-line-0.1.2-windows.zip')
-          $rows = [Collections.Generic.List[string]]::new()
-          $extFiles = [Collections.Generic.List[object]]::new()
-          foreach ($name in @('telephone-line-0.1.2-source.zip', 'telephone-line-0.1.2-windows.zip')) {
-            $path = Join-Path $assetDir $name
-            $bytes = [IO.File]::ReadAllBytes($path)
-            $sha = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
-            [void]$rows.Add(($sha + '  ' + $name))
-            [void]$extFiles.Add([ordered]@{ name = $name; bytes = [int64]$bytes.Length; sha256 = $sha })
+          $regenPath = Join-Path $evidence 'repo-release-manifest.json'
+          Invoke-OfficialPackager -Script 'src/packaging/New-TelephoneReleaseManifest.ps1' -Out $regenPath
+          $committedPath = Join-Path $root 'release-manifest.json'
+          $committedId = Get-TelephonePackagingFileBytesAndHash -Path $committedPath
+          $regenId = Get-TelephonePackagingFileBytesAndHash -Path $regenPath
+          $identity = [ordered]@{
+            protocol_version = 'telephone-line-windows-lifecycle-manifest-identity-v1'
+            committed_bytes = [int64]$committedId.bytes
+            committed_sha256 = [string]$committedId.sha256
+            regenerated_bytes = [int64]$regenId.bytes
+            regenerated_sha256 = [string]$regenId.sha256
+            packager_version = [string]$script:TelephonePackagingVersion
+            source_zip_name = [string]$script:TelephonePackagingSourceZipName
+            windows_zip_name = [string]$script:TelephonePackagingReleaseZipName
+            match = ([string]$committedId.sha256 -ceq [string]$regenId.sha256)
           }
-          $repoMan = Get-Content -LiteralPath (Join-Path $evidence 'repo-release-manifest.json') -Raw | ConvertFrom-Json -AsHashtable -Depth 32
-          $ext = [ordered]@{
+          $null = Write-TelephonePackagingUtf8File -Path (Join-Path $evidence 'committed-vs-regenerated-manifest.json') -Text (ConvertTo-TelephonePackagingJson -Value $identity) -Force
+          if (-not [bool]$identity.match) {
+            throw ('Committed release-manifest.json does not match official regeneration from this checkout. committed=' + $committedId.sha256 + ' regenerated=' + $regenId.sha256)
+          }
+          $sourceZip = Join-Path $assetDir $script:TelephonePackagingSourceZipName
+          $windowsZip = Join-Path $assetDir $script:TelephonePackagingReleaseZipName
+          Invoke-OfficialPackager -Script 'src/packaging/New-TelephoneSourceArchive.ps1' -Out $sourceZip
+          Invoke-OfficialPackager -Script 'src/packaging/New-TelephoneReleaseZip.ps1' -Out $windowsZip
+          $sourceId = Get-TelephonePackagingFileBytesAndHash -Path $sourceZip
+          $windowsId = Get-TelephonePackagingFileBytesAndHash -Path $windowsZip
+          $repoMan = (Get-Content -LiteralPath $regenPath -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable -Depth 64)
+          if ([string]$repoMan.version -cne '0.1.3') { throw ('Official manifest version is not 0.1.3: ' + [string]$repoMan.version) }
+          if ([string]$repoMan.artifacts[0].name -cne [string]$script:TelephonePackagingSourceZipName) { throw 'Source artifact name mismatch.' }
+          if ([string]$repoMan.artifacts[1].name -cne [string]$script:TelephonePackagingReleaseZipName) { throw 'Windows artifact name mismatch.' }
+          if ($null -ne $repoMan.artifacts[0].bytes -or $null -ne $repoMan.artifacts[0].sha256 -or $null -ne $repoMan.artifacts[1].bytes -or $null -ne $repoMan.artifacts[1].sha256) {
+            throw 'Repository manifest artifact bytes/SHA must remain null.'
+          }
+          $fileRows = @($repoMan.files)
+          $fileLookup = @{}
+          foreach ($row in $fileRows) {
+            $p = [string]$row.path
+            if ($fileLookup.ContainsKey($p)) { throw ('Duplicate manifest path: ' + $p) }
+            $fileLookup[$p] = $row
+          }
+          function Get-ZipEntryRows {
+            param([string]$ZipPath)
+            $archive = [IO.Compression.ZipFile]::OpenRead($ZipPath)
+            try {
+              $seen = @{}
+              $rows = [Collections.Generic.List[object]]::new()
+              $duplicates = [Collections.Generic.List[string]]::new()
+              foreach ($entry in @($archive.Entries)) {
+                $name = [string]$entry.FullName.Replace('\', '/')
+                if ($seen.ContainsKey($name)) { [void]$duplicates.Add($name) }
+                $seen[$name] = $true
+                $ms = [IO.MemoryStream]::new()
+                $stream = $entry.Open()
+                try { $stream.CopyTo($ms) } finally { $stream.Dispose() }
+                $bytes = $ms.ToArray()
+                $ms.Dispose()
+                [void]$rows.Add([ordered]@{
+                  path = $name
+                  bytes = [int64]$bytes.Length
+                  sha256 = (Get-TelephonePackagingSha256 -Bytes $bytes)
+                })
+              }
+              return [ordered]@{ entries = @($rows); duplicates = @($duplicates) }
+            } finally { $archive.Dispose() }
+          }
+          function Compare-ZipToManifest {
+            param([string]$Kind, [object]$ZipInfo)
+            $missing = [Collections.Generic.List[string]]::new()
+            $mismatch = [Collections.Generic.List[object]]::new()
+            $extra = [Collections.Generic.List[string]]::new()
+            $expected = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+            foreach ($row in $fileRows) {
+              $p = [string]$row.path
+              $include = $true
+              if ($Kind -ceq 'windows') {
+                if ($p.StartsWith('tests/') -or $p.StartsWith('.github/')) { $include = $false }
+              }
+              if ($include) { [void]$expected.Add($p) }
+            }
+            $zipLookup = @{}
+            foreach ($entry in @($ZipInfo.entries)) {
+              $p = [string]$entry.path
+              $zipLookup[$p] = $entry
+              if (-not $fileLookup.ContainsKey($p)) { [void]$extra.Add($p) }
+              elseif ($expected.Contains($p)) {
+                $man = $fileLookup[$p]
+                if ([int64]$entry.bytes -ne [int64]$man.bytes -or [string]$entry.sha256 -cne [string]$man.sha256) {
+                  [void]$mismatch.Add([ordered]@{ path = $p; zip_bytes = [int64]$entry.bytes; manifest_bytes = [int64]$man.bytes; zip_sha256 = [string]$entry.sha256; manifest_sha256 = [string]$man.sha256 })
+                }
+              }
+            }
+            foreach ($p in $expected) {
+              if (-not $zipLookup.ContainsKey($p)) { [void]$missing.Add($p) }
+            }
+            return [ordered]@{
+              kind = $Kind
+              zip_entry_count = @($ZipInfo.entries).Count
+              expected_count = $expected.Count
+              duplicate_entries = @($ZipInfo.duplicates)
+              missing_from_zip = @($missing)
+              extra_not_in_manifest = @($extra)
+              content_mismatch = @($mismatch)
+              ok = (@($ZipInfo.duplicates).Count -eq 0 -and @($missing).Count -eq 0 -and @($extra).Count -eq 0 -and @($mismatch).Count -eq 0)
+            }
+          }
+          $sourceEntries = Get-ZipEntryRows -ZipPath $sourceZip
+          $windowsEntries = Get-ZipEntryRows -ZipPath $windowsZip
+          $sourceCmp = Compare-ZipToManifest -Kind 'source' -ZipInfo $sourceEntries
+          $windowsCmp = Compare-ZipToManifest -Kind 'windows' -ZipInfo $windowsEntries
+          $zipReport = [ordered]@{
+            protocol_version = 'telephone-line-windows-lifecycle-zip-entry-report-v1'
+            committed_manifest_sha256 = [string]$committedId.sha256
+            regenerated_manifest_sha256 = [string]$regenId.sha256
+            source_zip = [ordered]@{ name = [string]$script:TelephonePackagingSourceZipName; bytes = [int64]$sourceId.bytes; sha256 = [string]$sourceId.sha256 }
+            windows_zip = [ordered]@{ name = [string]$script:TelephonePackagingReleaseZipName; bytes = [int64]$windowsId.bytes; sha256 = [string]$windowsId.sha256 }
+            source_entries = $sourceCmp
+            windows_entries = $windowsCmp
+          }
+          $null = Write-TelephonePackagingUtf8File -Path (Join-Path $evidence 'zip-manifest-entry-report.json') -Text (ConvertTo-TelephonePackagingJson -Value $zipReport) -Force
+          if (-not [bool]$sourceCmp.ok) { throw 'Source ZIP entries do not match the official committed manifest files[].' }
+          if (-not [bool]$windowsCmp.ok) { throw 'Windows ZIP entries do not match the official committed manifest files[] subset.' }
+          $filled = [ordered]@{
             protocol_version = [string]$repoMan.protocol_version
             product = [string]$repoMan.product
             version = [string]$repoMan.version
@@ -117,21 +231,40 @@ jobs:
             platform = [string]$repoMan.platform
             denominator = [int]$repoMan.denominator
             route_ids = @($repoMan.route_ids)
-            artifact_identities = 'filled_for_external_assets'
-            repository_manifest_artifact_identities = 'null'
             artifacts = @(
-              [ordered]@{ name = [string]$extFiles[0].name; bytes = [int64]$extFiles[0].bytes; sha256 = [string]$extFiles[0].sha256; contains = [string]$repoMan.artifacts[0].contains }
-              [ordered]@{ name = [string]$extFiles[1].name; bytes = [int64]$extFiles[1].bytes; sha256 = [string]$extFiles[1].sha256; contains = [string]$repoMan.artifacts[1].contains }
+              [ordered]@{
+                name = [string]$repoMan.artifacts[0].name
+                contains = [string]$repoMan.artifacts[0].contains
+                bytes = [int64]$sourceId.bytes
+                sha256 = [string]$sourceId.sha256
+              },
+              [ordered]@{
+                name = [string]$repoMan.artifacts[1].name
+                contains = [string]$repoMan.artifacts[1].contains
+                bytes = [int64]$windowsId.bytes
+                sha256 = [string]$windowsId.sha256
+              }
             )
+            files = @($fileRows)
+            counts = [ordered]@{
+              files = [int]$repoMan.counts.files
+              bytes = [int64]$repoMan.counts.bytes
+            }
+            excluded = @($repoMan.excluded)
           }
-          $extPath = Join-Path $assetDir 'release-manifest.json'
-          $extText = (($ext | ConvertTo-Json -Depth 16) + "`n")
-          [IO.File]::WriteAllText($extPath, $extText, [Text.UTF8Encoding]::new($false))
-          $extBytes = [IO.File]::ReadAllBytes($extPath)
-          $extSha = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($extBytes)).ToLowerInvariant()
-          [void]$rows.Add(($extSha + '  release-manifest.json'))
-          [IO.File]::WriteAllText((Join-Path $assetDir 'SHA256SUMS.txt'), (($rows -join "`n") + "`n"), [Text.UTF8Encoding]::new($false))
-          Write-Output (('source=' + [string]$extFiles[0].sha256 + ' windows=' + [string]$extFiles[1].sha256 + ' manifest=' + $extSha))
+          $filledText = ConvertTo-TelephonePackagingJson -Value $filled
+          Assert-TelephoneJsonSchema -JsonText $filledText -SchemaName 'release-manifest' -Label 'filled external release-manifest.json'
+          $filledPath = Join-Path $assetDir 'release-manifest.json'
+          $null = Write-TelephonePackagingUtf8File -Path $filledPath -Text $filledText -Force
+          $filledId = Get-TelephonePackagingFileBytesAndHash -Path $filledPath
+          $sums = @(
+            ($sourceId.sha256 + '  ' + $script:TelephonePackagingSourceZipName),
+            ($windowsId.sha256 + '  ' + $script:TelephonePackagingReleaseZipName),
+            ($filledId.sha256 + '  release-manifest.json')
+          )
+          [IO.File]::WriteAllText((Join-Path $assetDir 'SHA256SUMS.txt'), (($sums -join "`n") + "`n"), [Text.UTF8Encoding]::new($false))
+          Copy-Item -LiteralPath $regenPath -Destination (Join-Path $assetDir 'repo-release-manifest.json') -Force
+          Write-Output (('source=' + $sourceId.sha256 + ' windows=' + $windowsId.sha256 + ' filled_manifest=' + $filledId.sha256 + ' repo_manifest=' + $regenId.sha256))
 
       - name: Extract Windows ZIP
         shell: pwsh
@@ -141,7 +274,7 @@ jobs:
           $extract = Join-Path $env:RUNNER_TEMP 'telephone-lifecycle-extracted-windows'
           if ([IO.Directory]::Exists($extract)) { Remove-Item -LiteralPath $extract -Recurse -Force }
           [IO.Directory]::CreateDirectory($extract) | Out-Null
-          [IO.Compression.ZipFile]::ExtractToDirectory((Join-Path $assetDir 'telephone-line-0.1.2-windows.zip'), $extract, $true)
+          [IO.Compression.ZipFile]::ExtractToDirectory((Join-Path $assetDir 'telephone-line-0.1.3-windows.zip'), $extract, $true)
           if (-not [IO.File]::Exists((Join-Path $extract 'src\install\Install-TelephoneLine.ps1'))) {
             throw 'Extracted Windows ZIP is missing Install-TelephoneLine.ps1.'
           }
@@ -154,8 +287,8 @@ jobs:
           $evidence = Join-Path $env:RUNNER_TEMP 'telephone-lifecycle-evidence'
           & pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tests/ci/Test-PublicWindowsLifecycle.ps1 `
             -ExtractedWindowsRoot $extract `
-            -WindowsZip (Join-Path $assetDir 'telephone-line-0.1.2-windows.zip') `
-            -SourceZip (Join-Path $assetDir 'telephone-line-0.1.2-source.zip') `
+            -WindowsZip (Join-Path $assetDir 'telephone-line-0.1.3-windows.zip') `
+            -SourceZip (Join-Path $assetDir 'telephone-line-0.1.3-source.zip') `
             -AssetRoot $assetDir `
             -EvidenceRoot $evidence
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

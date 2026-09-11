@@ -297,6 +297,10 @@ try {
     Assert-InstallTest ([string]$taskRow.principal -ceq 'LimitedUser') 'Installed task principal is wrong.'
     Assert-InstallTest ([IO.File]::Exists((Join-Path $desktopRoot '有线电话｜紧急停止.lnk'))) 'Emergency desktop shortcut is missing.'
     Assert-InstallTest ([IO.File]::Exists((Join-Path $desktopRoot '有线电话｜控制台.lnk'))) 'Console desktop shortcut is missing.'
+    Assert-InstallTest ((Get-Item -LiteralPath (Join-Path $desktopRoot '有线电话｜紧急停止.lnk')).Length -gt 100) 'Emergency desktop shortcut was empty.'
+    Assert-InstallTest ((Get-Item -LiteralPath (Join-Path $desktopRoot '有线电话｜控制台.lnk')).Length -gt 100) 'Console desktop shortcut was empty.'
+    $foreignDesktopShortcut = Join-Path $desktopRoot 'foreign-keep.lnk'
+    [IO.File]::WriteAllText($foreignDesktopShortcut, 'foreign-shortcut')
     Assert-InstallTest (-not [IO.Directory]::Exists((Join-Path $installRoot '.git'))) 'Install copied .git.'
     Assert-InstallTest (-not [IO.Directory]::Exists((Join-Path $installRoot '.control'))) 'Install copied .control.'
     Assert-InstallTest (-not [IO.Directory]::Exists((Join-Path $installRoot 'tests'))) 'Install copied tests.'
@@ -553,6 +557,9 @@ try {
     Assert-InstallTest ([IO.File]::Exists($stateMarker)) 'Default uninstall removed durable state.'
     Assert-InstallTest ([IO.Directory]::Exists($inFlightJob)) 'Default uninstall removed in-flight state.'
     Assert-InstallTest (-not [IO.File]::Exists((Join-Path $desktopRoot '有线电话｜紧急停止.lnk'))) 'Uninstall left the emergency shortcut.'
+    Assert-InstallTest (-not [IO.File]::Exists((Join-Path $desktopRoot '有线电话｜控制台.lnk'))) 'Uninstall left the console shortcut.'
+    Assert-InstallTest ([IO.File]::Exists($foreignDesktopShortcut)) 'Uninstall deleted a foreign desktop shortcut.'
+    Assert-InstallTest ([IO.File]::ReadAllText($foreignDesktopShortcut) -ceq 'foreign-shortcut') 'Uninstall mutated a foreign desktop shortcut.'
     Assert-InstallTest (-not [IO.File]::Exists((Join-Path $taskStore 'task.json'))) 'Uninstall left the supervisor task.'
     $recycleHits = @(Get-ChildItem -LiteralPath $recycleRoot -Recurse -File -Force -ErrorAction SilentlyContinue)
     Assert-InstallTest ($recycleHits.Count -gt 0) 'Uninstall did not send install material through the recycle path.'

@@ -1,7 +1,7 @@
 {
   "protocol_version": "telephone-line-release-manifest-v1",
   "product": "telephone-line",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "license": "MPL-2.0",
   "platform": "windows",
   "denominator": 8,
@@ -17,13 +17,13 @@
   ],
   "artifacts": [
     {
-      "name": "telephone-line-0.1.2-source.zip",
+      "name": "telephone-line-0.1.3-source.zip",
       "contains": "src/, schemas/, docs/, .github/, tests/, and root README.md, LICENSE, CONTRIBUTING.md, SECURITY.md, THIRD-PARTY-NOTICES.md, .gitattributes",
       "bytes": null,
       "sha256": null
     },
     {
-      "name": "telephone-line-0.1.2-windows.zip",
+      "name": "telephone-line-0.1.3-windows.zip",
       "contains": "src/, schemas/, docs/, and root README.md, LICENSE, CONTRIBUTING.md, SECURITY.md, THIRD-PARTY-NOTICES.md, .gitattributes; excludes tests/ and .github/",
       "bytes": null,
       "sha256": null
@@ -62,8 +62,8 @@
     },
     {
       "path": ".github/workflows/windows-lifecycle.yml",
-      "bytes": 9377,
-      "sha256": "e36d489b865c78c2aec1fcd7c38845676ad201fc5068494e79e0ac2d3f443797"
+      "bytes": 16875,
+      "sha256": "9969015129f6f6bfdd10727c4abdaf29afa5450670ebf4664c15a8719c4664b5"
     },
     {
       "path": "CONTRIBUTING.md",
@@ -282,8 +282,8 @@
     },
     {
       "path": "docs/releases/v0.1.3.md",
-      "bytes": 6069,
-      "sha256": "d880873a71dac79de35d1b8a630ec6e7a727aa79eab6e9779465a64e4285b2be"
+      "bytes": 5641,
+      "sha256": "87ebfba22f5c0a0a13e042f455adefa2e5bbc72e7cc9b4edfc889003f505b6e1"
     },
     {
       "path": "docs/routes.md",
@@ -478,7 +478,7 @@
     {
       "path": "schemas/release-manifest.schema.json",
       "bytes": 3669,
-      "sha256": "9d35b6e336517d0b9727a923a9167022bffd0c795910043de926163f1041eae7"
+      "sha256": "a217078d55f21b8a0381ca3f0a82aca82eda079300888fa7712efd2ae1eeaa42"
     },
     {
       "path": "schemas/telephone-line-batch.schema.json",
@@ -953,7 +953,7 @@
     {
       "path": "src/packaging/TelephonePackaging.Common.ps1",
       "bytes": 21206,
-      "sha256": "346c0dec129eef65f4dc08724a7e3dc424063673fa7c9de404cbbdc6733f7a91"
+      "sha256": "ca48c1797c6ce4f80ace175f807e28755e21305842b342febe410796d8e05f43"
     },
     {
       "path": "src/packaging/Test-TelephoneOpenSourceReadiness.ps1",
@@ -997,8 +997,8 @@
     },
     {
       "path": "src/supervisor/TelephoneSupervisor.Common.ps1",
-      "bytes": 155855,
-      "sha256": "506c678dfd437f499807c3a49bc879c2198303f9e91fe76153fcbfa5f34aceda"
+      "bytes": 159618,
+      "sha256": "d9bf33823c89f303bb04cce4ee8934a80630f4ee1b572a082c2ad6cd06e52621"
     },
     {
       "path": "tests/Invoke-OfflineTests.ps1",
@@ -1122,8 +1122,8 @@
     },
     {
       "path": "tests/ci/Test-PublicWindowsLifecycle.ps1",
-      "bytes": 43233,
-      "sha256": "90e9c6cdbb60373490afc4ee0e85c4614fb989c5e63b933e69deff3c38719cce"
+      "bytes": 54883,
+      "sha256": "4a9253c068e85a2c5c6f4d7fac4e9c2173fb9032ec710b7d5112985e77816bfd"
     },
     {
       "path": "tests/compatibility/compatibility-contract.json",
@@ -1542,8 +1542,8 @@
     },
     {
       "path": "tests/install/test_install_lifecycle.ps1",
-      "bytes": 59787,
-      "sha256": "370486fdb0a7c05851b763ed8c71b8933429f2ed318c2097f103bfd0ad063718"
+      "bytes": 60658,
+      "sha256": "ba2c59790e73f004327ebd4d5df0d115be366f47a7cabb4c97764290aec898fd"
     },
     {
       "path": "tests/lead-side/codex-app-server/fixtures/Mock-CodexAppServer.ps1",
@@ -1607,13 +1607,13 @@
     },
     {
       "path": "tests/supervisor/test_wired_supervisor.ps1",
-      "bytes": 100350,
-      "sha256": "cf95a4a17a942ce3ff87c5927ebabee0fd1d3318b456cf461dbb25264a0888d8"
+      "bytes": 101416,
+      "sha256": "d7e6a50e556b3754a23b6b1a345a38036777eadd858812acd9687a15b08a198d"
     }
   ],
   "counts": {
     "files": 316,
-    "bytes": 4782341
+    "bytes": 4806761
   },
   "excluded": [
     ".control/**",

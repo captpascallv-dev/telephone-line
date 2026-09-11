@@ -297,6 +297,12 @@ try {
     $null = Initialize-TelephoneSupervisorLayout -StateRoot $script:supState
     $null = Register-TelephoneSupervisorInstallSurface -InstallRoot $repoRoot -StateRoot $script:supState
     Assert-Sup ([IO.File]::Exists((Join-Path $taskStore 'task.json'))) 'Mock scheduled task was not registered.'
+    Assert-Sup ([IO.File]::Exists((Join-Path $desktop '有线电话｜紧急停止.lnk'))) 'Emergency desktop shortcut is missing.'
+    Assert-Sup ([IO.File]::Exists((Join-Path $desktop '有线电话｜控制台.lnk'))) 'Console desktop shortcut is missing.'
+    Assert-Sup ((Get-Item -LiteralPath (Join-Path $desktop '有线电话｜紧急停止.lnk')).Length -gt 100) 'Emergency desktop shortcut was empty.'
+    Assert-Sup ((Get-Item -LiteralPath (Join-Path $desktop '有线电话｜控制台.lnk')).Length -gt 100) 'Console desktop shortcut was empty.'
+    $foreignDesktopShortcut = Join-Path $desktop 'foreign-keep.lnk'
+    [IO.File]::WriteAllText($foreignDesktopShortcut, 'foreign-shortcut')
     $taskRecord = Get-Content -LiteralPath (Join-Path $taskStore 'task.json') -Raw | ConvertFrom-Json -AsHashtable -Depth 16 -DateKind String
     Assert-Sup ([string]$taskRecord.task_name -ceq 'TelephoneLineWiredSupervisor') 'Task name is wrong.'
     Assert-Sup ([string]$taskRecord.principal -ceq 'LimitedUser') 'Task principal is not LimitedUser.'
@@ -1345,6 +1351,9 @@ try {
     Unregister-TelephoneSupervisorInstallSurface -InstallRoot $repoRoot
     Assert-Sup (-not [IO.File]::Exists((Join-Path $taskStore 'task.json'))) 'Unregister left the mock task.'
     Assert-Sup (-not [IO.File]::Exists((Join-Path $desktop '有线电话｜紧急停止.lnk'))) 'Emergency shortcut remained.'
+    Assert-Sup (-not [IO.File]::Exists((Join-Path $desktop '有线电话｜控制台.lnk'))) 'Console shortcut remained.'
+    Assert-Sup ([IO.File]::Exists($foreignDesktopShortcut)) 'Unregister deleted a foreign desktop shortcut.'
+    Assert-Sup ([IO.File]::ReadAllText($foreignDesktopShortcut) -ceq 'foreign-shortcut') 'Unregister mutated a foreign desktop shortcut.'
 
     $recycleFn = ${function:Move-TelephonePathToRecycleBin}.ToString()
     Assert-Sup ($recycleFn -notmatch 'Remove-Item') 'Supervisor recycle falls back to Remove-Item.'
