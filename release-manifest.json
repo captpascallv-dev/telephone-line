@@ -172,8 +172,8 @@
     },
     {
       "path": "docs/dashboard.md",
-      "bytes": 12882,
-      "sha256": "5c865249dd8f370d9e2001cb938ad7757a13ef1d306ce5c3c3b97794d2c46da3"
+      "bytes": 13064,
+      "sha256": "8e625ee1877107b663b4471c8cbd4a58e1628c254716cec4b7c58d3ff350472f"
     },
     {
       "path": "docs/examples/caller-supplied-lead/Invoke-GenericLeadLauncher.ps1",
@@ -282,8 +282,8 @@
     },
     {
       "path": "docs/releases/v0.1.3.md",
-      "bytes": 7144,
-      "sha256": "0b2414d4e07c63d1d278da4c69a81aa490d70536f470c018156b94115c53d092"
+      "bytes": 7805,
+      "sha256": "fdccf5d735764f4003296fa42e123d425c23cf636d1b93595e9b28cb8f440403"
     },
     {
       "path": "docs/routes.md",
@@ -792,18 +792,18 @@
     },
     {
       "path": "src/core/Start-TelephoneLineJob.ps1",
-      "bytes": 11210,
-      "sha256": "ccb1d1d83438a1f8761db01807c854eaa5402c61f25928d79f61abe4fb8d3787"
+      "bytes": 11309,
+      "sha256": "c6c5204127a33c86fc3f833decb7a23717168b4761b7d86d48c5981cb8e3ec49"
     },
     {
       "path": "src/core/TelephoneLeadRuntime.Common.ps1",
-      "bytes": 151256,
-      "sha256": "80a5ff662f708cf84e243d2a916fef2df5bb68e8c83464d3a7b43125e63ff9bc"
+      "bytes": 152911,
+      "sha256": "6d7417247a10f71a4694d602521190152fd064bff377f46aa852793f0489862e"
     },
     {
       "path": "src/core/TelephoneLine.Common.ps1",
-      "bytes": 290492,
-      "sha256": "77fcc8dbad1544e30757725c9dc690dab6f6b8213511f752a3dea563bbca39c6"
+      "bytes": 294683,
+      "sha256": "dd944a30a13033122c1160dff6286d63f9cd2e0d9e9f58b80555624facc98b85"
     },
     {
       "path": "src/dashboard/Ensure-TelephoneDashboard.ps1",
@@ -817,13 +817,13 @@
     },
     {
       "path": "src/dashboard/TelephoneDashboard.Common.ps1",
-      "bytes": 28791,
-      "sha256": "77ce6bd4a1c9a88597a7f7d495d13fe6c24be2331a9b87ec47881042dbc6396b"
+      "bytes": 29073,
+      "sha256": "9bf560c21c93851711cb019910a6ae45d78d63be3b8c1c708a41c116c5172e9a"
     },
     {
       "path": "src/dashboard/TelephoneDashboard.Projection.ps1",
-      "bytes": 150194,
-      "sha256": "b6033cb69213defb52c41ea0158f977d4a17e833550eaeebad521fba5d97aee7"
+      "bytes": 154008,
+      "sha256": "83f1896f21b5686f2012e138099525255d31c6c6e463454d20c9682e2aac8708"
     },
     {
       "path": "src/dashboard/TelephoneDashboard.Reducer.ps1",
@@ -997,8 +997,8 @@
     },
     {
       "path": "src/supervisor/TelephoneSupervisor.Common.ps1",
-      "bytes": 159618,
-      "sha256": "d9bf33823c89f303bb04cce4ee8934a80630f4ee1b572a082c2ad6cd06e52621"
+      "bytes": 161527,
+      "sha256": "661da511d2ee5d76d45f4a28e19f7353b720a877f4c58ad9e7908bf81b4252ae"
     },
     {
       "path": "tests/Invoke-OfflineTests.ps1",
@@ -1522,18 +1522,18 @@
     },
     {
       "path": "tests/core/test_lead_runtime_hardening.ps1",
-      "bytes": 31389,
-      "sha256": "b3ac04c943f3fc038873200f14d8af31daa604e3781b027f79df932c3486345c"
+      "bytes": 39000,
+      "sha256": "14272367251c1b42c6b506461415dbbb3b384e64f675dd3c377a79b73ed3ae16"
     },
     {
       "path": "tests/core/test_telephone_line.ps1",
-      "bytes": 93313,
-      "sha256": "798c29a693e8aef9f64688b23e6cdbf02f098b3dce8973679a5516cca392cd79"
+      "bytes": 96421,
+      "sha256": "626a9dcac1b29a1a1e6f85182c5f88e0eca293f96f07c32694d289fcb6d7fc8a"
     },
     {
       "path": "tests/dashboard/test_dashboard.ps1",
-      "bytes": 181515,
-      "sha256": "d3eef14eb03a094cd0518c05678eaabe374a58188902a802dedad950b99be4e5"
+      "bytes": 203222,
+      "sha256": "ec69a203edb921eea52b124aef7c77e42f8367d5cc10bd8a1f9a9831a042e1f7"
     },
     {
       "path": "tests/docs/test_public_docs.ps1",
@@ -1607,13 +1607,13 @@
     },
     {
       "path": "tests/supervisor/test_wired_supervisor.ps1",
-      "bytes": 102003,
-      "sha256": "dacf25846d0890a71efbe603816184ea89ff32032fe4b68ee6567c7af5e45478"
+      "bytes": 103327,
+      "sha256": "b2f296cef0dcd0a98c6bd1133784ae90567865c29c8676ae7e34c2304b7f31d2"
     }
   ],
   "counts": {
     "files": 316,
-    "bytes": 4861319
+    "bytes": 4907862
   },
   "excluded": [
     ".control/**",
