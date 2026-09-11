@@ -53,12 +53,12 @@ Codex-first 不是一句品牌口号，而是一套 authority 分工。Codex 始
 | 推荐定位 | 默认可靠方案 | 平台原生接入方案 |
 | 核心机制 | 每用户 Windows 计划任务、隐藏 supervisor、独立 run host 与 Windows Job | Codex 官方 App Server 协议与原生线程绑定 |
 | Codex 退出后 | 已派发任务继续在后台运行 | 依赖 App Server 与原线程恢复链路 |
-| 回叫方式 | 每个 Lead 的 FIFO 邮箱，批量且仅回叫一次 | 同一原生线程的一条 FIFO 回叫链 |
+| 回叫方式 | 每个 Lead 的 FIFO 邮箱，按 durable key 去重 | 同一原生线程的一条 FIFO 回叫链 |
 | 适合场景 | 长任务、Codex 桌面可能关闭或升级、优先追求稳定 | 更看重平台原生体验，愿意共同改进兼容性 |
 
 项目最早先实现了独立的有线方案。App Server 出现后，我们投入更多时间做了平台原生无线方案，希望它更贴近 Codex、也更可靠；长期使用后，当前环境里仍然是有线电话更稳定。因此，**建议默认使用有线电话**，无线电话则继续作为正式的原生集成路线开放维护。欢迎通过 Issue 或 Pull Request 改善无线电话的稳定性和使用体验。
 
-有线电话由独立 supervisor 持有任务。Codex 完成请求校验并原子发布后即可退出；计划任务会启动 run host，后续由 Windows Job、每 Lead FIFO 邮箱和 exactly-once 批量回叫共同保证续跑与收卷。它不要求 Codex Lead 或桌面 App 一直在线。
+有线电话由独立 supervisor 持有任务。Codex 完成请求校验并原子发布后即可退出；计划任务会启动 run host，后续由 Windows Job 和每 Lead FIFO 邮箱继续，不必保持 Codex Lead 或桌面 App 进程在线。批量回叫按持久化 receipt/session/wake key 去重：已证明的同一 key 不会再启动执行端，也不会再发一次自动回叫。缺少 writer 身份、记录冲突或没有真实消费证据时保持 UNKNOWN，不能当成已送达。自动恢复只接回已证明属于同一 run 的残留，不会编造消费、EOF 或第二次派发。
 
 无线电话会在首轮真正被 Codex 接受后，才把任务绑定到那个确切线程。后续恢复始终回到同一线程，不会暗中改走另一种传输方式。
 
@@ -89,6 +89,8 @@ pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$env:LOCA
 ```
 
 Doctor 返回 `healthy=true` 和 `code=HEALTHY` 后再派任务。Telephone Line 使用严格的身份、路径和 JSON 契约，普通用户通常不需要手写请求文件；让本机 Agent 根据 [快速开始](quick-start.md)、[安装说明](install.md)、[路线说明](routes.md) 和对应 adapter 文档生成，会比复制别人的绝对路径安全。Lead CLI 请用 `TELEPHONE_LINE_STABLE_CLI` 指向独立可执行文件，不要指向 App 版本目录；详见 [安装说明](install.md)。
+
+如果 Doctor 报告 `SUPERVISOR_INSTALL_VIEW_MISMATCH`，说明已登记的计划任务和当前进程看到的安装目录不是同一物理位置。请按 Doctor 已核实的物理安装来绑定任务、后续启动和安装/状态设置，使用 `TELEPHONE_LINE_INSTALL_ROOT` 或 `-InstallRoot`。不要复制别人的绝对路径；当 Doctor 指出视图不一致时，不要假定 `%LOCALAPPDATA%\TelephoneLine` 就是计划任务实际读取的目录。
 
 已经有可恢复的 Codex Lead binding 时，普通单任务使用一个 `telephone-line-dispatch-v1` 请求：
 
@@ -133,6 +135,8 @@ Telephone Line 只负责运输连续性，不负责判断项目做得对不对�
 - 状态落盘，可在进程或机器重启后重建；
 - 不给整个长任务设置武断的总超时；
 - 失败、阻塞、冲突和重试耗尽会继续显示，不能躲在绿灯后面。
+
+回叫是否送达，只按该 receipt 与原会话的持久化消费证据记录。证据不足、互相冲突或身份不匹配时保持 UNKNOWN，不能当成已送达。
 
 连续性采用 level-triggered（电平触发）机制：生命周期事件会推进持久化 generation，supervisor 负责把所有尚未确认的 generation 依次处理完；同时保留一分钟的有限周期触发，用来兜住没有后续事件的静默超时。这个周期触发是恢复兜底，不是轮询式重复执行。
 
@@ -248,6 +252,7 @@ v0.1 目前仅验证 Windows 生产环境。macOS 用户不要强行运行 Windo
 ## 完整文档
 
 - [快速开始](quick-start.md)
+- [v0.1.2 发行说明](releases/v0.1.2.md)
 - [仪表盘](dashboard.md)
 - [连续推进控制面](control-plane.md)
 - [架构](architecture.md)

@@ -19,14 +19,14 @@
     {
       "name": "telephone-line-0.1.2-source.zip",
       "contains": "src/, schemas/, docs/, .github/, tests/, and root README.md, LICENSE, CONTRIBUTING.md, SECURITY.md, THIRD-PARTY-NOTICES.md, .gitattributes",
-      "bytes": 962115,
-      "sha256": "8fac5d5a291d5554b447ee12dc24c4a2e7e4ce41a4210060f435008d92fbb8e4"
+      "bytes": null,
+      "sha256": null
     },
     {
       "name": "telephone-line-0.1.2-windows.zip",
       "contains": "src/, schemas/, docs/, and root README.md, LICENSE, CONTRIBUTING.md, SECURITY.md, THIRD-PARTY-NOTICES.md, .gitattributes; excludes tests/ and .github/",
-      "bytes": 533426,
-      "sha256": "9645ca90f5194b52429e4581ca06e892a050ee9235e1b8a01ad6168133d901d6"
+      "bytes": null,
+      "sha256": null
     }
   ],
   "files": [
@@ -72,8 +72,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 22957,
-      "sha256": "12d2e4e7b87eb9136e3d3cc1381341a72381ee8194262c64bd57a420e6758c1a"
+      "bytes": 24035,
+      "sha256": "19c173191d6b4dadf1d2745ee31495e22e07688de34b0e44c2180ee65e87bf82"
     },
     {
       "path": "SECURITY.md",
@@ -87,8 +87,8 @@
     },
     {
       "path": "docs/README.zh-CN.md",
-      "bytes": 21609,
-      "sha256": "0332b0284ebee62a186b1d6899eef0a8b1e93efe7d3f202b539fc909425d5242"
+      "bytes": 22597,
+      "sha256": "0b6e18fb7c885fb7a2ba3a35b1e00087190a0bf5d1cc7143db297de8c3009acb"
     },
     {
       "path": "docs/adapter-authoring.md",
@@ -237,8 +237,8 @@
     },
     {
       "path": "docs/install.md",
-      "bytes": 8459,
-      "sha256": "bd01ddd850dc9603f0e02ced83134159c830ff8726de623c9522743d7ee3f418"
+      "bytes": 10660,
+      "sha256": "83645d49ec1120a501a652bdb488bd08ae26a8bdc467d2504c0f73ff904bfe89"
     },
     {
       "path": "docs/licensing.md",
@@ -246,9 +246,14 @@
       "sha256": "7ba2e7357833cdd642c44977664457217ba86068b3319601120d80744683d2a8"
     },
     {
+      "path": "docs/migration-continuation.md",
+      "bytes": 3708,
+      "sha256": "f412e3fe8104c769191b3fe612d69f65f9237b36eb1c18baf7d42b015c5f18b7"
+    },
+    {
       "path": "docs/packaging.md",
-      "bytes": 3903,
-      "sha256": "a3c090f38facfcf733243bc01091f8ba10cf6a4279f602e2cbec277310791179"
+      "bytes": 4148,
+      "sha256": "af088165da86b1e02959c95eed0dd58ae54c3f0d481ebd11dc693ee7313b7bc9"
     },
     {
       "path": "docs/privacy.md",
@@ -257,13 +262,18 @@
     },
     {
       "path": "docs/quick-start.md",
-      "bytes": 19923,
-      "sha256": "d33bbb09bdb8b61c7a56a28cf04bffb3ea6961c53760905fa813c2ab8a12a05f"
+      "bytes": 20381,
+      "sha256": "276cd3dc2f8881ef84777f20688fa4066aa0601239ec7aaefedb198e3a245466"
     },
     {
       "path": "docs/redistribution-audit.md",
-      "bytes": 3272,
-      "sha256": "2919c629719f6be054a348235fc7d7cf241a021b04b56db2eddcfee244488234"
+      "bytes": 3459,
+      "sha256": "ee8994354f129dbaaae7bf98810b0f8068da9270a25b1be2d798c739030ac1bc"
+    },
+    {
+      "path": "docs/releases/v0.1.2.md",
+      "bytes": 6133,
+      "sha256": "e49ad57c5f35316b81e0601efad70b61a3880a0eb8b815b4af2cfb2e17722511"
     },
     {
       "path": "docs/routes.md",
@@ -272,8 +282,8 @@
     },
     {
       "path": "schemas/adapter.schema.json",
-      "bytes": 2143,
-      "sha256": "05bb5d6bc287b8f9074ad0dae5c834dbf91d54d4e828f28845da6282e6101ce8"
+      "bytes": 2221,
+      "sha256": "eae3a90e09fe111fe7df5a5e44b75dbb82bc88ed2d9d11788798a1fe93123e92"
     },
     {
       "path": "schemas/catalog.schema.json",
@@ -612,18 +622,33 @@
     },
     {
       "path": "src/adapters/direct-cursor/DirectCursor.Common.ps1",
-      "bytes": 81226,
-      "sha256": "407a73dd4e2dfc98023e5b1255dcfa689e836853ebd5195d9c654e5d67787a58"
+      "bytes": 141888,
+      "sha256": "76bcce7c56da2d30193a3e138cbbc5de3bc224b3d0309e31163f854674814f3a"
+    },
+    {
+      "path": "src/adapters/direct-cursor/DirectCursor.Migration.ps1",
+      "bytes": 14357,
+      "sha256": "99e95ac60ad16100b1aaf2457bef4b0fa6f76508a0c5a31aba80fefa96da70b0"
     },
     {
       "path": "src/adapters/direct-cursor/Invoke-DirectCursorRoute.ps1",
-      "bytes": 28471,
-      "sha256": "c21584b0d76ba156e5331f2a332d29398fe9d7403738c7173e3eebb459722eec"
+      "bytes": 33290,
+      "sha256": "2894bc38246d6825be1a4dac58b64b3c084b339a5e819f0ef1e13198eecf48be"
+    },
+    {
+      "path": "src/adapters/direct-cursor/Register-DirectCursorMigrationContinuation.ps1",
+      "bytes": 318,
+      "sha256": "0aa391b3a6ced5aca61fbb32bcf1ce6e96697b7408339565ff9b68ea742b277d"
+    },
+    {
+      "path": "src/adapters/direct-cursor/Register-DirectCursorPartialSession.ps1",
+      "bytes": 1617,
+      "sha256": "bdbfc48c054b1fd237c609fbfdbcf9fa5b6d9872f78a3ea77ca6467b5a30d6a8"
     },
     {
       "path": "src/adapters/direct-cursor/adapter.json",
-      "bytes": 357,
-      "sha256": "be54f1926c2fea820210aac503fb6547d10835d28793ff40d0eb296ff553dd8f"
+      "bytes": 396,
+      "sha256": "5c54c471d1810467244f3820c413e03d1857c4b209454175d9ecaccc82df8507"
     },
     {
       "path": "src/adapters/direct-cursor/cursor_job_host.ps1",
@@ -632,8 +657,8 @@
     },
     {
       "path": "src/adapters/direct-cursor/invoke_cursor_agent.ps1",
-      "bytes": 45477,
-      "sha256": "a6399c3c6b746ae43b3c568c9d502a1eb21a01e551e82c40ba94b57087f94376"
+      "bytes": 44058,
+      "sha256": "e06d344793bc041bf5d9feec3799638a0c34a733579ba9546ce49be5e935dc7b"
     },
     {
       "path": "src/adapters/direct-cursor/invoke_cursor_request.ps1",
@@ -747,8 +772,8 @@
     },
     {
       "path": "src/core/Invoke-TelephoneLineRelay.ps1",
-      "bytes": 14089,
-      "sha256": "8141b7b74be913fa259190e121c2b2c72fc038a87402e31c77509349562e4378"
+      "bytes": 17908,
+      "sha256": "d966d8f7a97416f723abd0e1c619f9d8d77d8f6a5a34f757df899fd6f28fc745"
     },
     {
       "path": "src/core/Resume-TelephoneLines.ps1",
@@ -762,13 +787,13 @@
     },
     {
       "path": "src/core/TelephoneLeadRuntime.Common.ps1",
-      "bytes": 126094,
-      "sha256": "51b0cb37b46cbaa8101683a1a0927933562c05b197f61f72093be680b3f73832"
+      "bytes": 143904,
+      "sha256": "ecd706d0617cf6bea82ec1563bfe86eca0104246a73965333d38102c77c3c05d"
     },
     {
       "path": "src/core/TelephoneLine.Common.ps1",
-      "bytes": 276950,
-      "sha256": "017693d66b8ea0bbf9c08c92ddf02d22332890ee40c69e1f8da39fec86dbbac6"
+      "bytes": 288202,
+      "sha256": "41bb8d552ee951e51e32b953423b3e4f0019e070675232e900d7bff328e63879"
     },
     {
       "path": "src/dashboard/Ensure-TelephoneDashboard.ps1",
@@ -807,13 +832,13 @@
     },
     {
       "path": "src/install/Invoke-TelephoneLineDoctor.ps1",
-      "bytes": 514,
-      "sha256": "4804a1cddd4dd40c0849bb6ff5a4b114b7fa3037ebfd3b393b44b281e71b7c65"
+      "bytes": 590,
+      "sha256": "651dd3b0a3bd41ba1c8a13e93dee66180b104a12779a6f964a07f1d15aa1916c"
     },
     {
       "path": "src/install/TelephoneLineInstall.Common.ps1",
-      "bytes": 69661,
-      "sha256": "a63e8e1a5deccb0fb910f8a5bc1b49aac63041151153fd3e65c2a71159696671"
+      "bytes": 70315,
+      "sha256": "94d99a2aab6dde12f10d2e389322fff78c88edb8117589304558be360e1cb7f3"
     },
     {
       "path": "src/install/Uninstall-TelephoneLine.ps1",
@@ -942,8 +967,8 @@
     },
     {
       "path": "src/supervisor/Invoke-TelephoneSupervisorRunHost.ps1",
-      "bytes": 7524,
-      "sha256": "380c2b1faa715201424a29a424655606c66506ce94a04390175e30bb20464b6d"
+      "bytes": 9305,
+      "sha256": "877adda708416f2b08f604822461f8703e074c7f453d97317e778b49ba6cb2e9"
     },
     {
       "path": "src/supervisor/Show-TelephoneSupervisorControl.ps1",
@@ -952,18 +977,18 @@
     },
     {
       "path": "src/supervisor/Start-TelephoneSupervisorHostVisible.ps1",
-      "bytes": 1890,
-      "sha256": "dbbbced20f199af09914148d870ff119cff9eac861744736ab5ce1f8b892c344"
+      "bytes": 2666,
+      "sha256": "7e19b5ae009d503262ca1bae6e2e4081789d3213e18963f7724b05b1a331c69c"
     },
     {
       "path": "src/supervisor/Start-TelephoneWiredRun.ps1",
-      "bytes": 4054,
-      "sha256": "eb0860911b4954191f39e8bb23b38856dd174c88373d71330d705ee8b8866d34"
+      "bytes": 4911,
+      "sha256": "383d0163e7cb7ea19f52a0979d130e5ccfb4127fc1bb3b47110c4ff0b98b614f"
     },
     {
       "path": "src/supervisor/TelephoneSupervisor.Common.ps1",
-      "bytes": 141291,
-      "sha256": "12da4a9192e34b215183cb8894c2d285a3e941ce43259df459f1e9844b9740ed"
+      "bytes": 155855,
+      "sha256": "506c678dfd437f499807c3a49bc879c2198303f9e91fe76153fcbfa5f34aceda"
     },
     {
       "path": "tests/Invoke-OfflineTests.ps1",
@@ -1021,6 +1046,26 @@
       "sha256": "0cf416c7db768ba2b03ebda5ba306dbed442494e1a2e7d68288257f4bece16be"
     },
     {
+      "path": "tests/adapters/direct-cursor/recovery-fixtures/FAKE-SOURCE-NOT-FOR-SWS.txt",
+      "bytes": 292,
+      "sha256": "9967b0de7a04b81177ab817dd110a685e8c9e4babe90731ac6e1fe3351c42539"
+    },
+    {
+      "path": "tests/adapters/direct-cursor/recovery-fixtures/Invoke-FocusedExtraOwnerAdmission.ps1",
+      "bytes": 19206,
+      "sha256": "620a04b9cfbfff708e7f756481d357e72d13a2e0456d776d259fe0fe3800237f"
+    },
+    {
+      "path": "tests/adapters/direct-cursor/test_direct_cursor_migration.ps1",
+      "bytes": 9075,
+      "sha256": "52b9e94f43a5af89326bacffb32d1a1a497e507713634416f5b7d77de1a23cf7"
+    },
+    {
+      "path": "tests/adapters/direct-cursor/test_direct_cursor_recovery.ps1",
+      "bytes": 41250,
+      "sha256": "2f1f88f879342bef7b1001d1ff69e2f5702c326fcea725812f9a254d6c0dbf1c"
+    },
+    {
       "path": "tests/adapters/direct-cursor/test_direct_cursor_route.ps1",
       "bytes": 90749,
       "sha256": "a1ef59f73d335c9b2597e875d9c3018027546aa28ad6e6fbb2a278f87aac4e4c"
@@ -1054,6 +1099,11 @@
       "path": "tests/adapters/test_adapter_descriptors.ps1",
       "bytes": 6633,
       "sha256": "4849f21c1ff6a0ba1d2d39cbc843422079cf4636f8b652bd67878b3628a95358"
+    },
+    {
+      "path": "tests/adapters/test_adapter_partial_session_descriptor.ps1",
+      "bytes": 2851,
+      "sha256": "d0f67f638537f78cae99040995332dba27dc62a754541fffc188dfb9d6784797"
     },
     {
       "path": "tests/catalog/test_catalog.ps1",
@@ -1406,6 +1456,21 @@
       "sha256": "9bf5df42cd1f071e74f5a49770e90b2e8024d339ae891cdcccd1def538ff0091"
     },
     {
+      "path": "tests/core/fixtures/Invoke-MaintenanceEofProbe.ps1",
+      "bytes": 6277,
+      "sha256": "7092857cea124fc06d8c2fbcf9d7fe60d486afa2dea6ea901ae28071eb7b2394"
+    },
+    {
+      "path": "tests/core/fixtures/Invoke-MaintenanceLifecycleProbe.ps1",
+      "bytes": 34058,
+      "sha256": "0e108258807690c6a3e6b5be364ffedb394846e0f5b3fb6d04e2ae74aa311657"
+    },
+    {
+      "path": "tests/core/fixtures/Invoke-MaintenanceStatusRaceProbe.ps1",
+      "bytes": 3038,
+      "sha256": "119c35063776dbeab116148ac73e9d8cef36289340ab12994f28f5e016095025"
+    },
+    {
       "path": "tests/core/fixtures/mock-lead-launcher.ps1",
       "bytes": 7007,
       "sha256": "a632a8106e4e2dbf33d6e3079e46b1f5deb1915f013d97081c03c363caae9930"
@@ -1422,8 +1487,8 @@
     },
     {
       "path": "tests/core/test_audit_repair.ps1",
-      "bytes": 170711,
-      "sha256": "e7146ea977a95e41935ee773d014baad4b29351a039d5774e7a76efecaf71bd7"
+      "bytes": 168325,
+      "sha256": "c8ef05f6069178101193130f7f0c6afe5d231e2a502656c03b1b714ca13fcf2c"
     },
     {
       "path": "tests/core/test_autonomous_event_chain.ps1",
@@ -1436,9 +1501,14 @@
       "sha256": "21478194c540a8f624391dbcd6b57d90096aae82c098ee5e877c869b62bb5c90"
     },
     {
+      "path": "tests/core/test_lead_busy_handoff.ps1",
+      "bytes": 6658,
+      "sha256": "5c53f1bd94417395c5e150e34378164f42918f70afa2f143b833e7285a442e4c"
+    },
+    {
       "path": "tests/core/test_lead_runtime_hardening.ps1",
-      "bytes": 24556,
-      "sha256": "ebff8448a84df0c1ee8d525dad39cb8246d910cc33758fbd2ace153e7d6b051d"
+      "bytes": 24194,
+      "sha256": "8b210b43a1f7c8580edea70f82f97db1052293de4a17388bc4db093a0dbe3be6"
     },
     {
       "path": "tests/core/test_telephone_line.ps1",
@@ -1496,6 +1566,11 @@
       "sha256": "04bbfdfb1424523e134396ba393872a192849fa2282c732264eaef8215988170"
     },
     {
+      "path": "tests/supervisor/fixtures/Invoke-MaintenanceStateRoutingProbe.ps1",
+      "bytes": 16707,
+      "sha256": "5919790a3f930fe3d0c02431abdd6a99e83fbdf86c262e1966eb9a354f5eabfd"
+    },
+    {
       "path": "tests/supervisor/fixtures/mock-owned-child.ps1",
       "bytes": 1869,
       "sha256": "6f4f0b1206b3569bbf37c14006ca63c677e723fa7f498b61adf9ce92328e82a6"
@@ -1511,14 +1586,19 @@
       "sha256": "2eabbcba12cd579be207414dae1bb56d2552ae06a05507f3b993a2c8633545ea"
     },
     {
+      "path": "tests/supervisor/test_installed_task_doctor.ps1",
+      "bytes": 7428,
+      "sha256": "712e8363832adbb3d2b07c59bce49471a0861b8c7bc38d3c470b92fd1144d6ad"
+    },
+    {
       "path": "tests/supervisor/test_wired_supervisor.ps1",
       "bytes": 100350,
       "sha256": "cf95a4a17a942ce3ff87c5927ebabee0fd1d3318b456cf461dbb25264a0888d8"
     }
   ],
   "counts": {
-    "files": 297,
-    "bytes": 4432042
+    "files": 313,
+    "bytes": 4723192
   },
   "excluded": [
     ".control/**",

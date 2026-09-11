@@ -47,6 +47,8 @@ pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$env:LOCA
 
 Do not dispatch work until Doctor reports `healthy=true` and `code=HEALTHY`. Telephone Line uses strict identity, path, and JSON contracts. Most users should let a local Agent generate requests from [Quick start](docs/quick-start.md), [Install](docs/install.md), [Routes](docs/routes.md), and the selected adapter documentation instead of copying another machine's absolute paths. Configure the Lead CLI with `TELEPHONE_LINE_STABLE_CLI` (an independent executable, not an App version folder); see [Install](docs/install.md).
 
+If Doctor reports `SUPERVISOR_INSTALL_VIEW_MISMATCH`, the registered task and the current process file view are not the same physical install. Bind the task, later launches, and install/state settings to the physical install Doctor already verified, using `TELEPHONE_LINE_INSTALL_ROOT` or `-InstallRoot`. Do not paste another machine's absolute path. When Doctor says the views differ, do not assume `%LOCALAPPDATA%\TelephoneLine` is the directory the scheduler reads.
+
 If a resumable Codex Lead binding already exists, an ordinary single job uses one `telephone-line-dispatch-v1` request:
 
 ```powershell
@@ -88,11 +90,11 @@ Before a telephone line, collaboration across Harnesses meant manual relay, lost
 
 ## How the telephone line solves transport continuity without judging project correctness
 
-The telephone line is transport infrastructure only. It carries one request to an external Windows command and returns one durable result to the exact original Codex CLI Lead session. It solves transport continuity: immutable dispatch and receipt identity, exact-session callback, no blind rerun, recoverable state, and no absolute whole-task timeout. It never judges project content.
+The telephone line is transport infrastructure only. It carries one request to an external Windows command and returns one durable result to the exact original Codex CLI Lead session. It solves transport continuity: immutable dispatch and receipt identity, exact-session callback, no blind rerun, recoverable state, and no absolute whole-task timeout. It never judges project content. Callback delivery is recorded only from durable consumption evidence for that receipt and session. Missing, conflicting, or mismatched evidence stays UNKNOWN; it is not a delivered state.
 
 ## Wireless and wired telephone
 
-**Wired telephone** is the recommended reliable default. A per-user, Task Scheduler-created, hidden limited-user supervisor owns each run independently of the Codex desktop process. Codex validates and atomically publishes the request, triggers the registered task, and returns. The run host, Windows Job, per-Lead FIFO mailbox, and exactly-once batch wake continue without keeping the Lead or the desktop app online.
+**Wired telephone** is the recommended reliable default. A per-user, Task Scheduler-created, hidden limited-user supervisor owns each run independently of the Codex desktop process remaining open. Codex validates and atomically publishes the request, triggers the registered task, and returns. The run host, Windows Job, and per-Lead FIFO mailbox continue without keeping the Lead or the desktop app online. Batch wake is keyed by a durable receipt/session/wake key: a proven same-key replay does not start a second executor or a second automatic callback. Missing writer identity, conflicting records, or missing consumption evidence stay UNKNOWN and are not treated as delivered. Automatic recovery reattaches proven same-run residue; it does not invent consumption, EOF, or a second dispatch.
 
 **Wireless telephone** is the platform-native option. It binds the Codex CLI Lead through the official App Server protocol, publishes the exact durable thread only after the first turn is accepted, and returns results to that same thread through one FIFO callback owner. After a wireless first turn is accepted, recovery stays on that exact thread; it never silently migrates transports.
 
@@ -206,6 +208,7 @@ Using a Windows host for Telephone Line remains an available option. If native m
 ## Docs
 
 - [Quick start](docs/quick-start.md)
+- [v0.1.2 notes](docs/releases/v0.1.2.md)
 - [Dashboard](docs/dashboard.md)
 - [Continuity control plane](docs/control-plane.md)
 - [Architecture](docs/architecture.md)

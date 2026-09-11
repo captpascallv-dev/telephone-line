@@ -28,7 +28,7 @@ pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File src/packag
 
 Parameters on the archive commands: `-SourceRoot` defaults to the product tree that contains the command; `-OutputPath` is the zip file or a directory that will receive the default zip name; `-Force` replaces an existing file. The default output location is a temp directory, not the source tree. The commands refuse a reparse point, a binary that would be included, and an excluded path that would be included.
 
-`New-TelephoneReleaseManifest.ps1` writes `release-manifest.json` at the source root when `-OutputPath` is omitted. Pass `-Force` to replace an existing file. Identity fields on the two zip artifacts stay null until a zip is actually built; this repository does not store built zips.
+`New-TelephoneReleaseManifest.ps1` writes `release-manifest.json` at the source root when `-OutputPath` is omitted. Pass `-Force` to replace an existing file. Identity fields on the two zip artifacts stay null so this repository file does not depend on a zip that is not stored here. A GitHub Release may attach a separate asset `release-manifest.json` whose artifact `bytes`/`sha256` name the published zip files; that external asset is the zip identity, not a second product version. This repository does not store built zips.
 
 JSON results use `protocol_version` `telephone-line-package-result-v1` and include `ok`, `action`, `code`, `artifact` identity, and `entry_count`.
 
