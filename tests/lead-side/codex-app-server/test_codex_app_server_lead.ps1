@@ -33,17 +33,30 @@ $script:PreviousDashboardProcessEnvOnly = [Environment]::GetEnvironmentVariable(
 $script:PreviousDashboardOptOut = [Environment]::GetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_OPT_OUT', 'Process')
 $script:PreviousDashboardState = [Environment]::GetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_STATE', 'Process')
 $script:PreviousDashboardHeadless = [Environment]::GetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_HEADLESS', 'Process')
-[Environment]::SetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_PROCESS_ENV_ONLY', '1', 'Process')
-[Environment]::SetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_OPT_OUT', '1', 'Process')
+$script:PreviousSupervisorRunId = [Environment]::GetEnvironmentVariable('TELEPHONE_LINE_SUPERVISOR_RUN_ID', 'Process')
+$script:PreviousSupervisorStateRoot = [Environment]::GetEnvironmentVariable('TELEPHONE_LINE_SUPERVISOR_STATE_ROOT', 'Process')
+$script:PreviousLineStateRoot = [Environment]::GetEnvironmentVariable('TELEPHONE_LINE_STATE_ROOT', 'Process')
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..')).TrimEnd('\')
-. (Join-Path $repoRoot 'src\core\TelephoneLine.Common.ps1')
-. (Join-Path $repoRoot 'src\lead-side\codex-app-server\CodexAppServerLead.Common.ps1')
 $pwsh = [string]([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
 $packageMock = Join-Path $PSScriptRoot 'fixtures\Mock-CodexAppServer.ps1'
 $mock = $packageMock
 $cliSpy = Join-Path $PSScriptRoot 'fixtures\Spy-CliLeadLauncher.ps1'
 $fullTestRoot = [IO.Path]::GetFullPath($TestRoot).TrimEnd('\')
 [IO.Directory]::CreateDirectory($fullTestRoot) | Out-Null
+$isolatedSupervisor = Join-Path $fullTestRoot 'isolated-supervisor'
+$isolatedLineState = Join-Path $fullTestRoot 'isolated-line-state'
+[IO.Directory]::CreateDirectory($isolatedSupervisor) | Out-Null
+[IO.Directory]::CreateDirectory($isolatedLineState) | Out-Null
+[Environment]::SetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_PROCESS_ENV_ONLY', '1', 'Process')
+[Environment]::SetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_OPT_OUT', '1', 'Process')
+[Environment]::SetEnvironmentVariable('TELEPHONE_LINE_SUPERVISOR_RUN_ID', '', 'Process')
+[Environment]::SetEnvironmentVariable('TELEPHONE_LINE_SUPERVISOR_STATE_ROOT', $isolatedSupervisor, 'Process')
+[Environment]::SetEnvironmentVariable('TELEPHONE_LINE_STATE_ROOT', $isolatedLineState, 'Process')
+$env:TELEPHONE_LINE_SUPERVISOR_RUN_ID = ''
+$env:TELEPHONE_LINE_SUPERVISOR_STATE_ROOT = $isolatedSupervisor
+$env:TELEPHONE_LINE_STATE_ROOT = $isolatedLineState
+. (Join-Path $repoRoot 'src\core\TelephoneLine.Common.ps1')
+. (Join-Path $repoRoot 'src\lead-side\codex-app-server\CodexAppServerLead.Common.ps1')
 $runtimeRepoRoot = Join-Path $fullTestRoot '_runtime-package'
 [IO.Directory]::CreateDirectory((Join-Path $runtimeRepoRoot 'src')) | Out-Null
 Copy-Item -LiteralPath (Join-Path $repoRoot 'src\core') -Destination (Join-Path $runtimeRepoRoot 'src\core') -Recurse
@@ -9820,6 +9833,9 @@ Write-CodexAppServerJsonReplace -Path '$($pubPath.Replace('\','\\'))' -Value ([o
     [Environment]::SetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_OPT_OUT', $script:PreviousDashboardOptOut, 'Process')
     [Environment]::SetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_STATE', $script:PreviousDashboardState, 'Process')
     [Environment]::SetEnvironmentVariable('TELEPHONE_LINE_DASHBOARD_HEADLESS', $script:PreviousDashboardHeadless, 'Process')
+    [Environment]::SetEnvironmentVariable('TELEPHONE_LINE_SUPERVISOR_RUN_ID', $script:PreviousSupervisorRunId, 'Process')
+    [Environment]::SetEnvironmentVariable('TELEPHONE_LINE_SUPERVISOR_STATE_ROOT', $script:PreviousSupervisorStateRoot, 'Process')
+    [Environment]::SetEnvironmentVariable('TELEPHONE_LINE_STATE_ROOT', $script:PreviousLineStateRoot, 'Process')
     foreach ($name in @(
         'TELEPHONE_TEST_APP_SERVER_LEAD_CRASH_AT', 'TELEPHONE_TEST_APP_SERVER_LEAD_THROW_AT', 'TELEPHONE_TEST_APP_SERVER_CRASH_AT',
         'TELEPHONE_TEST_APP_SERVER_EXTRA_TURNS', 'TELEPHONE_TEST_APP_SERVER_SCHEMA_EXTRA',
