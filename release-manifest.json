@@ -282,8 +282,8 @@
     },
     {
       "path": "docs/releases/v0.1.3.md",
-      "bytes": 11931,
-      "sha256": "f3ecdbf4f8b7fafbd1c183afac418493b4cf5e8f4632b736b4949d4d470761d1"
+      "bytes": 12904,
+      "sha256": "3c9d4703985931ebbffe52009d1a944e1e274ef83906f0755902736ceb51d4a0"
     },
     {
       "path": "docs/routes.md",
@@ -797,8 +797,8 @@
     },
     {
       "path": "src/core/TelephoneLeadRuntime.Common.ps1",
-      "bytes": 158018,
-      "sha256": "a203b84f35d84ecbffb27227df8cb974da7582a107bfc6d0875620e17b943e39"
+      "bytes": 158753,
+      "sha256": "6dc44fdc96ea3f087a895942f57ffd6fe7e569a7060157be217a17d4b79e6a96"
     },
     {
       "path": "src/core/TelephoneLine.Common.ps1",
@@ -997,8 +997,8 @@
     },
     {
       "path": "src/supervisor/TelephoneSupervisor.Common.ps1",
-      "bytes": 183937,
-      "sha256": "090f6f8d2b0a3cfb7ef1824c06eb43b211de70fbf7fbdbffd9fcf725583ffc37"
+      "bytes": 187476,
+      "sha256": "611b3deda008167c0b9eb2828e2c50b142bf40c3088e6a7d3453cdaaae23e95e"
     },
     {
       "path": "tests/Invoke-OfflineTests.ps1",
@@ -1607,13 +1607,13 @@
     },
     {
       "path": "tests/supervisor/test_wired_supervisor.ps1",
-      "bytes": 132996,
-      "sha256": "077944e10b5d31f635060dfed5ccccd28f8a5a0cfca360688c108a977da44aca"
+      "bytes": 143176,
+      "sha256": "0806562b25dc2a8d9905cdfd7ef2add28919551e6bbb59f526019bd9409e0c0d"
     }
   ],
   "counts": {
     "files": 316,
-    "bytes": 5015125
+    "bytes": 5030552
   },
   "excluded": [
     ".control/**",
