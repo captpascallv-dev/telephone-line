@@ -2438,6 +2438,74 @@ function Test-TelephoneSupervisorCorrespondingWakeIdentity {
     return ($dRun -ceq $wRun) -and ($dKey -ceq $wKey)
 }
 
+function Get-TelephoneSupervisorCorrespondingSharedCollectorOwner {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$StateRoot,
+        [Parameter(Mandatory = $true)][string]$RunId
+    )
+    $runDir = Join-Path (Get-TelephoneSupervisorPaths -StateRoot $StateRoot).runs $RunId
+    $mailboxPath = Join-Path $runDir 'mailbox.json'
+    if (-not [IO.File]::Exists($mailboxPath)) { return $null }
+    try { $mailbox = (Read-TelephoneJson -Path $mailboxPath).value } catch { return $null }
+    if ($mailbox -isnot [Collections.IDictionary]) { return $null }
+    if (-not $mailbox.Contains('protocol_version') -or [string]$mailbox.protocol_version -cne 'telephone-line-wired-supervisor-mailbox-v1') { return $null }
+    if (-not $mailbox.Contains('run_id') -or [string]$mailbox.run_id -cne [string]$RunId) { return $null }
+    if (-not $mailbox.Contains('collector_pid') -or [int]$mailbox.collector_pid -le 0) { return $null }
+    $leadKey = ''
+    $leadSession = ''
+    if ($mailbox.Contains('lead_identity_sha256')) { $leadKey = [string]$mailbox.lead_identity_sha256 }
+    if ($mailbox.Contains('lead_session_id')) { $leadSession = [string]$mailbox.lead_session_id }
+    if ($leadKey -cnotmatch '^[0-9a-f]{64}$') { return $null }
+    if ([string]::IsNullOrWhiteSpace($leadSession)) { return $null }
+    $collectorPid = [int]$mailbox.collector_pid
+    $boundMatch = $false
+    $collectorOwner = $null
+    foreach ($oneState in @(Get-TelephoneSupervisorBoundLineStateRoots -StateRoot $StateRoot -RunId $RunId)) {
+        $jobsRoot = Join-Path $oneState 'jobs'
+        if (-not [IO.Directory]::Exists($jobsRoot)) { continue }
+        foreach ($dir in @([IO.Directory]::GetDirectories($jobsRoot))) {
+            $lineagePath = Join-Path $dir 'supervisor-lineage.json'
+            if (-not [IO.File]::Exists($lineagePath)) { continue }
+            try {
+                $lineage = (Read-TelephoneJson -Path $lineagePath).value
+                if ($lineage -isnot [Collections.IDictionary] -or [string]$lineage.supervisor_run_id -cne [string]$RunId) { continue }
+            } catch { continue }
+            $jobPaths = Get-TelephoneJobPaths -JobRoot $dir
+            if (-not [IO.File]::Exists($jobPaths.lead_binding)) { continue }
+            try { $binding = (Read-TelephoneJson -Path $jobPaths.lead_binding).value } catch { continue }
+            if ($binding -isnot [Collections.IDictionary]) { continue }
+            $boundSession = ''
+            if ($binding.Contains('session_id')) { $boundSession = [string]$binding.session_id }
+            if ($boundSession -cne $leadSession) { continue }
+            $canon = $null
+            try { $canon = Get-TelephoneLeadCanonicalIdentity -Lead $binding } catch { $canon = $null }
+            if ($null -eq $canon -or [string]$canon.identity_sha256 -cne $leadKey) { continue }
+            $boundMatch = $true
+            $ownerPath = ''
+            try { $ownerPath = [string](Get-TelephoneLeadMailboxPaths -StateRoot $oneState -LeadKey $leadKey).owner } catch { $ownerPath = '' }
+            if ([string]::IsNullOrWhiteSpace($ownerPath) -or -not [IO.File]::Exists($ownerPath)) { continue }
+            try {
+                $owner = (Read-TelephoneJson -Path $ownerPath).value
+                if ($owner -isnot [Collections.IDictionary]) { continue }
+                if (-not $owner.Contains('protocol_version') -or [string]$owner.protocol_version -cne 'telephone-line-mailbox-owner-v1') { continue }
+                if (-not $owner.Contains('pid') -or [int]$owner.pid -ne $collectorPid) { continue }
+                if (-not $owner.Contains('start_time_utc_ticks') -or [int64]$owner.start_time_utc_ticks -le 0) { continue }
+                if (-not (Test-TelephoneOwnerAlive -Owner $owner)) { continue }
+                if ($owner.Contains('lead_identity_sha256') -and [string]$owner.lead_identity_sha256 -cne $leadKey) { continue }
+                if ($owner.Contains('session_id') -and -not [string]::IsNullOrWhiteSpace([string]$owner.session_id) -and [string]$owner.session_id -cne $leadSession) { continue }
+                if ($owner.Contains('lead_session_id') -and -not [string]::IsNullOrWhiteSpace([string]$owner.lead_session_id) -and [string]$owner.lead_session_id -cne $leadSession) { continue }
+                if ($owner.Contains('supervisor_run_id') -and -not [string]::IsNullOrWhiteSpace([string]$owner.supervisor_run_id) -and [string]$owner.supervisor_run_id -cne [string]$RunId) { continue }
+                $collectorOwner = $owner
+            } catch { }
+            if ($null -ne $collectorOwner) { break }
+        }
+        if ($boundMatch -and $null -ne $collectorOwner) { break }
+    }
+    if (-not $boundMatch) { return $null }
+    return $collectorOwner
+}
+
 function Test-TelephoneSupervisorProvenSharedCollectorMember {
     [CmdletBinding()]
     param(
@@ -2452,46 +2520,11 @@ function Test-TelephoneSupervisorProvenSharedCollectorMember {
     try { $memberPid = [int]$Member.pid } catch { return $false }
     try { if ($Member.Contains('start_time_utc_ticks')) { $memberStart = [int64]$Member.start_time_utc_ticks } } catch { return $false }
     if ($memberPid -le 0 -or $memberStart -le 0) { return $false }
-    $runDir = Join-Path (Get-TelephoneSupervisorPaths -StateRoot $StateRoot).runs $RunId
-    $mailboxPath = Join-Path $runDir 'mailbox.json'
-    if (-not [IO.File]::Exists($mailboxPath)) { return $false }
-    try { $mailbox = (Read-TelephoneJson -Path $mailboxPath).value } catch { return $false }
-    if ($mailbox -isnot [Collections.IDictionary]) { return $false }
-    if (-not $mailbox.Contains('protocol_version') -or [string]$mailbox.protocol_version -cne 'telephone-line-wired-supervisor-mailbox-v1') { return $false }
-    if (-not $mailbox.Contains('collector_pid') -or [int]$mailbox.collector_pid -le 0) { return $false }
-    $collectorPid = [int]$mailbox.collector_pid
-    $collectorOwner = $null
-    foreach ($oneState in @(Get-TelephoneSupervisorBoundLineStateRoots -StateRoot $StateRoot -RunId $RunId)) {
-        $leadsRoot = Join-Path $oneState 'leads'
-        if (-not [IO.Directory]::Exists($leadsRoot)) { continue }
-        foreach ($leadDir in @([IO.Directory]::GetDirectories($leadsRoot))) {
-            $ownerPath = Join-Path $leadDir 'owner.json'
-            if (-not [IO.File]::Exists($ownerPath)) { continue }
-            try {
-                $owner = (Read-TelephoneJson -Path $ownerPath).value
-                if ($owner -isnot [Collections.IDictionary]) { continue }
-                if (-not $owner.Contains('protocol_version') -or [string]$owner.protocol_version -cne 'telephone-line-mailbox-owner-v1') { continue }
-                if (-not $owner.Contains('pid') -or [int]$owner.pid -ne $collectorPid) { continue }
-                if (-not $owner.Contains('start_time_utc_ticks') -or [int64]$owner.start_time_utc_ticks -le 0) { continue }
-                if (Test-TelephoneOwnerAlive -Owner $owner) { $collectorOwner = $owner; break }
-            } catch { }
-        }
-        if ($null -ne $collectorOwner) { break }
-    }
+    $collectorOwner = Get-TelephoneSupervisorCorrespondingSharedCollectorOwner -StateRoot $StateRoot -RunId $RunId
     if ($null -eq $collectorOwner) { return $false }
-    if ($memberPid -eq $collectorPid -and $memberStart -eq [int64]$collectorOwner.start_time_utc_ticks) { return $true }
-    $walk = $memberPid
-    $seen = [Collections.Generic.HashSet[int]]::new()
-    while ($walk -gt 0 -and $seen.Add($walk)) {
-        $parent = 0
-        try {
-            $procRow = Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId=' + $walk) -ErrorAction Stop
-            if ($null -ne $procRow -and $null -ne $procRow.ParentProcessId) { $parent = [int]$procRow.ParentProcessId }
-        } catch { return $false }
-        if ($parent -eq $collectorPid) { return (Test-TelephoneOwnerAlive -Owner $collectorOwner) }
-        $walk = $parent
-    }
-    return $false
+    if (-not $collectorOwner.Contains('pid') -or [int]$collectorOwner.pid -ne $memberPid) { return $false }
+    if (-not $collectorOwner.Contains('start_time_utc_ticks') -or [int64]$collectorOwner.start_time_utc_ticks -ne $memberStart) { return $false }
+    return $true
 }
 
 function Test-TelephoneSupervisorBoundJobValidCompletedDelivery {
@@ -3145,6 +3178,32 @@ function Reconcile-TelephoneSupervisorClaimed {
                     $memberPid = [int]$row.pid
                     if (-not $extraLivePids.Contains($memberPid)) { [void]$extraLivePids.Add($memberPid) }
                 }
+            }
+            foreach ($leftPid in @($left)) {
+                $leftId = 0
+                try { $leftId = [int]$leftPid } catch { continue }
+                if ($leftId -le 0) { continue }
+                $leftIdentity = Get-TelephoneSupervisorProcessIdentity -ProcessId $leftId
+                if ($null -eq $leftIdentity) {
+                    $extraDeclaredLive = $true
+                    if (-not $extraLivePids.Contains($leftId)) { [void]$extraLivePids.Add($leftId) }
+                    continue
+                }
+                if (-not (Test-TelephoneOwnerAlive -Owner $leftIdentity)) { continue }
+                if (Test-TelephoneSupervisorProvenSharedCollectorMember -Member $leftIdentity -StateRoot $StateRoot -RunId $runId) { continue }
+                $extraDeclaredLive = $true
+                if (-not $extraLivePids.Contains($leftId)) { [void]$extraLivePids.Add($leftId) }
+            }
+            foreach ($survivorPid in @($survivors)) {
+                $survId = 0
+                try { $survId = [int]$survivorPid } catch { continue }
+                if ($survId -le 0 -or $extraLivePids.Contains($survId)) { continue }
+                $survIdentity = Get-TelephoneSupervisorProcessIdentity -ProcessId $survId
+                if ($null -eq $survIdentity) { continue }
+                if (-not (Test-TelephoneOwnerAlive -Owner $survIdentity)) { continue }
+                if (Test-TelephoneSupervisorProvenSharedCollectorMember -Member $survIdentity -StateRoot $StateRoot -RunId $runId) { continue }
+                $extraDeclaredLive = $true
+                [void]$extraLivePids.Add($survId)
             }
             $retainOwned = $false
             if (-not [bool]$boundSettled.settled) {
