@@ -1381,6 +1381,14 @@ if (`$StateRoot -cne '$($namedArgsState.Replace("'", "''"))' -or `$CodexCommand 
     Assert-TelephoneTest ($missingReceipt.transport_complete -eq $false -and [string]$missingReceipt.command_error_code -ceq 'COMMAND_HOST_INTERRUPTED') 'Absent child result was converted into success.'
     $dead_owner_missing_result_fail_closed = 1
 
+    foreach ($starterRaceCase in @('Recovery', 'PublicationFailure')) {
+        $starterRaceRoot = Join-Path $testRoot ('starter-race-' + $starterRaceCase)
+        $starterRaceOutput = & $powerShellPath -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'test_starter_relay_race.ps1') -TestRoot $starterRaceRoot -Case $starterRaceCase
+        $starterRaceExit = $LASTEXITCODE
+        $starterRaceResult = ($starterRaceOutput -join [Environment]::NewLine) | ConvertFrom-Json -AsHashtable
+        Assert-TelephoneTest ($starterRaceExit -eq 0 -and $starterRaceResult.check_passed -eq $true) ('Actual starter relay regression failed: ' + $starterRaceCase + '; ' + ($starterRaceOutput -join [Environment]::NewLine))
+    }
+
     $result = [ordered]@{
         success = $true
         asynchronous_lead_exit = 1

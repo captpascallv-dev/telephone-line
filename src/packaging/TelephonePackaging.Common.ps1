@@ -10,7 +10,7 @@ Add-Type -AssemblyName System.IO.Compression
 $script:TelephonePackagingResultProtocol = 'telephone-line-package-result-v1'
 $script:TelephonePackagingManifestProtocol = 'telephone-line-release-manifest-v1'
 $script:TelephonePackagingProduct = 'telephone-line'
-$script:TelephonePackagingVersion = '0.1.3'
+$script:TelephonePackagingVersion = '0.1.4'
 $script:TelephonePackagingLicense = 'MPL-2.0'
 $script:TelephonePackagingPlatform = 'windows'
 $script:TelephonePackagingSourceZipName = ('telephone-line-' + $script:TelephonePackagingVersion + '-source.zip')

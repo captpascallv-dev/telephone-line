@@ -3534,7 +3534,8 @@ function Restore-TelephoneExactJobRelay {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$JobRoot,
-        [string]$RelayScript = ''
+        [string]$RelayScript = '',
+        [switch]$InitialLaunch
     )
     $result = [ordered]@{
         protocol_version = 'telephone-line-exact-relay-restore-v1'
@@ -3569,8 +3570,12 @@ function Restore-TelephoneExactJobRelay {
         if (Test-TelephoneOwnerAlive -Owner $relayOwner) { $result.reason = 'relay_alive'; $result.owner = $relayOwner; return $result }
         if ([IO.File]::Exists($paths.delivery)) { $result.reason = 'already_delivered'; return $result }
         $newRelay = Start-TelephoneHiddenPowerShell -ScriptPath $scriptPath -Arguments @('-JobRoot', $root)
-        $attemptPath = Join-Path $root ('relay-resume-' + [DateTimeOffset]::UtcNow.ToString('yyyyMMddTHHmmssfffffffZ') + '.json')
-        try { $null = Write-TelephoneJsonCreateNew -Path $attemptPath -Value $newRelay } catch { }
+        if (-not $InitialLaunch) {
+            $attemptPath = Join-Path $root ('relay-resume-' + [DateTimeOffset]::UtcNow.ToString('yyyyMMddTHHmmssfffffffZ') + '.json')
+            try { $null = Write-TelephoneJsonCreateNew -Path $attemptPath -Value $newRelay } catch { }
+        } elseif (-not [string]::IsNullOrWhiteSpace([string]$env:TELEPHONE_LINE_SUPERVISOR_RUN_ID)) {
+            $newRelay['supervisor_run_id'] = [string]$env:TELEPHONE_LINE_SUPERVISOR_RUN_ID
+        }
         if (-not (Test-TelephoneOwnerAlive -Owner $newRelay)) {
             $result.reason = 'relay_launch_not_alive'
             $result.owner = $newRelay
@@ -3588,8 +3593,19 @@ function Restore-TelephoneExactJobRelay {
             } catch { }
             finally { $env:TELEPHONE_LINE_SUPERVISOR_RUN_ID = $prevRun }
         }
-        try { $null = Write-TelephoneJsonReplace -Path $paths.relay_owner -Value $newRelay } catch {
-            try { $null = Write-TelephoneJsonCreateNew -Path $paths.relay_owner -Value $newRelay } catch { }
+        if ($InitialLaunch) {
+            # Initial launch and restoration hold the same gate. A restorer may
+            # have won before the starter arrived, so adopt its live owner above.
+            # Real publication failures must still propagate to the starter.
+            if ([IO.File]::Exists($paths.relay_owner)) {
+                $null = Write-TelephoneJsonReplace -Path $paths.relay_owner -Value $newRelay
+            } else {
+                $null = Write-TelephoneJsonCreateNew -Path $paths.relay_owner -Value $newRelay
+            }
+        } else {
+            try { $null = Write-TelephoneJsonReplace -Path $paths.relay_owner -Value $newRelay } catch {
+                try { $null = Write-TelephoneJsonCreateNew -Path $paths.relay_owner -Value $newRelay } catch { }
+            }
         }
         $result.restored = $true
         $result.reason = 'relay_restored'

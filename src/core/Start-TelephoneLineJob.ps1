@@ -177,11 +177,11 @@ if ($forceStartFailedMatch) {
     }
 }
 $null = Write-TelephoneLifecycleStatus -Paths $paths -Phase 'dispatched' -Idle $false
-$relayOwner = Start-TelephoneHiddenPowerShell -ScriptPath (Join-Path $PSScriptRoot 'Invoke-TelephoneLineRelay.ps1') -Arguments @('-JobRoot', $jobRoot)
-if (-not [string]::IsNullOrWhiteSpace([string]$env:TELEPHONE_LINE_SUPERVISOR_RUN_ID)) {
-    $relayOwner['supervisor_run_id'] = [string]$env:TELEPHONE_LINE_SUPERVISOR_RUN_ID
+$relayStart = Restore-TelephoneExactJobRelay -JobRoot $jobRoot -InitialLaunch
+if ([string]$relayStart.reason -cnotin @('relay_restored', 'relay_alive', 'already_delivered')) {
+    throw ('Initial relay start did not establish an owner: ' + [string]$relayStart.reason)
 }
-$null = Write-TelephoneJsonCreateNew -Path $paths.relay_owner -Value $relayOwner
+$relayOwner = $relayStart.owner
 $controlPlaneWake = Invoke-TelephoneControlPlaneLifecycleWake -Dispatch $dispatch -JobRoot $jobRoot -Reason 'dispatch-created'
 
 [ordered]@{
