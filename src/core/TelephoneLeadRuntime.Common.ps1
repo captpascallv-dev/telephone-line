@@ -1071,9 +1071,12 @@ function Complete-TelephoneLeadOpenDrain {
     $exited = $false
     $exitCode = $null
     $boundMs = [Math]::Max(0, [int]$WaitMilliseconds)
+    $inspectOnly = (-not $Wait) -or ($boundMs -le 0)
+    $deadlineUtc = [DateTimeOffset]::UtcNow.AddMilliseconds($(if ($inspectOnly) { 0 } else { $boundMs }))
     try {
-        if ($Wait -and $boundMs -gt 0 -and $null -ne $process -and -not $process.HasExited) {
-            $null = $process.WaitForExit($boundMs)
+        if (-not $inspectOnly -and $null -ne $process -and -not $process.HasExited) {
+            $procMs = [Math]::Max(0, [int][Math]::Ceiling(($deadlineUtc - [DateTimeOffset]::UtcNow).TotalMilliseconds))
+            if ($procMs -gt 0) { $null = $process.WaitForExit($procMs) }
         }
         if ($null -ne $process) {
             $exited = [bool]$process.HasExited
@@ -1089,8 +1092,11 @@ function Complete-TelephoneLeadOpenDrain {
     }
     $stdoutEof = $false
     $stderrEof = $false
-    $streamMs = if ($boundMs -gt 0) { $boundMs } else { 5000 }
     $hostRole = ([string]$drain.role -ceq 'host')
+    $streamMs = 0
+    if (-not $inspectOnly) {
+        $streamMs = [Math]::Max(0, [int][Math]::Ceiling(($deadlineUtc - [DateTimeOffset]::UtcNow).TotalMilliseconds))
+    }
     try {
         if ($null -ne $drain.stdout_task) {
             if ($drain.stdout_task.Wait($streamMs)) {
@@ -1101,6 +1107,9 @@ function Complete-TelephoneLeadOpenDrain {
             $stdoutEof = $true
         }
     } catch { }
+    if (-not $inspectOnly) {
+        $streamMs = [Math]::Max(0, [int][Math]::Ceiling(($deadlineUtc - [DateTimeOffset]::UtcNow).TotalMilliseconds))
+    }
     try {
         if ($null -ne $drain.stderr_task) {
             if ($drain.stderr_task.Wait($streamMs)) {
@@ -1113,7 +1122,11 @@ function Complete-TelephoneLeadOpenDrain {
     } catch { }
     $terminal = $stdoutEof -and $stderrEof -and $null -ne $exitCode
     if ($terminal -and $null -ne $drain.completion_task) {
-        try { $terminal = [bool]$drain.completion_task.Wait($streamMs) } catch { $terminal = $false }
+        $compMs = 0
+        if (-not $inspectOnly) {
+            $compMs = [Math]::Max(0, [int][Math]::Ceiling(($deadlineUtc - [DateTimeOffset]::UtcNow).TotalMilliseconds))
+        }
+        try { $terminal = [bool]$drain.completion_task.Wait($compMs) } catch { $terminal = $false }
     }
     if (-not $terminal) {
         # Keep the actual reader and file handles alive. A later call can finish

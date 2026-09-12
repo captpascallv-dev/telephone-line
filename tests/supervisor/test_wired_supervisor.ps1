@@ -30,6 +30,9 @@ $runHostDeathNegative = 0
 $automaticRelayRestore = 0
 $f4InvalidChainNoMember = 0
 $f4ValidChainLiveMember = 0
+$f4ValidChainNamedJobMember = 0
+$f4PidOnlyCollectorHint = 0
+$f4ForeignWakeNoMember = 0
 $f4ValidChainQuiescent = 0
 $guiCancelOne = 0
 $productionChainActivation = 0
@@ -794,23 +797,28 @@ try { `$null = Sync-TelephoneSupervisorMailboxBinding -StateRoot '$syncState' -R
         Assert-Sup (Wait-Sup { [IO.File]::Exists($autoJobPaths.mailbox_ref) } -Milliseconds 15000) 'Race did not publish one exact mailbox-ref.'
         $raceRef = (Read-TelephoneJson -Path $autoJobPaths.mailbox_ref).value
         Assert-Sup ([string]$raceRef.protocol_version -ceq 'telephone-line-mailbox-ref-v1') 'Mailbox-ref protocol was not the original mailbox document.'
-        $wakeIds = [Collections.Generic.HashSet[string]]::new()
-        if ([IO.File]::Exists($autoJobPaths.wake_attempt)) {
-            try {
-                $wakeDoc = (Read-TelephoneJson -Path $autoJobPaths.wake_attempt).value
-                if ($wakeDoc -is [Collections.IDictionary] -and [string]$wakeDoc.protocol_version -ceq 'telephone-line-wake-attempt-v1') {
-                    [void]$wakeIds.Add(([string]$wakeDoc.wake_run_id) + '|' + ([string]$wakeDoc.wake_key))
-                }
-            } catch { }
-        }
         $deliv = (Read-TelephoneJson -Path $autoJobPaths.delivery).value
         Assert-Sup ($deliv -is [Collections.IDictionary] -and [string]$deliv.protocol_version -ceq 'telephone-line-delivery-v1') 'Race delivery was not the original continuation document.'
-        if ($deliv.Contains('wake_run_id') -or $deliv.Contains('wake_key')) {
-            [void]$wakeIds.Add(([string]$deliv.wake_run_id) + '|' + ([string]$deliv.wake_key))
-        } elseif (Test-TelephoneMailboxItemConsumed -Item $deliv) {
-            [void]$wakeIds.Add('consumed-delivery')
+        $wakeRunId = ''
+        if ($deliv.Contains('wake_run_id')) { $wakeRunId = [string]$deliv.wake_run_id }
+        Assert-Sup (-not [string]::IsNullOrWhiteSpace($wakeRunId)) 'Race delivery omitted wake_run_id.'
+        if ([IO.File]::Exists($autoJobPaths.wake_attempt)) {
+            $wakeDoc = $null
+            try { $wakeDoc = (Read-TelephoneJson -Path $autoJobPaths.wake_attempt).value } catch { $wakeDoc = $null }
+            Assert-Sup (Test-TelephoneSupervisorCorrespondingWakeIdentity -Delivery $deliv -WakeDoc $wakeDoc) 'Race wake-attempt did not correspond to delivery.'
         }
-        Assert-Sup ($wakeIds.Count -eq 1) 'Race did not publish exactly one original wake/continuation.'
+        Assert-Sup ((Get-SupLeadLogWakeCount -LogPath $autoLeadLog -RunId $wakeRunId) -eq 1) 'Race did not invoke the original launcher/consumer exactly once.'
+        $sessionWake = 0
+        if ([IO.File]::Exists($autoLeadLog)) {
+            foreach ($line in @([IO.File]::ReadAllLines($autoLeadLog))) {
+                if ([string]::IsNullOrWhiteSpace($line)) { continue }
+                try {
+                    $row = $line | ConvertFrom-Json -AsHashtable -Depth 8 -DateKind String
+                    if ([string]$row.session_id -ceq 'auto-recover-session-001' -and -not [bool]$row.existing) { $sessionWake += 1 }
+                } catch { }
+            }
+        }
+        Assert-Sup ($sessionWake -eq 1) 'Race invoked more than one original session continuation.'
         $null = Invoke-SupScript -Relative 'src\supervisor\Invoke-TelephoneSupervisor.ps1' -Arguments @('-InstallRoot', $repoRoot, '-StateRoot', $script:supState)
         $outAuto = Get-TelephoneSupervisorRecordPath -StateRoot $script:supState -Kind outbox -RunId $runAuto
         if (-not [IO.File]::Exists($outAuto)) {
@@ -931,6 +939,8 @@ try { `$null = Sync-TelephoneSupervisorMailboxBinding -StateRoot '$syncState' -R
     }
     $f4PrevLine = $env:TELEPHONE_LINE_STATE_ROOT
     $f4Live = Start-Process -FilePath $pwsh -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 45') -PassThru -WindowStyle Hidden
+    $f4Named = Start-Process -FilePath $pwsh -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 45') -PassThru -WindowStyle Hidden
+    $f4Hint = Start-Process -FilePath $pwsh -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 45') -PassThru -WindowStyle Hidden
     try {
         $dead = Start-Process -FilePath $pwsh -ArgumentList @('-NoProfile','-Command','exit 0') -PassThru -WindowStyle Hidden
         Assert-Sup ($dead.WaitForExit(5000)) 'F4 dead-owner fixture did not exit.'
@@ -1004,6 +1014,112 @@ try { `$null = Sync-TelephoneSupervisorMailboxBinding -StateRoot '$syncState' -R
         Assert-Sup ($liveTerm -cne 'completed') 'Valid chain completed while another owned member was alive.'
         $script:f4ValidChainLiveMember = 1
 
+        $namedState = Join-Path $f4Fix 'named-sup'
+        $namedId = [guid]::NewGuid().ToString()
+        $null = Initialize-TelephoneSupervisorLayout -StateRoot $namedState
+        $namedRun = Join-Path (Join-Path $namedState 'runs') $namedId
+        $namedLine = Join-Path $f4Fix 'named-line'
+        $namedJid = [guid]::NewGuid().ToString()
+        $namedJobDir = Join-Path $namedLine ('jobs\' + $namedJid)
+        [IO.Directory]::CreateDirectory($namedRun) | Out-Null
+        Write-SupJson -Path (Join-Path $namedRun 'owner.json') -Value $deadOwner
+        Write-SupJson -Path (Join-Path $namedRun 'job-members.json') -Value @{ run_id = $namedId; members = @(@{ pid = [int]$f4Named.Id; start_time_utc_ticks = [int64]$f4Named.StartTime.ToUniversalTime().Ticks }); lead_pid = 0; lead_start_time_utc_ticks = 0 }
+        Write-SupJson -Path (Join-Path $namedRun 'bound-line-state-roots.json') -Value @{ state_roots = @($namedLine) }
+        Write-SupJson -Path (Join-Path $namedJobDir 'supervisor-lineage.json') -Value @{ supervisor_run_id = $namedId; supervisor_state_root = $namedState }
+        Write-SupJson -Path (Join-Path $namedJobDir 'command-owner.json') -Value $deadOwner
+        Write-SupValidJobChain -JobDir $namedJobDir -LineJobId $namedJid -Session 'example-session-001'
+        $namedAssign = New-TelephoneSupervisorRunJob -RunId $namedId
+        try {
+            Assert-Sup (Add-TelephoneSupervisorPidToRunJob -Job $namedAssign -ProcessId ([int]$f4Named.Id)) 'Named-job member was not assigned to the named job.'
+            Assert-Sup (Test-TelephoneSupervisorPidInJob -Job $namedAssign -ProcessId ([int]$f4Named.Id)) 'Named-job member IsProcessInJob was false.'
+        } finally {
+            Close-TelephoneSupervisorRunJob -Job $namedAssign
+        }
+        $namedReq = (Get-Content -LiteralPath $fixtureReq -Raw | ConvertFrom-Json -AsHashtable -Depth 32)
+        $namedReq.run_id = $namedId
+        $namedReq.worktree = $f4Fix
+        $namedReq.command.working_directory = $f4Fix
+        $namedReq.request_sha256 = Get-TelephoneSupervisorRequestHash -Request $namedReq
+        Write-SupJson -Path (Get-TelephoneSupervisorRecordPath -StateRoot $namedState -Kind claimed -RunId $namedId) -Value $namedReq
+        $env:TELEPHONE_LINE_STATE_ROOT = $namedLine
+        $namedValid = Test-TelephoneSupervisorBoundJobValidCompletedDelivery -JobRoot $namedJobDir
+        $namedSettled = Test-TelephoneSupervisorBoundJobsSettled -StateRoot $namedState -RunId $namedId
+        $namedRec = @(Reconcile-TelephoneSupervisorClaimed -StateRoot $namedState)
+        $namedOut = Get-TelephoneSupervisorRecordPath -StateRoot $namedState -Kind outbox -RunId $namedId
+        $namedTerm = if ([IO.File]::Exists($namedOut)) { [string]((Read-TelephoneJson -Path $namedOut).value.terminal) } else { 'ABSENT' }
+        $f4Named.Refresh()
+        Assert-Sup ([bool]$namedValid) 'Valid complete chain with a live named-job member was not delivery-valid.'
+        Assert-Sup (-not $f4Named.HasExited) 'F4 named-job member died before reconcile.'
+        Assert-Sup ($namedTerm -cne 'completed') 'Valid chain completed while a named-job member was alive.'
+        $script:f4ValidChainNamedJobMember = 1
+
+        $hintState = Join-Path $f4Fix 'hint-sup'
+        $hintId = [guid]::NewGuid().ToString()
+        $null = Initialize-TelephoneSupervisorLayout -StateRoot $hintState
+        $hintRun = Join-Path (Join-Path $hintState 'runs') $hintId
+        $hintLine = Join-Path $f4Fix 'hint-line'
+        $hintJid = [guid]::NewGuid().ToString()
+        $hintJob = Join-Path $hintLine ('jobs\' + $hintJid)
+        [IO.Directory]::CreateDirectory($hintRun) | Out-Null
+        Write-SupJson -Path (Join-Path $hintRun 'owner.json') -Value $deadOwner
+        Write-SupJson -Path (Join-Path $hintRun 'job-members.json') -Value @{ run_id = $hintId; members = @(@{ pid = [int]$f4Hint.Id; start_time_utc_ticks = [int64]$f4Hint.StartTime.ToUniversalTime().Ticks }); lead_pid = 0; lead_start_time_utc_ticks = 0 }
+        Write-SupJson -Path (Join-Path $hintRun 'mailbox.json') -Value @{ collector_pid = [int]$f4Hint.Id }
+        Write-SupJson -Path (Join-Path $hintRun 'bound-line-state-roots.json') -Value @{ state_roots = @($hintLine) }
+        Write-SupJson -Path (Join-Path $hintJob 'supervisor-lineage.json') -Value @{ supervisor_run_id = $hintId; supervisor_state_root = $hintState }
+        Write-SupJson -Path (Join-Path $hintJob 'command-owner.json') -Value $deadOwner
+        Write-SupValidJobChain -JobDir $hintJob -LineJobId $hintJid -Session 'example-session-001'
+        $hintReq = (Get-Content -LiteralPath $fixtureReq -Raw | ConvertFrom-Json -AsHashtable -Depth 32)
+        $hintReq.run_id = $hintId
+        $hintReq.worktree = $f4Fix
+        $hintReq.command.working_directory = $f4Fix
+        $hintReq.request_sha256 = Get-TelephoneSupervisorRequestHash -Request $hintReq
+        Write-SupJson -Path (Get-TelephoneSupervisorRecordPath -StateRoot $hintState -Kind claimed -RunId $hintId) -Value $hintReq
+        $env:TELEPHONE_LINE_STATE_ROOT = $hintLine
+        $hintValid = Test-TelephoneSupervisorBoundJobValidCompletedDelivery -JobRoot $hintJob
+        $hintSettled = Test-TelephoneSupervisorBoundJobsSettled -StateRoot $hintState -RunId $hintId
+        $hintRec = @(Reconcile-TelephoneSupervisorClaimed -StateRoot $hintState)
+        $hintOut = Get-TelephoneSupervisorRecordPath -StateRoot $hintState -Kind outbox -RunId $hintId
+        $hintTerm = if ([IO.File]::Exists($hintOut)) { [string]((Read-TelephoneJson -Path $hintOut).value.terminal) } else { 'ABSENT' }
+        $f4Hint.Refresh()
+        Assert-Sup ([bool]$hintValid) 'Valid complete chain with a pid-only collector hint was not delivery-valid.'
+        Assert-Sup (-not $f4Hint.HasExited) 'F4 pid-hint member died before reconcile.'
+        Assert-Sup ($hintTerm -cne 'completed') 'Valid chain completed while a pid-only collector-hint member was alive.'
+        $script:f4PidOnlyCollectorHint = 1
+
+        $foreignState = Join-Path $f4Fix 'foreign-sup'
+        $foreignId = [guid]::NewGuid().ToString()
+        $null = Initialize-TelephoneSupervisorLayout -StateRoot $foreignState
+        $foreignRun = Join-Path (Join-Path $foreignState 'runs') $foreignId
+        $foreignLine = Join-Path $f4Fix 'foreign-line'
+        $foreignJid = [guid]::NewGuid().ToString()
+        $foreignJob = Join-Path $foreignLine ('jobs\' + $foreignJid)
+        [IO.Directory]::CreateDirectory($foreignRun) | Out-Null
+        Write-SupJson -Path (Join-Path $foreignRun 'owner.json') -Value $deadOwner
+        Write-SupJson -Path (Join-Path $foreignRun 'bound-line-state-roots.json') -Value @{ state_roots = @($foreignLine) }
+        Write-SupJson -Path (Join-Path $foreignJob 'supervisor-lineage.json') -Value @{ supervisor_run_id = $foreignId; supervisor_state_root = $foreignState }
+        Write-SupJson -Path (Join-Path $foreignJob 'command-owner.json') -Value $deadOwner
+        Write-SupValidJobChain -JobDir $foreignJob -LineJobId $foreignJid -Session 'example-session-001'
+        $foreignWake = (Read-TelephoneJson -Path (Join-Path $foreignJob 'wake-attempt.json')).value
+        $foreignWake.wake_key = 'foreign-wake-key'
+        $foreignWake.wake_run_id = 'foreign-wake-run'
+        Write-SupJson -Path (Join-Path $foreignJob 'wake-attempt.json') -Value $foreignWake
+        $foreignReq = (Get-Content -LiteralPath $fixtureReq -Raw | ConvertFrom-Json -AsHashtable -Depth 32)
+        $foreignReq.run_id = $foreignId
+        $foreignReq.worktree = $f4Fix
+        $foreignReq.command.working_directory = $f4Fix
+        $foreignReq.request_sha256 = Get-TelephoneSupervisorRequestHash -Request $foreignReq
+        Write-SupJson -Path (Get-TelephoneSupervisorRecordPath -StateRoot $foreignState -Kind claimed -RunId $foreignId) -Value $foreignReq
+        $env:TELEPHONE_LINE_STATE_ROOT = $foreignLine
+        $foreignValid = Test-TelephoneSupervisorBoundJobValidCompletedDelivery -JobRoot $foreignJob
+        $foreignSettled = Test-TelephoneSupervisorBoundJobsSettled -StateRoot $foreignState -RunId $foreignId
+        $foreignRec = @(Reconcile-TelephoneSupervisorClaimed -StateRoot $foreignState)
+        $foreignOut = Get-TelephoneSupervisorRecordPath -StateRoot $foreignState -Kind outbox -RunId $foreignId
+        $foreignTerm = if ([IO.File]::Exists($foreignOut)) { [string]((Read-TelephoneJson -Path $foreignOut).value.terminal) } else { 'ABSENT' }
+        Assert-Sup (-not $foreignValid) 'Foreign wake-attempt was treated as a valid completed delivery.'
+        Assert-Sup (-not [bool]$foreignSettled.settled) 'Foreign wake-attempt settled.'
+        Assert-Sup ($foreignTerm -cne 'completed') 'Foreign wake-attempt published completed.'
+        $script:f4ForeignWakeNoMember = 1
+
         $okState = Join-Path $f4Fix 'ok-sup'
         $okId = [guid]::NewGuid().ToString()
         $null = Initialize-TelephoneSupervisorLayout -StateRoot $okState
@@ -1035,6 +1151,8 @@ try { `$null = Sync-TelephoneSupervisorMailboxBinding -StateRoot '$syncState' -R
         $script:f4ValidChainQuiescent = 1
     } finally {
         if (-not $f4Live.HasExited) { try { $f4Live.Kill() } catch { } }
+        if ($null -ne $f4Named -and -not $f4Named.HasExited) { try { $f4Named.Kill() } catch { } }
+        if ($null -ne $f4Hint -and -not $f4Hint.HasExited) { try { $f4Hint.Kill() } catch { } }
         $env:TELEPHONE_LINE_STATE_ROOT = $f4PrevLine
     }
 
@@ -1826,6 +1944,9 @@ try { `$null = Sync-TelephoneSupervisorMailboxBinding -StateRoot '$syncState' -R
         supervisor_automatic_relay_restore = $automaticRelayRestore
         supervisor_f4_invalid_chain_no_member = $f4InvalidChainNoMember
         supervisor_f4_valid_chain_live_member = $f4ValidChainLiveMember
+        supervisor_f4_valid_chain_named_job_member = $f4ValidChainNamedJobMember
+        supervisor_f4_pid_only_collector_hint = $f4PidOnlyCollectorHint
+        supervisor_f4_foreign_wake_no_member = $f4ForeignWakeNoMember
         supervisor_f4_valid_chain_quiescent = $f4ValidChainQuiescent
         supervisor_gui_cancel_one = $guiCancelOne
         supervisor_production_idle_activation = $productionChainActivation
@@ -1866,6 +1987,9 @@ try { `$null = Sync-TelephoneSupervisorMailboxBinding -StateRoot '$syncState' -R
         supervisor_automatic_relay_restore = $automaticRelayRestore
         supervisor_f4_invalid_chain_no_member = $f4InvalidChainNoMember
         supervisor_f4_valid_chain_live_member = $f4ValidChainLiveMember
+        supervisor_f4_valid_chain_named_job_member = $f4ValidChainNamedJobMember
+        supervisor_f4_pid_only_collector_hint = $f4PidOnlyCollectorHint
+        supervisor_f4_foreign_wake_no_member = $f4ForeignWakeNoMember
         supervisor_f4_valid_chain_quiescent = $f4ValidChainQuiescent
         supervisor_gui_cancel_one = $guiCancelOne
         supervisor_production_idle_activation = $productionChainActivation
