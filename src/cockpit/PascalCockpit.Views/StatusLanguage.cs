@@ -647,8 +647,15 @@ public static class StatusLanguage
             return "结果已交回，负责人已判退修；后续处理被平台限制中断，退修尚未派出";
         }
 
+        if ((a.LeadHandling ?? "").Equals("repair_prepared", StringComparison.OrdinalIgnoreCase))
+            return "准备退修续接";
+
         if ((a.LeadHandling ?? "").Equals("repair_dispatched", StringComparison.OrdinalIgnoreCase))
-            return "结果已交回；负责人已判退修，原执行者正在按退修继续做";
+        {
+            if (IsActive(a.Execution))
+                return "结果已交回；负责人已判退修，原执行者正在按退修继续做";
+            return "退修已派出，等待本轮结果";
+        }
 
         if ((a.LeadHandling ?? "").Equals("lead_accepting", StringComparison.OrdinalIgnoreCase)
             || (a.Acceptance ?? "").Equals("acceptance_in_progress", StringComparison.OrdinalIgnoreCase))

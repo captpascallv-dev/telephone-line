@@ -231,11 +231,21 @@ public static class DetailsPresentation
             ? "原负责人"
             : inFlight || repairOut ? "原执行者"
             : "当前负责人按最新回执处理";
+        var comparisonOpen = current.Any(w =>
+            (w.Axes.Goal ?? "").Equals("not_complete", StringComparison.OrdinalIgnoreCase));
+        var execs = current.Where(w =>
+            string.Equals(w.ActorKind, "executor", StringComparison.OrdinalIgnoreCase)
+            || (w.Role ?? "").Contains("exec", StringComparison.OrdinalIgnoreCase)).ToList();
+        var allExecAccepted = execs.Count > 0 && execs.All(w =>
+            (w.Axes.Acceptance ?? "").Equals("handled_accepted", StringComparison.OrdinalIgnoreCase)
+            || StatusLanguage.IsExplicitAccepted(w.Axes.Acceptance));
         var howFar = StatusLanguage.ProgressText(project.Progress);
         if (string.IsNullOrWhiteSpace(howFar))
             howFar = blocked
                 ? "结果已经交回，负责人已判退修"
                 : accepting ? "结果已经交回，负责人正在验收"
+                : comparisonOpen && allExecAccepted ? "执行已验收，整体尚未通过"
+                : repairOut && !inFlight ? "退修已派出，等待本轮结果"
                 : inFlight || repairOut ? "本轮还在做，还没交回"
                 : "目前没有更细的进度数字";
         var stuckZh = blocked || lineZh.Contains("平台限制", StringComparison.Ordinal)
@@ -266,6 +276,7 @@ public static class DetailsPresentation
             : accepting || lineZh.Contains("负责人正在验收", StringComparison.Ordinal) ? "原负责人继续验收"
             : lineZh.Contains("继续生成", StringComparison.Ordinal) ? "原执行者继续生成，完成后负责人验收"
             : inFlight || lineZh.Contains("还没交回", StringComparison.Ordinal) ? "原执行者继续做，完成后负责人验收"
+            : repairOut && !inFlight ? "等待本轮结果交回后负责人处理"
             : repairOut ? "原执行者正在按退修继续做"
             : lineZh.Contains("验收发现问题", StringComparison.Ordinal) ? "原执行者退修"
             : lineZh.Contains("待负责人验收", StringComparison.Ordinal) || lineZh.Contains("等待负责人验收", StringComparison.Ordinal) ? "负责人验收"

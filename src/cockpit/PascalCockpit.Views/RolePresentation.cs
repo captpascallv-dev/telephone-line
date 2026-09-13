@@ -57,6 +57,8 @@ public static class RolePresentation
             return "验收后待派出退修";
         if (handling.Equals("repair_dispatched", StringComparison.OrdinalIgnoreCase))
             return "已派出退修";
+        if (handling.Equals("repair_prepared", StringComparison.OrdinalIgnoreCase))
+            return "验收发现问题，等待退修";
         if (handling.Equals("lead_accepting", StringComparison.OrdinalIgnoreCase)
             || acceptance.Equals("acceptance_in_progress", StringComparison.OrdinalIgnoreCase))
             return "正在验收";
@@ -73,6 +75,12 @@ public static class RolePresentation
                             && (o.Axes.LeadHandling.Equals("lead_accepting", StringComparison.OrdinalIgnoreCase)
                                 || o.Axes.Acceptance.Equals("acceptance_in_progress", StringComparison.OrdinalIgnoreCase))))
             return "正在验收";
+        if (others.Any(o => KindOf(o) == "executor"
+                            && o.Axes.LeadHandling.Equals("repair_dispatched", StringComparison.OrdinalIgnoreCase)))
+            return "已派出退修";
+        if (others.Any(o => KindOf(o) == "executor"
+                            && o.Axes.LeadHandling.Equals("repair_prepared", StringComparison.OrdinalIgnoreCase)))
+            return "验收发现问题，等待退修";
         if (others.Any(o => KindOf(o) == "executor"
                             && (o.Axes.Execution.Equals("active", StringComparison.OrdinalIgnoreCase)
                                 || o.Axes.Execution.Equals("running", StringComparison.OrdinalIgnoreCase))))

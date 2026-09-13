@@ -107,18 +107,18 @@
     },
     {
       "path": "docs/adapters/deepsea-codex-cli.md",
-      "bytes": 2820,
-      "sha256": "2da52d308c8e773ab4a708f4ee47e50c86dd9bf9811222dd98841a043eb00074"
+      "bytes": 2875,
+      "sha256": "ffcb3d4c54f5aaa32694c6e667bb7b2031468fb90f8f1b1e55fed00be920a1f3"
     },
     {
       "path": "docs/adapters/deepsea-grok-cli.md",
-      "bytes": 2313,
-      "sha256": "d9aad06ba6298012dec6db01c48fd14836c4d2d606dbac87353b706d4e71f64b"
+      "bytes": 2368,
+      "sha256": "2a7c85b6503902632c5f45b4b10105dbb96d87f9eab3322615167f5e50fbfdec"
     },
     {
       "path": "docs/adapters/deepsea-v4.md",
-      "bytes": 2381,
-      "sha256": "3ca026a80a7797894a17d3fbb39fda0556b42871383b1befe2cd9d908b84431a"
+      "bytes": 2376,
+      "sha256": "4f6d93147e482e9262905c07da44d886207c0ed4a9e6d540b735344bb30a275e"
     },
     {
       "path": "docs/adapters/direct-claude-code.md",
@@ -532,8 +532,8 @@
     },
     {
       "path": "src/adapters/deepsea-common/DeepSea.Common.ps1",
-      "bytes": 52049,
-      "sha256": "519e120bb7e737fabc5eeb592ec7d3c148d7a311e96465656922c4f3a167ff1a"
+      "bytes": 51681,
+      "sha256": "2b497834f3f046176865ad1da8fab84d7ee739cae1abbd20ef9bb639d5681b49"
     },
     {
       "path": "src/adapters/deepsea-common/dsh-plugin/headless-runner.mjs",
@@ -862,8 +862,8 @@
     },
     {
       "path": "src/cockpit/PascalCockpit.Collection/FileCollector.cs",
-      "bytes": 47990,
-      "sha256": "52c986636152b0774f11b8c1c2c464fdeb4b319c314d2ac788b8ac78c5b7f7a5"
+      "bytes": 49538,
+      "sha256": "53cb6210ffffe353f9800f528a0df3259966d66b199b7e36ec94a293853bc6f4"
     },
     {
       "path": "src/cockpit/PascalCockpit.Collection/PascalCockpit.Collection.csproj",
@@ -882,8 +882,8 @@
     },
     {
       "path": "src/cockpit/PascalCockpit.Normalization/DocumentNormalizers.cs",
-      "bytes": 71574,
-      "sha256": "4469f35a781b92b1802b8977b2b4798694f5cea75b16eb5d2b62cf103319caec"
+      "bytes": 77261,
+      "sha256": "755f1f798f812ef1d88c09de5222fc9648125fbe5aafe94543ca6713bdb0424e"
     },
     {
       "path": "src/cockpit/PascalCockpit.Normalization/EvidenceNormalizer.cs",
@@ -892,8 +892,8 @@
     },
     {
       "path": "src/cockpit/PascalCockpit.Normalization/HandlingLogic.cs",
-      "bytes": 31980,
-      "sha256": "ee062e5c24036ff5bd4200d5a20c2dff1ccb7127599894a5fa5ea29e045879c8"
+      "bytes": 33147,
+      "sha256": "78fae58a3b19d834b3234c2b81e47d02fb5be2f2c6e876fb5beac8ad2320346c"
     },
     {
       "path": "src/cockpit/PascalCockpit.Normalization/JsonField.cs",
@@ -927,13 +927,13 @@
     },
     {
       "path": "src/cockpit/PascalCockpit.Projection/StateProjector.cs",
-      "bytes": 74668,
-      "sha256": "255b294c166150c68432185d25e0e9dff5dd3bef52f1d4d33e25f8ddc3c21e7d"
+      "bytes": 74888,
+      "sha256": "28ba4d5b0eb80d9e3cc7018a38b2eb883329cb539333946339d798a8bed11efd"
     },
     {
       "path": "src/cockpit/PascalCockpit.Views/ConsumerCopy.cs",
-      "bytes": 28421,
-      "sha256": "1309d4605e3cf0ff9bde05f4cea2d243c290bf997fb90ed16e84cc8f7905a3e3"
+      "bytes": 28822,
+      "sha256": "a6936f1caa2ea3c8c3abe5fd388056c02db038b727926b599b03c9f65170da9c"
     },
     {
       "path": "src/cockpit/PascalCockpit.Views/CurrentList.cs",
@@ -942,8 +942,8 @@
     },
     {
       "path": "src/cockpit/PascalCockpit.Views/DetailsPresentation.cs",
-      "bytes": 15597,
-      "sha256": "275bc35718a4964a8efa58a463d9e24b16cdef93043072cf0a08ab09e78a4aee"
+      "bytes": 16450,
+      "sha256": "42a6481a9bfd2789490835c5e3d021d159b9765e8e5e62846face0b1f3730bd0"
     },
     {
       "path": "src/cockpit/PascalCockpit.Views/DetailsView.xaml",
@@ -982,13 +982,13 @@
     },
     {
       "path": "src/cockpit/PascalCockpit.Views/RolePresentation.cs",
-      "bytes": 10480,
-      "sha256": "2e44d76ab8db162bd567504a07bfcea4270abd6539b3b3402dbc56e7b113e6b9"
+      "bytes": 11050,
+      "sha256": "51c04ad69323a54e1624b2d6bc1674e880c27f21f11da7def80202f09ca31b7e"
     },
     {
       "path": "src/cockpit/PascalCockpit.Views/StatusLanguage.cs",
-      "bytes": 54324,
-      "sha256": "9a3ff440cfe46b2be11ac0ea70ca6847b70c3c951eea03adeca953247009f3f5"
+      "bytes": 54586,
+      "sha256": "786d0aee54214a57a5aa741372fa31060b703e20b9eae78f9805c2477253c5c1"
     },
     {
       "path": "src/cockpit/README.md",
@@ -1083,12 +1083,12 @@
     {
       "path": "src/cockpit/runtime/win-x64/PascalCockpit.App.dll",
       "bytes": 55808,
-      "sha256": "cfdf1102ab27fc03bb46ec9fc4be1268333965b527cb243928378828957c3a90"
+      "sha256": "4063d535a7bfca85c8c0d1d1a069666482e3b40b4e6c6ee624f88644c11d9ed2"
     },
     {
       "path": "src/cockpit/runtime/win-x64/PascalCockpit.App.exe",
       "bytes": 152064,
-      "sha256": "a8b530f0a58b9eacf616de85c14bd96b63cce1c62d96368b2e3d45e4ae9a0e7a"
+      "sha256": "b7b76f85b2de0e9c0c31c84c36cc8a320f883223e3fb23b3bb658490599ea2db"
     },
     {
       "path": "src/cockpit/runtime/win-x64/PascalCockpit.App.runtimeconfig.json",
@@ -1097,28 +1097,28 @@
     },
     {
       "path": "src/cockpit/runtime/win-x64/PascalCockpit.Collection.dll",
-      "bytes": 45568,
-      "sha256": "812af54c5c4cef362d462932e56559ff497b7019d589604cd92de70c161fbc09"
+      "bytes": 47104,
+      "sha256": "e22f745c88d1a3ff50b199341498488d3b64485e4291e148002411e82068939b"
     },
     {
       "path": "src/cockpit/runtime/win-x64/PascalCockpit.Contracts.dll",
       "bytes": 49152,
-      "sha256": "44ce9299c061ec1e96a02e5a39f0a05f83b2d8affe883dc227f231a253407de8"
+      "sha256": "668ab50a76d2ef2d8ce84b717922a09c52ae6e88f554ef42893be7572ada255c"
     },
     {
       "path": "src/cockpit/runtime/win-x64/PascalCockpit.Normalization.dll",
-      "bytes": 80384,
-      "sha256": "4e9258bea0a711236988264d4c647b37c36aff0a36b931b775c9253007469882"
+      "bytes": 82944,
+      "sha256": "71a8dd164840751548538b0da7580e48bd7fd846f9cf651d2f54c9dd16035158"
     },
     {
       "path": "src/cockpit/runtime/win-x64/PascalCockpit.Projection.dll",
       "bytes": 47104,
-      "sha256": "4dcf9b5f819fe8e9d04db7e0c6ed018d0e34a042b564aa9e23d09e9bc8df7247"
+      "sha256": "e020fb8b27e4b639e4bc2848a3ef28c51f8deb6c231f5d77cfd415d315f97878"
     },
     {
       "path": "src/cockpit/runtime/win-x64/PascalCockpit.Views.dll",
-      "bytes": 148992,
-      "sha256": "be5e3af4656e1495ba4c8e3a9644b2ceec7327f38878f86fecf566d269b2c127"
+      "bytes": 150528,
+      "sha256": "c6fe572fc7cb5888dd4d1ccdf0a9143090019844d911fae6da75a7903cbef93d"
     },
     {
       "path": "src/cockpit/runtime/win-x64/PenImc_cor3.dll",
@@ -2532,8 +2532,8 @@
     },
     {
       "path": "tests/adapters/deepsea-common/test_deepsea_diagnostic.ps1",
-      "bytes": 4639,
-      "sha256": "e75593333292e5983dc050ba00caae23eec1f85e79da8ce06d5ea5fb563befea"
+      "bytes": 5372,
+      "sha256": "4f62f86c1f9548f13fdd346e61987e6c76fc2fb65fc84c67cf41a1fef1716953"
     },
     {
       "path": "tests/adapters/deepsea-common/test_subscription_store.mjs",
@@ -3128,7 +3128,7 @@
   ],
   "counts": {
     "files": 619,
-    "bytes": 157471594
+    "bytes": 157488404
   },
   "excluded": [
     ".control/**",

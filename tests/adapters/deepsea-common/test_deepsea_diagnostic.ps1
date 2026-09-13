@@ -22,6 +22,8 @@ try {
     $privatePrompt = "Please explain this error in my private order $nonce"
     $privateResponse = "dsh: confidential answer $nonce"
     $privateAuth = "Authorization: service-key-$nonce"
+    $privateService = "waiting for service: private_$nonce"
+    $privateAdapter = "ADAPTER_PRIVATE_$nonce"
     $workspace = Join-Path $testRoot 'workspace'
     $stateRoot = Join-Path $testRoot 'state'
     $promptPath = Join-Path $testRoot 'prompt.txt'
@@ -36,6 +38,8 @@ Set-StrictMode -Version Latest
 [Console]::Error.WriteLine('waiting for service: web')
 [Console]::Out.WriteLine('$privatePrompt')
 [Console]::Out.WriteLine('$privateResponse')
+[Console]::Out.WriteLine('Private model answer: $privateService')
+[Console]::Out.WriteLine('Private prompt includes $privateAdapter')
 exit 1
 "@, [Text.UTF8Encoding]::new($false))
     $invoke = Join-Path $repoRoot 'src\adapters\deepsea-v4\Invoke-DeepSeaV4Headless.ps1'
@@ -56,6 +60,9 @@ exit 1
     Assert-AdapterTest ($excerpt -notmatch [regex]::Escape($privatePrompt)) 'Failure receipt diagnostic leaked the private prompt.'
     Assert-AdapterTest ($excerpt -notmatch [regex]::Escape($privateResponse)) 'Failure receipt diagnostic leaked the model response.'
     Assert-AdapterTest ($excerpt -notmatch [regex]::Escape($privateAuth) -and $excerpt -notmatch 'service-key-') 'Failure receipt diagnostic leaked the credential.'
+    Assert-AdapterTest ($excerpt -notmatch [regex]::Escape($privateService) -and $excerpt -notmatch 'private_') 'Failure receipt diagnostic copied an unknown service token.'
+    Assert-AdapterTest ($excerpt -notmatch [regex]::Escape($privateAdapter) -and $excerpt -notmatch 'ADAPTER_PRIVATE_') 'Failure receipt diagnostic copied an unknown adapter token.'
+    Assert-AdapterTest ($excerpt -ceq 'waiting for service: web') "Failure receipt diagnostic was not the known web category: $excerpt"
     Assert-AdapterTest ([string]$receipt.diagnostic_sha256 -cmatch '^[0-9a-f]{64}$') 'Failure receipt omitted a stream digest.'
     $jobDir = Join-Path $stateRoot ("jobs\$jobId")
     $stdoutFiles = @(Get-ChildItem -LiteralPath $jobDir -File | Where-Object { $_.Name -match 'stdout|stderr|stream' })

@@ -161,7 +161,7 @@ public sealed class StateProjector : IProjector
             {
                 var waiting = IsWaitingRegistryStatus(registryStatus);
                 var terminal = IsTerminalRegistryStatus(registryStatus);
-                if (terminal && !paused && !waiting)
+                if (terminal && !paused && !waiting && !hasCurrentSignal)
                     continue;
                 if (!registryActive && !paused && !waiting && !hasCurrentSignal)
                     continue;
@@ -1039,6 +1039,8 @@ public sealed class StateProjector : IProjector
         var authorized = currentWorks.Where(w =>
             string.Equals(Val(w, "authorized_current"), "true", StringComparison.OrdinalIgnoreCase)).ToList();
         var acceptedSources = authorized.Count > 0 ? authorized : currentWorks;
+        var comparisonOpen = currentWorks.Any(w =>
+            string.Equals(Val(w, "comparison_product_pass"), "false", StringComparison.OrdinalIgnoreCase));
         var currentInFlight = acceptedSources.Any(w =>
         {
             var exec = Val(w, "execution_state") ?? string.Empty;
@@ -1061,7 +1063,7 @@ public sealed class StateProjector : IProjector
         foreach (var w in acceptedSources)
         {
             var acc = Val(w, "acceptance_state");
-            if (currentInFlight && IsFoldedAccepted(acc))
+            if ((currentInFlight || comparisonOpen) && IsFoldedAccepted(acc))
                 continue;
             if (IsMissing(ValFrom(folded, "lead_handling_state")) && !IsMissing(Val(w, "lead_handling_state")))
                 folded["lead_handling_state"] = Val(w, "lead_handling_state");
@@ -1083,7 +1085,7 @@ public sealed class StateProjector : IProjector
                 continue;
             if (!acceptedSources.Any(w => MatchesWorkId(w, cLine, cDirect)))
                 continue;
-            if (currentInFlight && IsFoldedAccepted(Val(c, "acceptance_state")))
+            if ((currentInFlight || comparisonOpen) && IsFoldedAccepted(Val(c, "acceptance_state")))
                 continue;
             if (IsMissing(ValFrom(folded, "acceptance_state")) && !IsMissing(Val(c, "acceptance_state")))
                 folded["acceptance_state"] = Val(c, "acceptance_state");

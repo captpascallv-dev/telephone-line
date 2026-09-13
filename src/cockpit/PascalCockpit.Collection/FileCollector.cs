@@ -165,7 +165,9 @@ public sealed class FileCollector : ICollector
                     && LooksLikeJsonMetadata(path))
                 {
                     var pointerScope = scope;
-                    if (string.Equals(scope, "current", StringComparison.OrdinalIgnoreCase)
+                    if (string.Equals(kv.Key, "dashboard_active_work_path", StringComparison.OrdinalIgnoreCase))
+                        pointerScope = "current";
+                    else if (string.Equals(scope, "current", StringComparison.OrdinalIgnoreCase)
                         && JobRootLagsCurrentId(kv.Key, path, currentLineId, currentDirectId))
                     {
                         pointerScope = "historical";
@@ -396,23 +398,52 @@ public sealed class FileCollector : ICollector
             return;
         }
 
-        foreach (var kv in document.Data)
+        await FollowPointerMapAsync(document.Data, document, documents, issues, seen, budget, observedAt, cancellationToken).ConfigureAwait(false);
+        if (document.Kind == KindActiveWork && document.Data["lanes"] is JsonObject lanes)
         {
-            if (!IsAuthorizedMetadataPointerKey(kv.Key))
-                continue;
-            if (kv.Value is JsonValue v && v.TryGetValue<string>(out var path) && LooksLikePath(path) && LooksLikeJsonMetadata(path))
+            foreach (var lane in lanes)
             {
-                var nestedScope = LooksHistoricalPointerKey(kv.Key)
-                    || (document.Kind == KindActiveWork && IsStalePackageAcceptancePointer(document, kv.Key, path))
-                    ? "historical"
-                    : "current";
-                await CollectExplicitAsync(path, document.ProjectHint, kv.Key, documents, issues, seen, budget, observedAt, cancellationToken, scope: nestedScope).ConfigureAwait(false);
+                if (lane.Value is JsonObject laneObj)
+                    await FollowPointerMapAsync(laneObj, document, documents, issues, seen, budget, observedAt, cancellationToken, "lane:" + lane.Key).ConfigureAwait(false);
             }
         }
 
         if (document.Kind == KindActiveWork)
         {
             await FollowAuthorizedJobRootsAsync(document, documents, issues, seen, budget, observedAt, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task FollowPointerMapAsync(
+        JsonObject data,
+        RawDocument document,
+        List<RawDocument> documents,
+        List<SourceIssue> issues,
+        HashSet<string> seen,
+        FileBudget budget,
+        DateTimeOffset observedAt,
+        CancellationToken cancellationToken,
+        string? contextPrefix = null)
+    {
+        foreach (var kv in data)
+        {
+            if (!IsAuthorizedMetadataPointerKey(kv.Key))
+                continue;
+            string? path = null;
+            if (kv.Value is JsonValue v && v.TryGetValue<string>(out var s))
+                path = s;
+            else if (kv.Value is JsonObject obj && obj["path"] is JsonValue pv && pv.TryGetValue<string>(out var nested))
+                path = nested;
+            if (string.IsNullOrWhiteSpace(path) || !LooksLikePath(path) || !LooksLikeJsonMetadata(path))
+                continue;
+            var nestedScope = LooksHistoricalPointerKey(kv.Key)
+                || (document.Kind == KindActiveWork
+                    && string.IsNullOrWhiteSpace(contextPrefix)
+                    && IsStalePackageAcceptancePointer(document, kv.Key, path))
+                ? "historical"
+                : "current";
+            var context = string.IsNullOrWhiteSpace(contextPrefix) ? kv.Key : contextPrefix + ":" + kv.Key;
+            await CollectExplicitAsync(path, document.ProjectHint, context, documents, issues, seen, budget, observedAt, cancellationToken, scope: nestedScope).ConfigureAwait(false);
         }
     }
 
@@ -1019,7 +1050,7 @@ public sealed class FileCollector : ICollector
             or "actual_dispatch_receipt" or "native_identity_source" or "last_transport_receipt"
             or "last_direct_receipt" or "prepared_next_config" or "current_result"
             or "current_config" or "expected_result" or "lead_run_root" or "current_run_root"
-            or "job_root")
+            or "job_root" or "start_receipt_path" or "start_receipt")
         {
             return true;
         }

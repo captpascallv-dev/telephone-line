@@ -144,12 +144,138 @@ internal static class DocumentNormalizers
             HandlingLogic.ApplySwitchToValues(values, links, doc.Data);
         }
 
+        var lanes = JsonField.Obj(doc.Data, "lanes");
+        if (lanes is not null)
+        {
+            var emitted = 0;
+            foreach (var kv in lanes)
+            {
+                if (kv.Value is not JsonObject lane) continue;
+                EmitActiveLaneWork(doc, projectId, kv.Key, lane, productPass, facts, routesSeenLive, routesSeenProtocol);
+                emitted++;
+            }
+
+            if (emitted > 0)
+            {
+                HandlingLogic.EmitHistoricalFromSwitchFields(doc, projectId, facts);
+                return;
+            }
+        }
+
         ApplyCurrentHandler(values, doc.Data, state, humanNext);
         StampExecutorIdentity(values, doc.Data);
         StampNestedRoundVerdicts(values, doc.Data);
 
         facts.Add(new SourceFact("work", entityId, projectId, links, values, new[] { NormUtil.Evidence(doc) }));
         HandlingLogic.EmitHistoricalFromSwitchFields(doc, projectId, facts);
+    }
+
+    /// <summary>
+    /// Current ACTIVE_WORK.lanes are distinct executors. Do not emit a third
+    /// generic top-level execution row, and do not copy comparison product_pass
+    /// onto a lane as if the whole project were accepted.
+    /// </summary>
+    private static void EmitActiveLaneWork(
+        RawDocument doc,
+        string? projectId,
+        string laneKey,
+        JsonObject lane,
+        bool? comparisonProductPass,
+        List<SourceFact> facts,
+        HashSet<string> routesSeenLive,
+        HashSet<string> routesSeenProtocol)
+    {
+        var lineId = JsonField.Str(lane, "line_job_id");
+        var directId = JsonField.Str(lane, "job_id", "direct_job_id");
+        var route = JsonField.Str(lane, "route");
+        NormUtil.NoteRoute(route, routesSeenLive, routesSeenProtocol);
+        var state = JsonField.Str(lane, "state", "status");
+        var entityId = !string.IsNullOrWhiteSpace(lineId) ? "work:line:" + lineId
+            : !string.IsNullOrWhiteSpace(directId) ? "work:direct:" + directId
+            : "work:lane:" + laneKey + ":" + doc.Id;
+
+        var links = new Dictionary<string, string>(StringComparer.Ordinal);
+        NormUtil.PutLink(links, "line_job_id", lineId);
+        NormUtil.PutLink(links, "direct_job_id", directId);
+        NormUtil.PutLink(links, "native_session_id", JsonField.Str(lane, "native_session_id", "executor_native_session_id"));
+        NormUtil.PutLink(links, "lead_session_id", JsonField.Str(JsonField.Obj(doc.Data, "lead"), "session_id", "lead_session_id"));
+        NormUtil.PutLink(links, "source_object_id", doc.Id);
+
+        var values = new JsonObject
+        {
+            ["role"] = JsonField.Str(lane, "role") ?? "execution",
+            ["route"] = JsonField.AxisOrUnknown(route),
+            ["stage"] = "unknown",
+            ["summary"] = "unknown",
+            ["process_state"] = "unknown",
+            ["turn_state"] = "unknown",
+            ["execution_state"] = "unknown",
+            ["transport_state"] = "unknown",
+            ["delivery_state"] = "unknown",
+            ["callback_state"] = "unknown",
+            ["lead_handling_state"] = "unknown",
+            ["acceptance_state"] = "unknown",
+            ["adoption_state"] = "unknown",
+            ["goal_state"] = comparisonProductPass == true ? "complete" : comparisonProductPass == false ? "not_complete" : "unknown",
+            ["package_id"] = "unknown",
+            ["next_step"] = "unknown",
+            ["lane_key"] = laneKey
+        };
+        if (comparisonProductPass == false)
+            values["comparison_product_pass"] = "false";
+        else if (comparisonProductPass == true)
+            values["comparison_product_pass"] = "true";
+
+        StampCollectedScope(doc, values);
+        ApplyLaneState(values, state);
+        StampExecutorIdentity(values, lane);
+        if (IsMissingIdentity(values["actor_name"]?.GetValue<string>()) && !string.IsNullOrWhiteSpace(route))
+            values["actor_name"] = route;
+        facts.Add(new SourceFact("work", entityId, projectId, links, values, new[] { NormUtil.Evidence(doc) }));
+    }
+
+    private static bool IsMissingIdentity(string? value) =>
+        string.IsNullOrWhiteSpace(value) || value.Equals("unknown", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Lane state tokens are Lead declarations, not proof that a model is running.
+    /// Prepared is not dispatched; dispatched-pending is not native execution.
+    /// </summary>
+    private static void ApplyLaneState(JsonObject values, string? state)
+    {
+        var s = state ?? string.Empty;
+        if (s.Contains("PREPARED", StringComparison.OrdinalIgnoreCase)
+            && !s.Contains("DISPATCH", StringComparison.OrdinalIgnoreCase))
+        {
+            values["lead_handling_state"] = "repair_prepared";
+            values["acceptance_state"] = "handled_fail_repair";
+            values["execution_state"] = "returned";
+            return;
+        }
+
+        if (s.Contains("DISPATCH", StringComparison.OrdinalIgnoreCase)
+            && (s.Contains("PENDING", StringComparison.OrdinalIgnoreCase)
+                || s.Contains("NATIVE_RESULT", StringComparison.OrdinalIgnoreCase)
+                || s.Contains("WAITING", StringComparison.OrdinalIgnoreCase)))
+        {
+            values["lead_handling_state"] = "repair_dispatched";
+            values["acceptance_state"] = "handled_fail_repair";
+            values["execution_state"] = "unknown";
+            return;
+        }
+
+        if (s.Contains("ACCEPTANCE_PASS", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("BOUNDED_WINDOWS_ACCEPTANCE_PASS", StringComparison.OrdinalIgnoreCase)
+            || (s.Contains("ACCEPTED", StringComparison.OrdinalIgnoreCase)
+                && s.Contains("PASS", StringComparison.OrdinalIgnoreCase)))
+        {
+            values["acceptance_state"] = "handled_accepted";
+            values["lead_handling_state"] = "lead_handled";
+            values["execution_state"] = "succeeded";
+            return;
+        }
+
+        values["execution_state"] = NormUtil.InferExecutionFromActive(state);
     }
 
     /// <summary>

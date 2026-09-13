@@ -75,13 +75,8 @@ function New-DeepSeaSafeDiagnostic {
     $raw = (([string]$Stderr) + "`n" + ([string]$Stdout))
     $sha = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.UTF8Encoding]::new($false).GetBytes($raw))).ToLowerInvariant()
     $kept = [Collections.Generic.List[string]]::new()
-    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-    foreach ($match in [regex]::Matches($raw, '(?i)waiting for service:\s*([A-Za-z0-9._-]+)')) {
-        $token = 'waiting for service: ' + [string]$match.Groups[1].Value
-        if ($seen.Add($token)) { [void]$kept.Add($token) }
-    }
-    foreach ($match in [regex]::Matches($raw, '\bADAPTER_[A-Z0-9_]+\b')) {
-        if ($seen.Add([string]$match.Value)) { [void]$kept.Add([string]$match.Value) }
+    if ([regex]::IsMatch($raw, '(?i)waiting for service:\s*web\b')) {
+        [void]$kept.Add('waiting for service: web')
     }
     $excerpt = ($kept -join ' | ')
     if ([string]::IsNullOrWhiteSpace($excerpt)) {
