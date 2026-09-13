@@ -13,6 +13,9 @@ param(
     [ValidateRange(65536, 67108864)][int]$MaxOutputBytes = 16777216,
     [string]$NodePath = '',
     [string]$PiCliPath = '',
+    [ValidatePattern('^[A-Za-z0-9._:/-]+$')][string]$Provider = 'xai',
+    [ValidatePattern('^[A-Za-z0-9._:/-]+$')][string]$Model = 'grok-4.6',
+    [ValidatePattern('^[A-Za-z0-9._:/-]+$')][string]$ThinkingLevel = 'xhigh',
     [string]$MockCliPath = ''
 )
 
@@ -110,6 +113,7 @@ function New-DirectPiReceipt {
         if ([string]$piResult.session_id -cne [string]$request.session_id -or [bool]$piResult.resumed -ne [bool]$request.resume) {
             throw 'Direct PI terminal session differs.'
         }
+        Assert-DirectPiModelBinding -Value $piResult -Provider ([string]$request.provider) -Model ([string]$request.model) -Thinking ([string]$request.thinking) -Label 'Direct PI terminal model identity'
         if ([int]$piResult.execution_count -ne 1) { throw 'Direct PI terminal execution count differs.' }
         if ([bool]$piResult.success) {
             if ([string]::IsNullOrWhiteSpace([string]$piResult.session_path)) { throw 'Direct PI successful terminal has no exact session path.' }
@@ -194,6 +198,7 @@ function Write-DirectPiAdapterResult {
 $adapterRoot = Get-DirectPiCanonicalDirectory -Path $PSScriptRoot
 $state = Get-DirectPiCanonicalDirectory -Path $StateRoot
 [IO.Directory]::CreateDirectory($state) | Out-Null
+Assert-DirectPiModelValues -Provider $Provider -Model $Model -Thinking $ThinkingLevel
 $sessionDir = Get-DirectPiCanonicalDirectory -Path (Join-Path $state 'sessions')
 [IO.Directory]::CreateDirectory($sessionDir) | Out-Null
 
@@ -222,6 +227,7 @@ $job = if ([string]::IsNullOrWhiteSpace($JobId)) { [Guid]::NewGuid().ToString('D
 $paths = Get-DirectPiJobPaths -Root $state -Id $job
 if ([IO.Directory]::Exists($paths.root)) {
     $existing = Read-DirectPiJson -Path $paths.request
+    Assert-DirectPiModelBinding -Value $existing.value -Provider $Provider -Model $Model -Thinking $ThinkingLevel -Label 'Duplicate Direct PI job model identity'
     if ($Operation -eq 'follow_up' -and [string]$existing.value.session_id -cne $NativeSessionId) { throw 'Adapter native session id does not match the frozen session.' }
     $waited = Wait-DirectPiJob -Paths $paths -TimeoutSeconds $WaitTimeoutSeconds -AllowStart $false
     Write-DirectPiAdapterResult -Op $Operation -SessionId ([string]$existing.value.session_id) -Terminal $waited
@@ -240,6 +246,12 @@ if ($Operation -eq 'follow_up') {
     if (-not [IO.File]::Exists($bindingPaths.binding)) { throw 'Adapter native session id is missing or unknown.' }
     $binding = (Read-DirectPiJson -Path $bindingPaths.binding).value
     if ([string]$binding.native_session_id -cne $NativeSessionId) { throw 'Adapter native session id does not match the frozen session.' }
+    $boundJobId = [string]$binding.latest_job_id
+    if ($boundJobId -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') { throw 'Direct PI follow-up binding job is malformed.' }
+    $boundPaths = Get-DirectPiJobPaths -Root $state -Id $boundJobId
+    if (-not [IO.File]::Exists($boundPaths.request)) { throw 'Direct PI follow-up model binding request is missing.' }
+    $boundRequest = (Read-DirectPiJson -Path $boundPaths.request).value
+    Assert-DirectPiModelBinding -Value $boundRequest -Provider $Provider -Model $Model -Thinking $ThinkingLevel -Label 'Direct PI follow-up model binding'
     $sessionPath = if (-not [string]::IsNullOrWhiteSpace($ResumeSessionPath)) { [IO.Path]::GetFullPath($ResumeSessionPath) } else { [string]$binding.session_path }
     if ([string]::IsNullOrWhiteSpace($sessionPath)) { throw 'Direct PI follow-up requires the exact session file path.' }
 }
@@ -256,9 +268,9 @@ $request = [ordered]@{
     job_id = $job
     workspace = $workspace
     prompt = $sourcePrompt
-    provider = 'xai'
-    model = 'grok-4.6'
-    thinking = 'xhigh'
+    provider = $Provider
+    model = $Model
+    thinking = $ThinkingLevel
     session_id = $sessionId
     session_path = $sessionPath
     resume = ($Operation -eq 'follow_up')

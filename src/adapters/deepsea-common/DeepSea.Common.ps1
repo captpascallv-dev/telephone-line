@@ -55,12 +55,48 @@ function ConvertTo-DeepSeaPublicFailure {
         elseif ($text -cmatch '(?i)incomplete durable') { $code = 'ADAPTER_DUPLICATE_INCOMPLETE' }
         elseif ($text -cmatch '(?i)durable state was not found') { $code = 'ADAPTER_DURABLE_STATE_MISSING' }
         elseif ($text -cmatch '(?i)workspace and prompt') { $code = 'ADAPTER_PROMPT_REQUIRED' }
-        elseif ($text -cmatch '(?i)Headless command') { $code = 'ADAPTER_HEADLESS_INVOCATION_FAILED' }
+        elseif ($text -cmatch '(?i)Headless command|waiting for service') { $code = 'ADAPTER_HEADLESS_INVOCATION_FAILED' }
         else { $code = 'ADAPTER_TRANSPORT_FAILED' }
     }
     return [ordered]@{
         error_code = $code
         error_message = Get-DeepSeaPublicErrorMessage -ErrorCode $code
+    }
+}
+
+function New-DeepSeaSafeDiagnostic {
+    [CmdletBinding()]
+    param(
+        [AllowNull()][string]$Stdout,
+        [AllowNull()][string]$Stderr,
+        [AllowNull()][int]$ExitCode
+    )
+
+    $raw = (([string]$Stderr) + "`n" + ([string]$Stdout))
+    $sha = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.UTF8Encoding]::new($false).GetBytes($raw))).ToLowerInvariant()
+    $redacted = $raw
+    $redacted = [regex]::Replace($redacted, '(?i)\bsk-[A-Za-z0-9_-]{8,}', '[REDACTED_KEY]')
+    $redacted = [regex]::Replace($redacted, '(?i)Bearer\s+[^\s''"]+', 'Bearer [REDACTED]')
+    $redacted = [regex]::Replace($redacted, '(?i)(api[_-]?key|xai-|secret|token)[=:]\s*[^\s''"]+', '$1=[REDACTED]')
+    $kept = [Collections.Generic.List[string]]::new()
+    foreach ($line in ($redacted -split '\r?\n')) {
+        $t = $line.Trim()
+        if ([string]::IsNullOrWhiteSpace($t)) { continue }
+        if ($t.Length -gt 240) { continue }
+        if ($t -cmatch '(?i)CANARY_(PROMPT|RESPONSE|SECRET)') { continue }
+        if ($t -cmatch '(?i)error|failed|waiting for service|ADAPTER_|dsh:|exception|denied|EACCES|ENOENT|not complete') {
+            [void]$kept.Add($t)
+        }
+        if ($kept.Count -ge 8) { break }
+    }
+    $excerpt = ($kept -join ' | ')
+    if ([string]::IsNullOrWhiteSpace($excerpt) -and $ExitCode -ne 0 -and $null -ne $ExitCode) {
+        $excerpt = "headless exit $ExitCode"
+    }
+    if ($excerpt.Length -gt 800) { $excerpt = $excerpt.Substring(0, 800) }
+    return [ordered]@{
+        excerpt = $excerpt
+        sha256 = $sha
     }
 }
 
@@ -376,6 +412,9 @@ function New-DeepSeaContainedProfile {
         '  disabled: true',
         '',
         '- id: web-search-deepseek',
+        '  disabled: true',
+        '',
+        '- id: web-fetch-http',
         '  disabled: true',
         '',
         '- id: tool-web',
@@ -894,11 +933,13 @@ function Invoke-DeepSeaPublicAdapter {
     $profile = $null
     $headlessResult = $null
     $failure = $null
+    $diag = $null
     try {
         $profile = New-DeepSeaContainedProfile -HomeRoot $paths.dsh_home -Provider ([string]$config.provider) -Model ([string]$config.model) -ReasoningEffort ([string]$config.reasoning_effort) -IncludeSubscriptionOauth $includeSubscription
         $target = Resolve-DeepSeaHeadlessTarget -DshCommand $DshCommand -MockHeadlessPath $MockHeadlessPath
         $resume = if ($Operation -eq 'follow_up') { $NativeSessionId } else { '' }
         $run = Invoke-DeepSeaOwnedHarness -Target $target -HomeRoot ([string]$profile.home) -Workspace $workspace -Task $promptText -ResumeSessionId $resume -SessionOutPath $paths.session_out -CommunityCredentialKey $CommunityCredentialKey
+        $diag = New-DeepSeaSafeDiagnostic -Stdout ([string]$run.stdout) -Stderr ([string]$run.stderr) -ExitCode ([int]$run.exit_code)
         if ([int]$run.exit_code -ne 0) { throw (Get-DeepSeaPublicErrorMessage -ErrorCode 'ADAPTER_HEADLESS_INVOCATION_FAILED') }
         if (-not [IO.File]::Exists($paths.session_out)) { throw (Get-DeepSeaPublicErrorMessage -ErrorCode 'ADAPTER_HEADLESS_RESULT_INVALID') }
         $expectedNative = if ($Operation -eq 'follow_up') { $NativeSessionId } else { '' }
@@ -912,6 +953,10 @@ function Invoke-DeepSeaPublicAdapter {
         }
     } catch {
         $failure = ConvertTo-DeepSeaPublicFailure -Message $_.Exception.Message
+        if ($null -ne $diag) {
+            $failure.diagnostic_excerpt = [string]$diag.excerpt
+            $failure.diagnostic_sha256 = [string]$diag.sha256
+        }
     }
 
     if ($null -ne $failure) {
@@ -930,6 +975,8 @@ function Invoke-DeepSeaPublicAdapter {
             exact_native_session = $exactNative
             error_code = [string]$failure.error_code
             error_message = [string]$failure.error_message
+            diagnostic_excerpt = if ($failure.Contains('diagnostic_excerpt')) { [string]$failure.diagnostic_excerpt } else { '' }
+            diagnostic_sha256 = if ($failure.Contains('diagnostic_sha256')) { [string]$failure.diagnostic_sha256 } else { '' }
             completed_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
         })
         Write-DeepSeaAdapterResult -RouteId $routeId -Operation $Operation -NativeSessionId $(if ($Operation -eq 'start') { '' } else { $NativeSessionId }) -JobId $job -Complete $false -ExactNativeSession $exactNative -ReceiptIdentity $receiptIdentity -ResultIdentity $null -Extra $extra

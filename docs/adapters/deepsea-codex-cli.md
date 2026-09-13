@@ -11,3 +11,5 @@ A replaceable Cordis plugin registers that provider as a DSH `LlmAdapter` and re
 When a community plugin exposes multiple Codex account slots, pass the non-secret `-CommunityCredentialKey` (for example, the exact selected community store key). The adapter binds that key into the contained DSH child through `TELEPHONE_LINE_DSH_CODEX_COMMUNITY_KEY`, reads and refreshes the existing store in place, and never copies credential values into Telephone state. The generic single-account key remains `codex` when no explicit key is supplied.
 
 `start` is supported. A correction is a new self-contained start card in a fresh DSH session. `follow_up` is not advertised until exact native resume is separately proved. `recover` returns already durable transport state and never contacts the provider. `exact_native_session` is `false`. Duplicate or incomplete start never reruns. Prompt identity in durable state is bytes and SHA-256. There is no absolute whole-task timeout.
+
+Shared Headless uses `Session.eventAt(SessionSeq(seq))`. The contained profile disables `web-fetch-http` whenever `web` is disabled. Failures keep a bounded redacted diagnostic on the receipt.

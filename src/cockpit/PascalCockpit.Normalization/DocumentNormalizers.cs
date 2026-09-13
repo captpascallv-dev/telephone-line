@@ -154,30 +154,106 @@ internal static class DocumentNormalizers
 
     /// <summary>
     /// Nested package objects on ACTIVE_WORK carry verdict/integrated only.
-    /// Used to keep the then-repair conclusion on a replaced binding.
+    /// Job/package tokens are recorded so later history stamping can associate
+    /// the then-repair conclusion with the matching work, not every stale job.
     /// </summary>
     private static void StampNestedRoundVerdicts(JsonObject values, JsonObject data)
     {
-        var sawFail = false;
-        var sawPassIntegrated = false;
+        var failJobs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var failPackages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var consumedJobs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var consumedPackages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var kv in data)
         {
             if (kv.Value is not JsonObject nested) continue;
             var verdict = JsonField.Str(nested, "verdict", "result");
             var integrated = JsonField.Bool(nested, "integrated");
             if (string.IsNullOrWhiteSpace(verdict)) continue;
+            var jobs = NestedJobIds(nested);
+            var packages = NestedPackageTokens(kv.Key, nested);
             if (verdict.Contains("FAIL", StringComparison.OrdinalIgnoreCase) && integrated != true)
-                sawFail = true;
+            {
+                foreach (var id in jobs) failJobs.Add(id);
+                foreach (var p in packages) failPackages.Add(p);
+            }
+
             if ((verdict.Contains("PASS", StringComparison.OrdinalIgnoreCase)
                  || verdict.Equals("accepted", StringComparison.OrdinalIgnoreCase))
                 && integrated == true)
             {
-                sawPassIntegrated = true;
+                foreach (var id in jobs) consumedJobs.Add(id);
+                foreach (var p in packages) consumedPackages.Add(p);
             }
         }
 
-        if (sawFail) values["prior_fail_repair"] = "true";
-        if (sawFail && sawPassIntegrated) values["prior_fail_consumed"] = "true";
+        if (failJobs.Count > 0) values["prior_fail_repair_jobs"] = string.Join(",", failJobs);
+        if (failPackages.Count > 0) values["prior_fail_repair_packages"] = string.Join(",", failPackages);
+        if (failJobs.Count > 0 && consumedJobs.Count > 0)
+            values["prior_fail_consumed_jobs"] = string.Join(",", failJobs.Intersect(consumedJobs, StringComparer.OrdinalIgnoreCase));
+        if (failPackages.Count > 0 && consumedPackages.Count > 0)
+            values["prior_fail_consumed_packages"] = string.Join(",", failPackages);
+    }
+
+    private static List<string> NestedJobIds(JsonObject nested)
+    {
+        var ids = new List<string>();
+        void Add(string? raw)
+        {
+            var id = NormUtil.JobIdFromPath(raw) ?? raw;
+            if (!string.IsNullOrWhiteSpace(id) && Guid.TryParse(id, out _))
+                ids.Add(id!);
+        }
+
+        Add(JsonField.Str(nested, "line_job_id", "direct_job_id", "job_id"));
+        foreach (var key in new[] { "line_receipt", "route_receipt", "direct_receipt", "receipt", "acceptance" })
+        {
+            var obj = JsonField.Obj(nested, key);
+            Add(JsonField.Str(obj, "path"));
+            Add(JsonField.Str(nested, key));
+        }
+
+        return ids;
+    }
+
+    private static List<string> NestedPackageTokens(string key, JsonObject nested)
+    {
+        var tokens = new List<string>();
+        void Add(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return;
+            var t = PackageStem(raw);
+            if (t.Length >= 8) tokens.Add(t);
+        }
+
+        Add(key);
+        Add(JsonField.Str(nested, "package_id", "stage", "package"));
+        var acceptance = JsonField.Str(nested, "acceptance");
+        Add(acceptance);
+        if (!string.IsNullOrWhiteSpace(acceptance))
+        {
+            var n = acceptance.Replace('\\', '/');
+            foreach (var part in n.Split('/', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (part.Contains('.', StringComparison.Ordinal)) continue;
+                Add(part);
+            }
+        }
+
+        return tokens;
+    }
+
+    internal static string PackageStem(string raw)
+    {
+        var t = raw.Trim().ToLowerInvariant().Replace('-', '_');
+        foreach (var suffix in new[] { "_attempt", "_final", "_acceptance", "_result" })
+        {
+            if (t.EndsWith(suffix, StringComparison.Ordinal))
+                t = t[..^suffix.Length];
+        }
+
+        var slash = t.LastIndexOf('/');
+        if (slash >= 0 && slash < t.Length - 1) t = t[(slash + 1)..];
+        return t;
     }
 
     private static void ApplyCurrentHandler(JsonObject values, JsonObject data, string? state, string? humanNext)
@@ -561,7 +637,9 @@ internal static class DocumentNormalizers
             projectId = claimed;
         }
 
-        var lineId = JsonField.Str(doc.Data, "line_job_id") ?? LineIdFromReceiptPath(doc.Location);
+        var lineId = JsonField.Str(doc.Data, "line_job_id")
+                     ?? LineIdFromReceiptPath(doc.Location)
+                     ?? NormUtil.JobIdFromPath(JsonField.Str(doc.Data, "job_root"));
         if (string.IsNullOrWhiteSpace(lineId))
             lineId = JsonField.Str(doc.Data, "job_id");
         var route = JsonField.Str(doc.Data, "route");
@@ -628,6 +706,21 @@ internal static class DocumentNormalizers
 
         StampExecutorIdentity(values, doc.Data);
         StampCollectedScope(doc, values);
+        var loc = doc.Location ?? string.Empty;
+        if (loc.Contains("DISPATCH_RECEIPT", StringComparison.OrdinalIgnoreCase)
+            || (JsonField.Bool(doc.Data, "dispatched") == true
+                && JsonField.Bool(doc.Data, "transport_complete") is null
+                && JsonField.Str(doc.Data, "job_root") is not null))
+        {
+            values["starter_wrapper"] = "true";
+            if (string.Equals(doc.Scope, "historical", StringComparison.OrdinalIgnoreCase)
+                || JsonField.Bool(doc.Data, "lead_should_exit_now") == true)
+            {
+                values["historical"] = "true";
+                values["current_active_fault"] = "false";
+            }
+        }
+
         facts.Add(new SourceFact("work", entityId, projectId, links, values, new[] { NormUtil.Evidence(doc) }));
     }
 
@@ -682,20 +775,31 @@ internal static class DocumentNormalizers
 
         var transport = JsonField.Bool(doc.Data, "transport_complete");
         var success = JsonField.Bool(doc.Data, "grok_success", "cursor_success", "success");
+        var errorCode = JsonField.Str(doc.Data, "error_code", "failure_code");
+        var exitCode = JsonField.Int(doc.Data, "command_exit_code", "exit_code", "pi_exit_code");
+        string execution;
+        if (!string.IsNullOrWhiteSpace(errorCode) && !errorCode.Equals("unknown", StringComparison.OrdinalIgnoreCase))
+            execution = "failed";
+        else if (exitCode is > 0)
+            execution = "failed";
+        else if (success == true) execution = "succeeded";
+        else if (success == false) execution = "failed";
+        else if (transport == false && !string.IsNullOrWhiteSpace(errorCode)) execution = "failed";
+        else execution = "unknown";
+
         var values = NormUtil.BaseAxes("execution", route,
             JsonField.BoolAxis(transport, "complete", "incomplete"),
             "unknown",
-            success == true ? "succeeded" : success == false ? "failed" : "unknown",
+            execution,
             "unknown",
-            JsonField.Str(doc.Data, "failure_code", "state", "status"));
+            JsonField.Str(doc.Data, "failure_code", "error_code", "state", "status"));
         var stage = JsonField.Str(doc.Data, "stage", "phase", "current_stage");
         if (!string.IsNullOrWhiteSpace(stage))
             values["stage"] = stage;
 
-        var failureCode = JsonField.Str(doc.Data, "failure_code");
-        if (!string.IsNullOrWhiteSpace(failureCode))
+        if (!string.IsNullOrWhiteSpace(errorCode) && !errorCode.Equals("unknown", StringComparison.OrdinalIgnoreCase))
         {
-            values["failure_code"] = failureCode;
+            values["failure_code"] = errorCode;
             values["execution_state"] = "failed";
         }
 

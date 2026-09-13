@@ -117,6 +117,38 @@ $stdout.Flush()
     )
     Assert-AdapterTest ($duplicate.exit_code -eq 0 -and [IO.File]::ReadAllText($counterPath) -ceq '2') 'Duplicate start reran PI.'
 
+    $defaultReq = Get-Content -LiteralPath (Join-Path $stateRoot ("jobs\$jobId\request.json")) -Raw | ConvertFrom-Json -AsHashtable
+    Assert-AdapterTest ([string]$defaultReq.provider -ceq 'xai' -and [string]$defaultReq.model -ceq 'grok-4.6' -and [string]$defaultReq.thinking -ceq 'xhigh') 'Default PI provider/model/thinking drifted.'
+
+    $dsState = Join-Path $testRoot 'ds-state'
+    $dsJob = [Guid]::NewGuid().ToString('D')
+    [Environment]::SetEnvironmentVariable('DIRECT_PI_MOCK_COUNTER', (Join-Path $testRoot 'ds-count.txt'), 'Process')
+    $dsStart = Invoke-AdapterEntrypoint -Entrypoint $invoke -Arguments @(
+        '-Operation', 'start', '-StateRoot', $dsState, '-WorkspacePath', $workspace, '-PromptFile', $promptPath,
+        '-JobId', $dsJob, '-MockCliPath', $mockCliPath, '-WaitTimeoutSeconds', '60',
+        '-Provider', 'deepseek', '-Model', 'deepseek-flash', '-ThinkingLevel', 'max'
+    )
+    Assert-AdapterTest ($dsStart.exit_code -eq 0) "Explicit DeepSeek PI start failed: $($dsStart.stderr) $($dsStart.stdout)"
+    $dsReq = Get-Content -LiteralPath (Join-Path $dsState ("jobs\$dsJob\request.json")) -Raw | ConvertFrom-Json -AsHashtable
+    Assert-AdapterTest ([string]$dsReq.provider -ceq 'deepseek' -and [string]$dsReq.model -ceq 'deepseek-flash' -and [string]$dsReq.thinking -ceq 'max') 'Explicit PI provider/model/thinking did not enter the request.'
+    $dsFollow = Invoke-AdapterEntrypoint -Entrypoint $invoke -Arguments @(
+        '-Operation', 'follow_up', '-NativeSessionId', [string]$dsStart.value.native_session_id,
+        '-ResumeSessionPath', [string]$dsStart.value.session_path,
+        '-StateRoot', $dsState, '-WorkspacePath', $workspace, '-PromptFile', $promptPath,
+        '-JobId', ([Guid]::NewGuid().ToString('D')), '-MockCliPath', $mockCliPath, '-WaitTimeoutSeconds', '60',
+        '-Provider', 'deepseek', '-Model', 'deepseek-flash', '-ThinkingLevel', 'max'
+    )
+    Assert-AdapterTest ($dsFollow.exit_code -eq 0 -and [string]$dsFollow.value.native_session_id -ceq [string]$dsStart.value.native_session_id) 'DeepSeek PI follow-up did not keep the native session.'
+    $dsMismatch = Invoke-AdapterEntrypoint -Entrypoint $invoke -Arguments @(
+        '-Operation', 'follow_up', '-NativeSessionId', [string]$dsStart.value.native_session_id,
+        '-ResumeSessionPath', [string]$dsStart.value.session_path,
+        '-StateRoot', $dsState, '-WorkspacePath', $workspace, '-PromptFile', $promptPath,
+        '-JobId', ([Guid]::NewGuid().ToString('D')), '-MockCliPath', $mockCliPath, '-WaitTimeoutSeconds', '15',
+        '-Provider', 'xai', '-Model', 'grok-4.6', '-ThinkingLevel', 'xhigh'
+    )
+    Assert-AdapterTest ($dsMismatch.exit_code -ne 0) 'PI follow-up accepted a different model binding.'
+    [Environment]::SetEnvironmentVariable('DIRECT_PI_MOCK_COUNTER', $counterPath, 'Process')
+
     $pathDir = Join-Path $testRoot 'path-bin'
     [IO.Directory]::CreateDirectory($pathDir) | Out-Null
     $pathLauncher = Join-Path $pathDir 'pi.ps1'

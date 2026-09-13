@@ -109,14 +109,14 @@ internal static class HandlingLogic
             string? awLine = null;
             string? awDirect = null;
             string? awNative = null;
-            string? awPriorFailConsumed = null;
+            SourceFact? awFact = null;
             foreach (var f in facts.Where(x => x.Kind == "work" && string.Equals(x.ProjectId, pid, StringComparison.Ordinal)))
             {
                 if (!f.Evidence.Any(e => e.Kind == "active_work")) continue;
                 f.Links.TryGetValue("line_job_id", out awLine);
                 f.Links.TryGetValue("direct_job_id", out awDirect);
                 f.Links.TryGetValue("native_session_id", out awNative);
-                awPriorFailConsumed = f.Values["prior_fail_consumed"]?.GetValue<string>();
+                awFact = f;
                 if (!string.IsNullOrWhiteSpace(awLine) || !string.IsNullOrWhiteSpace(awDirect))
                     break;
             }
@@ -198,17 +198,18 @@ internal static class HandlingLogic
                         consumed["registry_pointer_lag"] = "true";
                         var existing = consumed["lead_handling_state"]?.GetValue<string>() ?? string.Empty;
                         var existingAcc = consumed["acceptance_state"]?.GetValue<string>() ?? string.Empty;
+                        var associatedRepair = awFact is not null && WorkMatchesPriorRepair(f, awFact);
                         if (disposition
                             && !existing.Contains("lead_handled", StringComparison.OrdinalIgnoreCase)
                             && !existing.StartsWith("handled", StringComparison.OrdinalIgnoreCase)
                             && !NormUtil.IsLiveHandlerState(existing, existingAcc))
                         {
-                            consumed["lead_handling_state"] = string.Equals(awPriorFailConsumed, "true", StringComparison.OrdinalIgnoreCase)
+                            consumed["lead_handling_state"] = associatedRepair
                                 ? "lead_handled_fail_repair"
                                 : "consumed_old_terminal";
                         }
 
-                        if (string.Equals(awPriorFailConsumed, "true", StringComparison.OrdinalIgnoreCase)
+                        if (associatedRepair
                             && (string.IsNullOrWhiteSpace(existingAcc) || existingAcc == "unknown"))
                         {
                             consumed["acceptance_state"] = "handled_fail_repair";
@@ -391,6 +392,48 @@ internal static class HandlingLogic
         }
 
         return !MatchesId(f, awLine, awDirect);
+    }
+
+    private static bool WorkMatchesPriorRepair(SourceFact work, SourceFact aw)
+    {
+        var jobs = SplitCsv(aw.Values["prior_fail_repair_jobs"]?.GetValue<string>());
+        var packages = SplitCsv(aw.Values["prior_fail_repair_packages"]?.GetValue<string>());
+        if (jobs.Count == 0 && packages.Count == 0)
+            return false;
+
+        work.Links.TryGetValue("line_job_id", out var line);
+        work.Links.TryGetValue("direct_job_id", out var direct);
+        if (jobs.Count > 0)
+        {
+            if ((!string.IsNullOrWhiteSpace(line) && jobs.Contains(line))
+                || (!string.IsNullOrWhiteSpace(direct) && jobs.Contains(direct))
+                || jobs.Any(id => work.EntityId.Contains(id, StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        var hay = DocumentNormalizers.PackageStem(
+            (work.Values["stage"]?.GetValue<string>() ?? "") + "_" +
+            (work.Values["package_id"]?.GetValue<string>() ?? "") + "_" +
+            (work.Values["task_name"]?.GetValue<string>() ?? ""));
+        if (string.IsNullOrWhiteSpace(hay)) return false;
+        return packages.Any(p =>
+        {
+            var stem = DocumentNormalizers.PackageStem(p);
+            return stem.Length >= 8 && hay.Contains(stem, StringComparison.Ordinal);
+        });
+    }
+
+    private static HashSet<string> SplitCsv(string? raw)
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(raw)) return set;
+        foreach (var part in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            set.Add(part);
+        return set;
     }
 
     private static void CrossLinkPair(List<SourceFact> facts, string? projectId, string lineId, string directId)

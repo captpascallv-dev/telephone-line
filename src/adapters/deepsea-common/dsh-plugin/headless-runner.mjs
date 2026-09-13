@@ -10,7 +10,7 @@ const llm = await loadDsh('@deepseek-ai/dsh-llm');
 const sessionMod = await loadDsh('@deepseek-ai/dsh-session');
 const { installModelSelection } = agentMod;
 const { createUserMessage } = llm;
-const { SessionId } = sessionMod;
+const { SessionId, SessionSeq } = sessionMod;
 
 export const name = 'telephone-line-headless-runner';
 export const inject = ['agentDefaultModel', 'agents', 'sessions', 'sessionPersistence'];
@@ -26,25 +26,30 @@ export const internals = {
   stderr: process.stderr,
 };
 
-function summarize(events, firstSeq) {
+function summarize(session, firstSeq) {
   let started = false;
   let text = '';
   let reason;
   let toolCalls = 0;
-  for (const event of events) {
-    if (event.seq < firstSeq) continue;
+  const length = session.seq;
+  for (let seq = firstSeq; seq < length; seq += 1) {
+    const event = session.eventAt(SessionSeq(seq));
+    if (event === undefined) {
+      throw new Error(`headless summary cannot read seq ${String(seq)} below captured length ${String(length)}`);
+    }
     if (event.type === 'turn/start') {
       started = true;
       continue;
     }
     if (!started) continue;
     if (event.type === 'assistant/message') {
-      const joined = event.data.message.content
+      const content = event.data.message.content || [];
+      const joined = content
         .filter((block) => block.type === 'text')
         .map((block) => block.text)
         .join('');
       if (joined !== '') text = joined;
-      toolCalls += (event.data.message.content || []).filter((block) => block.type === 'tool-call').length;
+      toolCalls += content.filter((block) => block.type === 'tool-call').length;
     }
     if (event.type === 'turn/end') reason = event.data.reason;
   }
@@ -123,7 +128,7 @@ async function run(ctx, config, io) {
   }));
   await agent.whenIdle();
   await sessions.flush(agent.session);
-  const outcome = summarize(agent.session.events, firstSeq);
+  const outcome = summarize(agent.session, firstSeq);
   io.stdout.write(`${outcome.text}\n`);
   if (outcome.reason?.kind === 'error') {
     io.stderr.write('dsh: ERROR: turn error\n');

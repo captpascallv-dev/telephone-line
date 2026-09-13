@@ -95,6 +95,46 @@ function Assert-DirectPiKeys {
     }
 }
 
+function Assert-DirectPiModelValues {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Provider,
+        [Parameter(Mandatory = $true)][string]$Model,
+        [Parameter(Mandatory = $true)][string]$Thinking,
+        [string]$Label = 'Direct PI model binding'
+    )
+
+    foreach ($binding in @(
+        [ordered]@{ name = 'provider'; value = $Provider },
+        [ordered]@{ name = 'model'; value = $Model },
+        [ordered]@{ name = 'thinking'; value = $Thinking }
+    )) {
+        if ([string]::IsNullOrWhiteSpace([string]$binding.value) -or [string]$binding.value -cnotmatch '^[A-Za-z0-9._:/-]+$') {
+            throw "$Label $($binding.name) is malformed."
+        }
+    }
+}
+
+function Assert-DirectPiModelBinding {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][Collections.IDictionary]$Value,
+        [Parameter(Mandatory = $true)][string]$Provider,
+        [Parameter(Mandatory = $true)][string]$Model,
+        [Parameter(Mandatory = $true)][string]$Thinking,
+        [string]$Label = 'Direct PI model binding'
+    )
+
+    Assert-DirectPiModelValues -Provider $Provider -Model $Model -Thinking $Thinking -Label $Label
+    if (
+        [string]$Value.provider -cne $Provider -or
+        [string]$Value.model -cne $Model -or
+        [string]$Value.thinking -cne $Thinking
+    ) {
+        throw "$Label differs."
+    }
+}
+
 function Write-DirectPiBytesCreateNew {
     [CmdletBinding()]
     param(

@@ -96,6 +96,7 @@ try {
     if ([string]$request.session_id -cnotmatch '^[A-Za-z0-9._:-]+$') { throw 'Direct PI session ID is invalid.' }
     if ($request.resume -isnot [bool] -or $request.mock_mode -isnot [bool]) { throw 'Direct PI boolean control is malformed.' }
     if ([int]$request.execution_count -ne 1) { throw 'Direct PI execution count must be one.' }
+    Assert-DirectPiModelValues -Provider ([string]$request.provider) -Model ([string]$request.model) -Thinking ([string]$request.thinking)
 
     $workspace = Get-DirectPiCanonicalDirectory -Path ([string]$request.workspace)
     if (-not [IO.Directory]::Exists($workspace)) { throw 'Direct PI workspace does not exist.' }

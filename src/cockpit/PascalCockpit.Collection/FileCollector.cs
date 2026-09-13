@@ -385,6 +385,12 @@ public sealed class FileCollector : ICollector
         DateTimeOffset observedAt,
         CancellationToken cancellationToken)
     {
+        if (document.Kind is KindLineReceipt or KindLineDispatch)
+        {
+            await FollowStarterJobRootAsync(document, documents, issues, seen, budget, observedAt, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         if (document.Kind is not (KindActiveWork or KindProjectRegistry or KindBotAcceptance or KindBotResultPointer))
         {
             return;
@@ -407,6 +413,35 @@ public sealed class FileCollector : ICollector
         if (document.Kind == KindActiveWork)
         {
             await FollowAuthorizedJobRootsAsync(document, documents, issues, seen, budget, observedAt, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task FollowStarterJobRootAsync(
+        RawDocument document,
+        List<RawDocument> documents,
+        List<SourceIssue> issues,
+        HashSet<string> seen,
+        FileBudget budget,
+        DateTimeOffset observedAt,
+        CancellationToken cancellationToken)
+    {
+        var loc = document.Location ?? string.Empty;
+        var dispatched = document.Data["dispatched"] is JsonValue dv && dv.TryGetValue<bool>(out var db) && db;
+        if (!loc.Contains("DISPATCH_RECEIPT", StringComparison.OrdinalIgnoreCase) && !dispatched)
+            return;
+
+        async Task Follow(string? path, string context)
+        {
+            if (string.IsNullOrWhiteSpace(path) || !LooksLikePath(path)) return;
+            await CollectExplicitAsync(path, document.ProjectHint, context, documents, issues, seen, budget, observedAt, cancellationToken, scope: "historical").ConfigureAwait(false);
+        }
+
+        if (document.Data["job_root"] is JsonValue jv && jv.TryGetValue<string>(out var jobRoot))
+            await Follow(jobRoot, "job_root").ConfigureAwait(false);
+        if (document.Data["dispatch"] is JsonObject disp
+            && disp["path"] is JsonValue pv && pv.TryGetValue<string>(out var dispatchPath))
+        {
+            await Follow(dispatchPath, "dispatch").ConfigureAwait(false);
         }
     }
 
@@ -980,7 +1015,8 @@ public sealed class FileCollector : ICollector
         if (k is "line_receipt" or "route_receipt" or "telephone_receipt" or "direct_receipt"
             or "actual_dispatch_receipt" or "native_identity_source" or "last_transport_receipt"
             or "last_direct_receipt" or "prepared_next_config" or "current_result"
-            or "current_config" or "expected_result" or "lead_run_root" or "current_run_root")
+            or "current_config" or "expected_result" or "lead_run_root" or "current_run_root"
+            or "job_root")
         {
             return true;
         }

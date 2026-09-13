@@ -558,8 +558,6 @@ public sealed class StateProjector : IProjector
         if (IsLiveHandlerAxis(b) && !IsLiveHandlerAxis(a)) return b;
         if (IsHandledAxis(a) && !IsHandledAxis(b)) return a;
         if (IsHandledAxis(b) && !IsHandledAxis(a)) return b;
-        if ((a is "succeeded" or "returned") && b == "failed") return a;
-        if ((b is "succeeded" or "returned") && a == "failed") return b;
         if (a == "failed" || b == "failed") return "failed";
         if (a == "succeeded" || b == "succeeded") return a == "succeeded" ? a : b;
         if (a.Contains("consumed", StringComparison.OrdinalIgnoreCase)) return a;
@@ -1038,12 +1036,25 @@ public sealed class StateProjector : IProjector
                 folded["actor_name"] = Val(lead, "actor_name");
         }
 
-        foreach (var w in currentWorks)
+        var authorized = currentWorks.Where(w =>
+            string.Equals(Val(w, "authorized_current"), "true", StringComparison.OrdinalIgnoreCase)).ToList();
+        var foldWorks = authorized.Count > 0 ? authorized : currentWorks;
+        var currentInFlight = foldWorks.Any(w =>
+        {
+            var exec = Val(w, "execution_state") ?? string.Empty;
+            return exec.Equals("active", StringComparison.OrdinalIgnoreCase)
+                   || exec.Equals("running", StringComparison.OrdinalIgnoreCase);
+        });
+
+        foreach (var w in foldWorks)
         {
             if (IsMissing(ValFrom(folded, "lead_handling_state")) && !IsMissing(Val(w, "lead_handling_state")))
                 folded["lead_handling_state"] = Val(w, "lead_handling_state");
-            if (IsMissing(ValFrom(folded, "acceptance_state")) && !IsMissing(Val(w, "acceptance_state")))
-                folded["acceptance_state"] = Val(w, "acceptance_state");
+            var acc = Val(w, "acceptance_state");
+            if (currentInFlight && IsFoldedAccepted(acc))
+                continue;
+            if (IsMissing(ValFrom(folded, "acceptance_state")) && !IsMissing(acc))
+                folded["acceptance_state"] = acc;
         }
         foreach (var c in contrib.Where(IsLeadAcceptanceCard))
         {
@@ -1058,6 +1069,10 @@ public sealed class StateProjector : IProjector
             c.Links.TryGetValue("direct_job_id", out var cDirect);
             if (string.IsNullOrWhiteSpace(cLine) && string.IsNullOrWhiteSpace(cDirect))
                 continue;
+            if (!foldWorks.Any(w => MatchesWorkId(w, cLine, cDirect)))
+                continue;
+            if (currentInFlight && IsFoldedAccepted(Val(c, "acceptance_state")))
+                continue;
             if (IsMissing(ValFrom(folded, "acceptance_state")) && !IsMissing(Val(c, "acceptance_state")))
                 folded["acceptance_state"] = Val(c, "acceptance_state");
             if (IsMissing(ValFrom(folded, "lead_handling_state")) && !IsMissing(Val(c, "lead_handling_state")))
@@ -1070,6 +1085,31 @@ public sealed class StateProjector : IProjector
 
     private static string? ValFrom(JsonObject values, string key) =>
         values[key]?.GetValue<string>();
+
+    private static bool IsFoldedAccepted(string? acceptance) =>
+        !string.IsNullOrWhiteSpace(acceptance)
+        && (acceptance.Equals("handled_accepted", StringComparison.OrdinalIgnoreCase)
+            || acceptance.Equals("accepted", StringComparison.OrdinalIgnoreCase)
+            || acceptance.Equals("accepted_partial_or_full", StringComparison.OrdinalIgnoreCase));
+
+    private static bool MatchesWorkId(SourceFact w, string? line, string? direct)
+    {
+        if (!string.IsNullOrWhiteSpace(line)
+            && (w.EntityId.Contains(line, StringComparison.OrdinalIgnoreCase)
+                || (w.Links.TryGetValue("line_job_id", out var l) && string.Equals(l, line, StringComparison.OrdinalIgnoreCase))))
+        {
+            return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(direct)
+            && (w.EntityId.Contains(direct, StringComparison.OrdinalIgnoreCase)
+                || (w.Links.TryGetValue("direct_job_id", out var d) && string.Equals(d, direct, StringComparison.OrdinalIgnoreCase))))
+        {
+            return true;
+        }
+
+        return false;
+    }
 
     private static int LeadIdentityScore(SourceFact lead, HashSet<string> currentSessions)
     {

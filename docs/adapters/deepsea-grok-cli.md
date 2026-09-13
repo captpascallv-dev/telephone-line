@@ -9,3 +9,5 @@ Provider `xai` is frozen for this route. Model and reasoning effort are explicit
 A replaceable Cordis plugin registers provider `xai` as a DSH `LlmAdapter` and reads a DSH-owned subscription store. The same SuperGrok or X Premium login is reused when the community `dsh-plugin-subscriptions` plugin is installed in CLI DSH or DSH Desktop. Community login is `node src/adapters/deepsea-common/dsh-plugin/login-subscription.mjs xai`. DSH creates the agent.
 
 `start` is supported. A correction is a new self-contained start card in a fresh DSH session. `follow_up` is not advertised until exact native resume is separately proved. `recover` returns already durable transport state and never contacts the provider. `exact_native_session` is `false`. Duplicate or incomplete start never reruns. Prompt identity in durable state is bytes and SHA-256. There is no absolute whole-task timeout.
+
+Shared Headless uses `Session.eventAt(SessionSeq(seq))`. The contained profile disables `web-fetch-http` whenever `web` is disabled. Failures keep a bounded redacted diagnostic on the receipt.
