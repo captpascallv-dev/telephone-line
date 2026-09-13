@@ -296,6 +296,14 @@ function Get-DirectPiRecordRole {
     return ''
 }
 
+function Get-DirectPiRecordType {
+    param([Parameter(Mandatory = $true)][Collections.IDictionary]$Record)
+    if ($Record.Contains('type') -and -not [string]::IsNullOrWhiteSpace([string]$Record.type)) {
+        return [string]$Record.type
+    }
+    return ''
+}
+
 function Get-DirectPiRecordAssistantMessage {
     param([Parameter(Mandatory = $true)][Collections.IDictionary]$Record)
     $role = Get-DirectPiRecordRole -Record $Record
@@ -306,23 +314,96 @@ function Get-DirectPiRecordAssistantMessage {
 
 function Test-DirectPiRecordIsUserOrTool {
     param([Parameter(Mandatory = $true)][Collections.IDictionary]$Record)
-    $type = if ($Record.Contains('type')) { [string]$Record.type } else { '' }
+    $type = Get-DirectPiRecordType -Record $Record
     $role = Get-DirectPiRecordRole -Record $Record
-    if ($role -ceq 'user' -or $role -ceq 'tool') { return $true }
-    if ($type -match '^(tool|tool_use|tool_result|agent_start)$') { return $true }
+    if ($role -in @('user', 'tool', 'toolResult', 'bashExecution')) { return $true }
+    if ($type -match '^(tool|tool_use|tool_result|toolCall|agent_start)$') { return $true }
     return $false
+}
+
+function Test-DirectPiRecordIsUnprovenTail {
+    param([Parameter(Mandatory = $true)][Collections.IDictionary]$Record)
+    $type = Get-DirectPiRecordType -Record $Record
+    if ($type -in @('compaction', 'branch_summary', 'custom_message')) { return $true }
+    return $false
+}
+
+function Test-DirectPiAssistantStopIsTerminal {
+    param([Parameter(Mandatory = $true)][Collections.IDictionary]$Assistant)
+    if (-not $Assistant.Contains('stopReason')) { return $false }
+    $stopReason = [string]$Assistant.stopReason
+    if ([string]::IsNullOrWhiteSpace($stopReason)) { return $false }
+    return $stopReason -cin @('stop', 'length')
+}
+
+function Test-DirectPiAssistantHasOpenToolCall {
+    param([Parameter(Mandatory = $true)][Collections.IDictionary]$Assistant)
+    if (-not $Assistant.Contains('content')) { return $false }
+    $content = $Assistant.content
+    if ($content -isnot [Collections.IEnumerable] -or $content -is [string]) { return $false }
+    foreach ($block in @($content)) {
+        if ($block -isnot [Collections.IDictionary]) { continue }
+        $blockType = if ($block.Contains('type')) { [string]$block.type } else { '' }
+        if ($blockType -cin @('toolCall', 'tool_use', 'toolUse')) { return $true }
+    }
+    return $false
+}
+
+function Get-DirectPiCurrentNativePath {
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Records)
+    $nodes = [Collections.Generic.List[Collections.IDictionary]]::new()
+    foreach ($record in $Records) {
+        if ($record -isnot [Collections.IDictionary]) { continue }
+        $type = Get-DirectPiRecordType -Record $record
+        if ($type -ceq 'session') { continue }
+        if (-not $record.Contains('id') -or [string]::IsNullOrWhiteSpace([string]$record.id)) { continue }
+        $nodes.Add($record)
+    }
+    if ($nodes.Count -eq 0) {
+        return @($Records)
+    }
+
+    $byId = [ordered]@{}
+    foreach ($node in $nodes) {
+        $id = [string]$node.id
+        if ($byId.Contains($id)) { throw 'Latest native turn cannot be proven from the current session branch.' }
+        $byId[$id] = $node
+    }
+
+    $leaf = $nodes[$nodes.Count - 1]
+    $path = [Collections.Generic.List[Collections.IDictionary]]::new()
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $cursor = $leaf
+    while ($null -ne $cursor) {
+        $id = [string]$cursor.id
+        if (-not $seen.Add($id)) { throw 'Latest native turn cannot be proven from the current session branch.' }
+        $path.Insert(0, $cursor)
+        $parentId = $null
+        if ($cursor.Contains('parentId') -and $null -ne $cursor.parentId -and -not [string]::IsNullOrWhiteSpace([string]$cursor.parentId)) {
+            $parentId = [string]$cursor.parentId
+        }
+        if ([string]::IsNullOrWhiteSpace($parentId)) { break }
+        if (-not $byId.Contains($parentId)) { throw 'Latest native turn cannot be proven from the current session branch.' }
+        $cursor = $byId[$parentId]
+    }
+    return @($path)
 }
 
 function Assert-DirectPiLatestNativeTurnClosed {
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Records)
+    $path = @(Get-DirectPiCurrentNativePath -Records $Records)
+    if ($path.Count -lt 1) { throw 'PI JSON event stream has no final assistant message_end.' }
+
     $lastAssistantIndex = -1
     $lastAssistant = $null
     $lastThinking = ''
-    for ($index = 0; $index -lt $Records.Count; $index++) {
-        $record = $Records[$index]
+    $lastThinkingAtAssistant = ''
+    for ($index = 0; $index -lt $path.Count; $index++) {
+        $record = $path[$index]
         if ($record -isnot [Collections.IDictionary]) { continue }
-        if ($record.Contains('type') -and [string]$record.type -ceq 'thinking_level_change') {
+        $type = Get-DirectPiRecordType -Record $record
+        if ($type -ceq 'thinking_level_change') {
             if ($record.Contains('thinkingLevel') -and -not [string]::IsNullOrWhiteSpace([string]$record.thinkingLevel)) {
                 $lastThinking = [string]$record.thinkingLevel
             }
@@ -331,24 +412,37 @@ function Assert-DirectPiLatestNativeTurnClosed {
         if ($null -ne $assistant) {
             $lastAssistantIndex = $index
             $lastAssistant = $assistant
+            $lastThinkingAtAssistant = $lastThinking
         }
     }
     if ($null -eq $lastAssistant) { throw 'PI JSON event stream has no final assistant message_end.' }
-    if (-not $lastAssistant.Contains('stopReason')) { throw 'PI final assistant has no stopReason.' }
-    $stopReason = [string]$lastAssistant.stopReason
-    if ([string]::IsNullOrWhiteSpace($stopReason) -or $stopReason -in @('error', 'aborted', 'pending')) {
+    if (-not (Test-DirectPiAssistantStopIsTerminal -Assistant $lastAssistant)) {
         throw 'PI final assistant has a non-terminal stopReason.'
     }
-    for ($index = $lastAssistantIndex + 1; $index -lt $Records.Count; $index++) {
-        $record = $Records[$index]
+    if (Test-DirectPiAssistantHasOpenToolCall -Assistant $lastAssistant) {
+        throw 'Latest native turn is not closed.'
+    }
+    $leaf = $path[$path.Count - 1]
+    if ($leaf -is [Collections.IDictionary]) {
+        $leafType = Get-DirectPiRecordType -Record $leaf
+        if ($leafType -in @('compaction', 'branch_summary')) {
+            throw 'Latest native turn cannot be proven from the current session branch.'
+        }
+    }
+    for ($index = $lastAssistantIndex + 1; $index -lt $path.Count; $index++) {
+        $record = $path[$index]
         if ($record -isnot [Collections.IDictionary]) { continue }
         if (Test-DirectPiRecordIsUserOrTool -Record $record) {
             throw 'Latest native turn is not closed.'
         }
+        if (Test-DirectPiRecordIsUnprovenTail -Record $record) {
+            throw 'Latest native turn cannot be proven from the current session branch.'
+        }
         $laterAssistant = Get-DirectPiRecordAssistantMessage -Record $record
         if ($null -ne $laterAssistant) { throw 'Latest native turn is not closed.' }
     }
-    return [ordered]@{ assistant = $lastAssistant; thinking = $lastThinking; index = $lastAssistantIndex }
+    $observedThinking = if ($null -ne $lastThinkingAtAssistant) { [string]$lastThinkingAtAssistant } else { '' }
+    return [ordered]@{ assistant = $lastAssistant; thinking = $observedThinking; index = $lastAssistantIndex }
 }
 
 function ConvertFrom-DirectPiTerminalStream {

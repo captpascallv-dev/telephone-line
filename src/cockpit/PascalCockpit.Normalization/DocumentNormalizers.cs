@@ -174,19 +174,21 @@ internal static class DocumentNormalizers
                 if (!role.Contains("exec", StringComparison.OrdinalIgnoreCase)
                     && string.IsNullOrWhiteSpace(workRoute))
                     continue;
-                var matched = FindUniqueCurrentRoleMatch(
-                    currentFacts,
-                    "execution",
-                    workRoute,
-                    JsonField.Str(row, "line_job_id"),
-                    JsonField.Str(row, "job_id", "direct_job_id"));
-                if (matched is not null)
+                var workLine = JsonField.Str(row, "line_job_id");
+                var workJob = JsonField.Str(row, "job_id", "direct_job_id");
+                var matches = CollectCurrentRoleMatches(currentFacts, "execution", workRoute, workLine, workJob);
+                if (matches.Count == 1)
                 {
-                    MergeComplementaryCurrentWork(matched, row, doc);
+                    MergeComplementaryCurrentWork(matches[0], row, doc);
                     continue;
                 }
 
-                if (currentFacts.Any(f => string.Equals(f.Values["role"]?.GetValue<string>(), "execution", StringComparison.OrdinalIgnoreCase)))
+                var hasIdentity = !string.IsNullOrWhiteSpace(workRoute)
+                    || !string.IsNullOrWhiteSpace(workLine)
+                    || !string.IsNullOrWhiteSpace(workJob);
+                if (matches.Count > 1)
+                    continue;
+                if (!hasIdentity && currentFacts.Any(IsCurrentExecutionFact))
                     continue;
                 var key = !string.IsNullOrWhiteSpace(workRoute) ? workRoute : "exec-" + currentFacts.Count;
                 currentFacts.Add(EmitActiveLaneWork(doc, projectId, key, row, productPass, facts, routesSeenLive, routesSeenProtocol));
@@ -303,7 +305,14 @@ internal static class DocumentNormalizers
         currentFacts.Add(emitted);
     }
 
-    private static SourceFact? FindUniqueCurrentRoleMatch(
+    private static bool IsCurrentExecutionFact(SourceFact fact)
+    {
+        var role = fact.Values["role"]?.GetValue<string>() ?? string.Empty;
+        return role.Equals("execution", StringComparison.OrdinalIgnoreCase)
+               || role.Contains("exec", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static List<SourceFact> CollectCurrentRoleMatches(
         List<SourceFact> currentFacts,
         string role,
         string? route,
@@ -314,8 +323,7 @@ internal static class DocumentNormalizers
         foreach (var fact in currentFacts)
         {
             if (!string.Equals(fact.Values["role"]?.GetValue<string>(), role, StringComparison.OrdinalIgnoreCase)
-                && !(role.Equals("execution", StringComparison.OrdinalIgnoreCase)
-                     && (fact.Values["role"]?.GetValue<string>() ?? string.Empty).Contains("exec", StringComparison.OrdinalIgnoreCase)))
+                && !(role.Equals("execution", StringComparison.OrdinalIgnoreCase) && IsCurrentExecutionFact(fact)))
                 continue;
             var factRoute = fact.Values["route"]?.GetValue<string>();
             if (!string.IsNullOrWhiteSpace(route)
@@ -334,6 +342,17 @@ internal static class DocumentNormalizers
             matches.Add(fact);
         }
 
+        return matches;
+    }
+
+    private static SourceFact? FindUniqueCurrentRoleMatch(
+        List<SourceFact> currentFacts,
+        string role,
+        string? route,
+        string? lineId,
+        string? jobId)
+    {
+        var matches = CollectCurrentRoleMatches(currentFacts, role, route, lineId, jobId);
         return matches.Count == 1 ? matches[0] : null;
     }
 
