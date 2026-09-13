@@ -1,0 +1,171 @@
+<UserControl x:Class="PascalCockpit.Views.DetailsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="#FFF4F6F4"
+             Focusable="True"
+             Language="zh-CN">
+  <UserControl.Resources>
+    <SolidColorBrush x:Key="HudBg" Color="#FFF4F6F4"/>
+    <SolidColorBrush x:Key="HudPanel" Color="#FFFFFFFF"/>
+    <SolidColorBrush x:Key="HudLine" Color="#FFDCE4DE"/>
+    <SolidColorBrush x:Key="HudText" Color="#FF202824"/>
+    <SolidColorBrush x:Key="HudMuted" Color="#FF53625A"/>
+    <SolidColorBrush x:Key="HudMint" Color="#FF146C4B"/>
+    <SolidColorBrush x:Key="HistBg" Color="#FFF3F4F2"/>
+    <Style x:Key="MutedCaption" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="{StaticResource HudMuted}"/>
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+    <Style x:Key="BodyText" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="{StaticResource HudText}"/>
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+    <Style x:Key="SectionTitle" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="{StaticResource HudText}"/>
+      <Setter Property="FontSize" Value="14"/>
+      <Setter Property="FontWeight" Value="SemiBold"/>
+      <Setter Property="Margin" Value="0,12,0,6"/>
+    </Style>
+    <Style x:Key="NavButton" TargetType="Button">
+      <Setter Property="Margin" Value="0,0,6,6"/>
+      <Setter Property="Padding" Value="10,6"/>
+      <Setter Property="Background" Value="#FFF0F4F0"/>
+      <Setter Property="BorderBrush" Value="{StaticResource HudLine}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Foreground" Value="{StaticResource HudText}"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Focusable" Value="True"/>
+    </Style>
+  </UserControl.Resources>
+
+  <Border Background="{StaticResource HudBg}" BorderBrush="{StaticResource HudLine}" BorderThickness="1" CornerRadius="10" Padding="14">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+      <StackPanel>
+        <TextBlock x:Name="EmptyText" Style="{StaticResource MutedCaption}" Visibility="Collapsed" Margin="0,20"/>
+        <StackPanel x:Name="ContentPanel">
+          <TextBlock x:Name="NameText" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource HudText}" TextWrapping="Wrap" AutomationProperties.AutomationId="DetailsSelectedName"/>
+          <TextBlock x:Name="SelectedIdText" Style="{StaticResource MutedCaption}" Margin="0,2,0,0" Visibility="Collapsed" AutomationProperties.AutomationId="DetailsSelectedProjectId"/>
+          <TextBlock x:Name="MetaText" Style="{StaticResource MutedCaption}" Margin="0,4,0,0"/>
+          <TextBlock x:Name="FreshnessText" Style="{StaticResource MutedCaption}" Margin="0,4,0,0" Visibility="Collapsed"/>
+
+          <TextBlock x:Name="NowTitle" Text="现在" Style="{StaticResource SectionTitle}"/>
+          <TextBlock x:Name="WhoText" Style="{StaticResource BodyText}" AutomationProperties.AutomationId="DetailsWho"/>
+          <TextBlock x:Name="HowFarTitle" Text="做到哪" Style="{StaticResource SectionTitle}" Margin="0,10,0,6"/>
+          <TextBlock x:Name="HowFarText" Style="{StaticResource BodyText}"/>
+          <TextBlock x:Name="StuckTitle" Text="卡在哪" Style="{StaticResource SectionTitle}" Margin="0,10,0,6"/>
+          <TextBlock x:Name="StuckText" Style="{StaticResource BodyText}" AutomationProperties.AutomationId="DetailsStuck"/>
+          <TextBlock x:Name="NextTitle" Text="下一步谁处理" Style="{StaticResource SectionTitle}" Margin="0,10,0,6"/>
+          <TextBlock x:Name="NextStepText" Style="{StaticResource BodyText}" AutomationProperties.AutomationId="DetailsNext"/>
+          <TextBlock x:Name="PascalNeedTitle" Text="要不要你处理" Style="{StaticResource SectionTitle}" Margin="0,10,0,6"/>
+          <TextBlock x:Name="PascalNeedText" Style="{StaticResource BodyText}" AutomationProperties.AutomationId="DetailsPascalNeed"/>
+          <TextBlock x:Name="GoalLabel" Text="目标" Style="{StaticResource SectionTitle}" Margin="0,10,0,6"/>
+          <TextBlock x:Name="GoalText" Style="{StaticResource BodyText}"/>
+          <TextBlock x:Name="PhaseText" Style="{StaticResource BodyText}" Visibility="Collapsed"/>
+          <TextBlock x:Name="SummaryText" Style="{StaticResource BodyText}" Visibility="Collapsed"/>
+
+          <StackPanel x:Name="ProgressPanel" Visibility="Collapsed">
+            <TextBlock x:Name="ProgressTitle" Text="进度（仅在有可靠依据时显示）" Style="{StaticResource SectionTitle}"/>
+            <TextBlock x:Name="ProgressText" Style="{StaticResource BodyText}"/>
+          </StackPanel>
+
+          <TextBlock x:Name="PascalSectionTitle" Text="待你决定" Style="{StaticResource SectionTitle}"/>
+          <ItemsControl x:Name="PascalList">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Border Margin="0,0,0,6" Padding="8" Background="#FFF7F1E8" BorderBrush="#FFC4A574" BorderThickness="1" CornerRadius="6">
+                  <TextBlock Text="{Binding Text}" Style="{StaticResource BodyText}"/>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+
+          <StackPanel x:Name="TechnicalPanel" Visibility="Collapsed">
+          <TextBlock x:Name="CurrentWorkTitle" Text="当前工作（并发）" Style="{StaticResource SectionTitle}"/>
+          <ItemsControl x:Name="CurrentWorkList">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Border Margin="0,0,0,8" Padding="10" Background="{StaticResource HudPanel}"
+                        BorderBrush="{StaticResource HudLine}" BorderThickness="1" CornerRadius="7">
+                  <StackPanel>
+                    <TextBlock FontWeight="SemiBold" Foreground="{StaticResource HudText}">
+                      <Run Text="{Binding RoleLabel, Mode=OneWay}"/>
+                      <Run Text="  "/>
+                      <Run Text="{Binding Route, Mode=OneWay}" Foreground="#FF53625A"/>
+                    </TextBlock>
+                    <TextBlock Text="{Binding Summary}" Style="{StaticResource BodyText}" Margin="0,4,0,0"/>
+                    <TextBlock Text="{Binding AxesPhrase}" Style="{StaticResource MutedCaption}" Margin="0,4,0,0"/>
+                    <TextBlock Text="{Binding QualityLabel}" Style="{StaticResource MutedCaption}" Margin="0,2,0,0"/>
+                  </StackPanel>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <TextBlock x:Name="NoCurrentWorkText" Style="{StaticResource MutedCaption}" Text="无当前工作项。" Visibility="Collapsed"/>
+
+          <TextBlock x:Name="ArtifactTitle" Text="成果" Style="{StaticResource SectionTitle}"/>
+          <ItemsControl x:Name="ArtifactList">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <TextBlock Style="{StaticResource BodyText}" Margin="0,0,0,4">
+                  <Run Text="{Binding Label, Mode=OneWay}"/>
+                  <Run Text=" · "/>
+                  <Run Text="{Binding State, Mode=OneWay}"/>
+                </TextBlock>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <TextBlock x:Name="NoArtifactText" Style="{StaticResource MutedCaption}" Text="无成果条目。" Visibility="Collapsed"/>
+
+          <TextBlock x:Name="LeadTitle" Text="原Lead待处理" Style="{StaticResource SectionTitle}"/>
+          <ItemsControl x:Name="LeadList">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <TextBlock Text="{Binding Text}" Style="{StaticResource BodyText}" Margin="0,0,0,4"/>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <TextBlock x:Name="SecretaryTitle" Text="秘书关注" Style="{StaticResource SectionTitle}"/>
+          <ItemsControl x:Name="SecretaryList">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <TextBlock Text="{Binding Text}" Style="{StaticResource BodyText}" Margin="0,0,0,4"/>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+
+          <TextBlock x:Name="HistoryTitle" Text="历史 / 上次已知（可追溯，非当前故障）" Style="{StaticResource SectionTitle}"/>
+          <ItemsControl x:Name="HistoricalWorkList">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Border Margin="0,0,0,8" Padding="10" Background="{StaticResource HistBg}"
+                        BorderBrush="{StaticResource HudLine}" BorderThickness="1" CornerRadius="7">
+                  <StackPanel>
+                    <TextBlock FontWeight="SemiBold" Foreground="{StaticResource HudMuted}" Text="历史条目"/>
+                    <TextBlock Text="{Binding Summary}" Style="{StaticResource BodyText}" Margin="0,4,0,0"/>
+                    <TextBlock Text="{Binding AxesPhrase}" Style="{StaticResource MutedCaption}" Margin="0,4,0,0"/>
+                    <TextBlock Text="{Binding QualityLabel}" Style="{StaticResource MutedCaption}" Margin="0,2,0,0"/>
+                  </StackPanel>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <TextBlock x:Name="NoHistoryText" Style="{StaticResource MutedCaption}" Text="无历史/上次已知条目。" Visibility="Collapsed"/>
+
+          <TextBlock x:Name="NavTitle" Text="导航（仅快照已有目标）" Style="{StaticResource SectionTitle}"/>
+          <WrapPanel x:Name="NavPanel"/>
+          <TextBlock x:Name="NoNavText" Style="{StaticResource MutedCaption}" Text="无可用导航目标。" Visibility="Collapsed"/>
+          </StackPanel>
+
+          <Button x:Name="DiagnosticsToggle" Content="查看技术诊断" Margin="0,16,0,0" Padding="10,6"
+                  HorizontalAlignment="Left" Click="OnDiagnosticsToggle" Cursor="Hand"
+                  Background="#FFF0F4F0" BorderBrush="{StaticResource HudLine}" BorderThickness="1"
+                  AutomationProperties.AutomationId="DiagnosticsToggle"/>
+          <TextBlock x:Name="DiagnosticsText" Style="{StaticResource MutedCaption}" Margin="0,8,0,0" Visibility="Collapsed"
+                     AutomationProperties.AutomationId="DetailsDiagnostics"/>
+        </StackPanel>
+      </StackPanel>
+    </ScrollViewer>
+  </Border>
+</UserControl>

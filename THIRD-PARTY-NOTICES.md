@@ -4,7 +4,7 @@ This file is an inventory of third-party material **redistributed by this reposi
 
 ## Redistributed third-party material
 
-This repository **vendors no third-party source**, assets, or bundled dependency directory. Inspection of the product tree found:
+This repository **vendors no third-party source**, assets, or bundled dependency directory except the bounded cockpit Windows runtime described below. Inspection of the product tree found:
 
 - no `node_modules` directory
 - no `vendor`, `third_party`, or `third-party` directory
@@ -12,6 +12,15 @@ This repository **vendors no third-party source**, assets, or bundled dependency
 - one plugin manifest, `src/adapters/deepsea-common/dsh-plugin/package.json`, with `"license": "MPL-2.0"` and with no `dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`, or `bundledDependencies` keys
 
 Files under `src/adapters/deepsea-common/dsh-plugin/` are this project's own MPL-2.0 sources. They load user-installed packages at runtime; they do not embed those packages. Files under `src/lead-side/cursor-external-route/` are also this project's own MPL-2.0 sources. That lead-side profile is source-derived from an accepted design; it does not vendor third-party code.
+
+## Cockpit Windows runtime (redistributed object code)
+
+`src/cockpit/runtime/win-x64/` contains a self-contained .NET 8 Windows Desktop payload for `PascalCockpit.App.exe`. That folder is object code Microsoft licenses as Distributable Code, not vendored Microsoft source. Accompanying texts:
+
+- [src/cockpit/licenses/DOTNET-LICENSE.txt](src/cockpit/licenses/DOTNET-LICENSE.txt)
+- [src/cockpit/licenses/DOTNET-THIRD-PARTY-NOTICES.txt](src/cockpit/licenses/DOTNET-THIRD-PARTY-NOTICES.txt)
+
+The cockpit C# projects under `src/cockpit/` remain this product's MPL-2.0 sources.
 
 ## Declared dependency boundaries (not redistributed)
 

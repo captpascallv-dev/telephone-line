@@ -10,7 +10,7 @@ Add-Type -AssemblyName System.IO.Compression
 $script:TelephonePackagingResultProtocol = 'telephone-line-package-result-v1'
 $script:TelephonePackagingManifestProtocol = 'telephone-line-release-manifest-v1'
 $script:TelephonePackagingProduct = 'telephone-line'
-$script:TelephonePackagingVersion = '0.1.4'
+$script:TelephonePackagingVersion = '0.1.5'
 $script:TelephonePackagingLicense = 'MPL-2.0'
 $script:TelephonePackagingPlatform = 'windows'
 $script:TelephonePackagingSourceZipName = ('telephone-line-' + $script:TelephonePackagingVersion + '-source.zip')
@@ -33,7 +33,9 @@ foreach ($name in @(
     'delivery',
     'cache',
     'caches',
-    'state'
+    'state',
+    'bin',
+    'obj'
 )) {
     [void]$script:TelephonePackagingExcludedSegments.Add($name)
 }
@@ -158,6 +160,22 @@ function Get-TelephonePackagingRelativePath {
     return $relative.Replace('\', '/')
 }
 
+function Test-TelephonePackagingAllowedCockpitRuntimeBinary {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$Relative)
+    $n = $Relative.Replace('\', '/').Trim('/')
+    $prefix = 'src/cockpit/runtime/win-x64/'
+    if (-not $n.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+    $rest = $n.Substring($prefix.Length)
+    if ([string]::IsNullOrWhiteSpace($rest)) { return $false }
+    if ($rest.Contains('..', [StringComparison]::Ordinal)) { return $false }
+    $ext = [IO.Path]::GetExtension($n)
+    if ($ext -cne '.dll' -and $ext -cne '.exe') { return $false }
+    $leaf = [IO.Path]::GetFileName($n)
+    if ($leaf.Equals('createdump.exe', [StringComparison]::OrdinalIgnoreCase)) { return $false }
+    return $true
+}
+
 function Test-TelephonePackagingExcludedRelative {
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][string]$Relative)
@@ -185,7 +203,9 @@ function Get-TelephonePackagingExclusionPatterns {
         '**/cache/**',
         '**/caches/**',
         '**/state/**',
-        '**/*.{exe,dll,sys,com,scr,msi,msix,iso,img,so,dylib}',
+        '**/bin/**',
+        '**/obj/**',
+        '**/*.{exe,dll,sys,com,scr,msi,msix,iso,img,so,dylib} except src/cockpit/runtime/win-x64/**',
         'user-profile/**',
         'root files other than README.md, LICENSE, CONTRIBUTING.md, SECURITY.md, THIRD-PARTY-NOTICES.md, and .gitattributes'
     )
@@ -298,8 +318,14 @@ function Get-TelephoneRedistributableFiles {
                 Add-TelephonePackagingWalk -Directory $item.FullName
             } else {
                 $ext = [IO.Path]::GetExtension($item.Name)
+                $relNorm = $rel.Replace('\', '/')
+                if ($relNorm.StartsWith('src/cockpit/runtime/', [StringComparison]::OrdinalIgnoreCase) -and ($ext -ceq '.pdb' -or $ext -ceq '.xml')) {
+                    continue
+                }
                 if (-not [string]::IsNullOrWhiteSpace($ext) -and $script:TelephonePackagingBinaryExtensions.Contains($ext)) {
-                    throw 'BINARY_REFUSED'
+                    if (-not (Test-TelephonePackagingAllowedCockpitRuntimeBinary -Relative $rel)) {
+                        throw 'BINARY_REFUSED'
+                    }
                 }
                 $id = Get-TelephonePackagingFileBytesAndHash -Path $item.FullName
                 [void]$rows.Add([ordered]@{

@@ -303,11 +303,43 @@ try {
         'schemas/dashboard-config.schema.json',
         'schemas/dashboard-projection.schema.json',
         'docs/dashboard.md',
-        'docs/examples/dashboard/config.placeholder.json'
+        'docs/examples/dashboard/config.placeholder.json',
+        'src/cockpit/Start-TelephoneCockpit.ps1',
+        'src/cockpit/config/default.json',
+        'src/cockpit/runtime/win-x64/PascalCockpit.App.exe',
+        'docs/releases/v0.1.5.md'
     )) {
         Assert-PackagingTest ($realSourceNames -contains $required) "Source archive omitted $required"
         Assert-PackagingTest ($realReleaseNames -contains $required) "Release ZIP omitted $required"
     }
+    $defaultCfg = [IO.File]::ReadAllText((Join-Path $repoRoot 'src\cockpit\config\default.json'))
+    Assert-PackagingTest ($defaultCfg.Contains('"registry_paths": []')) 'Shipped cockpit default.json is not an empty registry list.'
+    Assert-PackagingTest ($defaultCfg.Contains('"additional_source_paths": []')) 'Shipped cockpit default.json is not an empty additional-source list.'
+    Assert-PackagingTest ($defaultCfg.Contains('C:' + [char]92 + 'Users') -eq $false) 'Shipped cockpit default.json contains a user path.'
+
+    $denyDllRoot = Join-Path $testRoot 'deny-dll'
+    New-PackagingFixtureTree -Root $denyDllRoot
+    [IO.File]::WriteAllBytes((Join-Path $denyDllRoot 'src\core\evil.dll'), [byte[]]@(0, 1, 2, 3))
+    $denyThrew = $false
+    try {
+        [void](Get-TelephoneRedistributableFiles -SourceRoot $denyDllRoot -Kind 'release')
+    } catch {
+        $denyThrew = ([string]$_.Exception.Message -eq 'BINARY_REFUSED' -or [string]$_.FullyQualifiedErrorId -match 'BINARY_REFUSED')
+        if (-not $denyThrew -and [string]$_.Exception.Message -match 'BINARY_REFUSED') { $denyThrew = $true }
+    }
+    Assert-PackagingTest $denyThrew 'Packaging accepted a DLL outside src/cockpit/runtime/win-x64/.'
+
+    $allowDllRoot = Join-Path $testRoot 'allow-dll'
+    New-PackagingFixtureTree -Root $allowDllRoot
+    $allowDir = Join-Path $allowDllRoot 'src\cockpit\runtime\win-x64'
+    [IO.Directory]::CreateDirectory($allowDir) | Out-Null
+    [IO.File]::WriteAllBytes((Join-Path $allowDir 'PascalCockpit.App.exe'), [byte[]]@(0, 1, 2, 3))
+    [IO.File]::WriteAllBytes((Join-Path $allowDir 'hostfxr.dll'), [byte[]]@(0, 1, 2, 3))
+    $allowFiles = @(Get-TelephoneRedistributableFiles -SourceRoot $allowDllRoot -Kind 'release')
+    $allowPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($row in $allowFiles) { [void]$allowPaths.Add([string]$row.path) }
+    Assert-PackagingTest ($allowPaths.Contains('src/cockpit/runtime/win-x64/PascalCockpit.App.exe')) 'Bounded cockpit exe was omitted.'
+    Assert-PackagingTest ($allowPaths.Contains('src/cockpit/runtime/win-x64/hostfxr.dll')) 'Bounded cockpit dll was omitted.'
     Assert-PackagingTest ($fixtureSourceNames -contains 'THIRD-PARTY-NOTICES.md') 'Fixture source archive omitted THIRD-PARTY-NOTICES.md.'
     Assert-PackagingTest ($fixtureReleaseNames -contains 'THIRD-PARTY-NOTICES.md') 'Fixture release ZIP omitted THIRD-PARTY-NOTICES.md.'
     Assert-PackagingTest ($realSourceNames -contains '.gitattributes') 'Source archive omitted .gitattributes at root.'
@@ -408,7 +440,12 @@ try {
         'README.md',
         'src/core/TelephoneLine.Common.ps1',
         'tests/contracts/test_contracts.ps1',
-        'tests/Invoke-OfflineTests.ps1'
+        'tests/Invoke-OfflineTests.ps1',
+        'src/cockpit/Start-TelephoneCockpit.ps1',
+        'src/cockpit/config/default.json',
+        'src/cockpit/README.md',
+        'docs/releases/v0.1.5.md',
+        'src/cockpit/licenses/DOTNET-LICENSE.txt'
     )
     $usersWin = 'C:' + [char]92 + 'Users' + [char]92
     $usersUnix = '/' + 'Users' + '/'

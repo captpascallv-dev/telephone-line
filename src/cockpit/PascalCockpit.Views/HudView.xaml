@@ -1,0 +1,129 @@
+<UserControl x:Class="PascalCockpit.Views.HudView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="#FFF4F6F4"
+             Focusable="True"
+             Language="zh-CN">
+  <UserControl.Resources>
+    <SolidColorBrush x:Key="HudBg" Color="#FFF4F6F4"/>
+    <SolidColorBrush x:Key="HudPanel" Color="#FFFFFFFF"/>
+    <SolidColorBrush x:Key="HudLine" Color="#FFDCE4DE"/>
+    <SolidColorBrush x:Key="HudText" Color="#FF202824"/>
+    <SolidColorBrush x:Key="HudMuted" Color="#FF53625A"/>
+    <SolidColorBrush x:Key="HudMint" Color="#FF146C4B"/>
+    <SolidColorBrush x:Key="HudSelected" Color="#FFEAF3ED"/>
+    <SolidColorBrush x:Key="HudHover" Color="#FFF0F4F0"/>
+    <SolidColorBrush x:Key="PascalCalloutBg" Color="#FFF7F1E8"/>
+    <SolidColorBrush x:Key="PascalCalloutBorder" Color="#FFC4A574"/>
+    <Style x:Key="MutedCaption" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="{StaticResource HudMuted}"/>
+      <Setter Property="FontSize" Value="12"/>
+      <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+    <Style x:Key="BodyText" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="{StaticResource HudText}"/>
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="TextWrapping" Value="Wrap"/>
+    </Style>
+    <Style x:Key="ProjectListBoxItem" TargetType="ListBoxItem">
+      <Setter Property="Padding" Value="10,8"/>
+      <Setter Property="Margin" Value="0,0,0,4"/>
+      <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+      <Setter Property="Focusable" Value="True"/>
+      <Setter Property="AutomationProperties.AutomationId" Value="{Binding ProjectId}"/>
+      <Setter Property="AutomationProperties.Name" Value="{Binding Name}"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ListBoxItem">
+            <Border x:Name="Chrome" Background="Transparent" BorderBrush="Transparent"
+                    BorderThickness="1" CornerRadius="7" Padding="{TemplateBinding Padding}">
+              <ContentPresenter/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Chrome" Property="Background" Value="{StaticResource HudHover}"/>
+              </Trigger>
+              <Trigger Property="IsSelected" Value="True">
+                <Setter TargetName="Chrome" Property="Background" Value="{StaticResource HudSelected}"/>
+                <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource HudMint}"/>
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource HudMint}"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+  </UserControl.Resources>
+
+  <Border Background="{StaticResource HudBg}" BorderBrush="{StaticResource HudLine}" BorderThickness="1" CornerRadius="10" Padding="12">
+    <DockPanel LastChildFill="True">
+      <StackPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+        <TextBlock x:Name="HudTitleText" Text="驾驶舱 HUD" FontSize="15" FontWeight="SemiBold" Foreground="{StaticResource HudText}"/>
+        <TextBlock x:Name="CollectedAtText" Style="{StaticResource MutedCaption}" Margin="0,4,0,0" AutomationProperties.AutomationId="CollectedAtText"/>
+        <TextBlock x:Name="QualityText" Style="{StaticResource MutedCaption}" Margin="0,2,0,0" AutomationProperties.AutomationId="QualityText"/>
+        <TextBlock x:Name="FreshnessText" Style="{StaticResource MutedCaption}" Margin="0,2,0,0" Visibility="Collapsed"/>
+        <Button x:Name="HistoryToggle" Content="显示暂停与历史" Margin="0,8,0,0" Padding="8,4"
+                HorizontalAlignment="Left" Click="OnHistoryToggle" Cursor="Hand"
+                Background="#FFF0F4F0" BorderBrush="{StaticResource HudLine}" BorderThickness="1"
+                AutomationProperties.AutomationId="HistoryToggle"
+                AutomationProperties.Name="显示暂停与历史"/>
+        <Border x:Name="BannerHost" Margin="0,8,0,0" Padding="8,6" CornerRadius="6"
+                Background="#FFF0F4F0" BorderBrush="{StaticResource HudLine}" BorderThickness="1" Visibility="Collapsed">
+          <TextBlock x:Name="BannerText" Style="{StaticResource BodyText}"/>
+        </Border>
+      </StackPanel>
+
+      <Border x:Name="PascalStrip" DockPanel.Dock="Top" Margin="0,0,0,10" Padding="10,8"
+              Background="{StaticResource PascalCalloutBg}" BorderBrush="{StaticResource PascalCalloutBorder}"
+              BorderThickness="1" CornerRadius="7" Visibility="Collapsed">
+        <StackPanel>
+          <TextBlock x:Name="PascalCountText" FontWeight="SemiBold" Foreground="{StaticResource HudText}" FontSize="13"/>
+          <ItemsControl x:Name="PascalList" Margin="0,6,0,0">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <TextBlock Text="{Binding Text}" Style="{StaticResource BodyText}" Margin="0,0,0,4"
+                           ToolTip="{Binding FullText}"/>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+
+      <TextBlock x:Name="IssuesText" DockPanel.Dock="Bottom" Style="{StaticResource MutedCaption}" Margin="0,8,0,0"
+                 MaxHeight="52" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" Visibility="Collapsed"/>
+
+      <Border Background="{StaticResource HudPanel}" BorderBrush="{StaticResource HudLine}" BorderThickness="1" CornerRadius="8" Padding="6" MinHeight="210">
+        <Grid>
+          <ListBox x:Name="ProjectList"
+                   Background="Transparent"
+                   BorderThickness="0"
+                   ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                   ScrollViewer.VerticalScrollBarVisibility="Auto"
+                   SelectionMode="Single"
+                   ItemContainerStyle="{StaticResource ProjectListBoxItem}"
+                   SelectionChanged="OnProjectSelectionChanged"
+                   KeyboardNavigation.TabNavigation="Continue"
+                   VirtualizingStackPanel.IsVirtualizing="False"
+                   ScrollViewer.CanContentScroll="False"
+                   AutomationProperties.AutomationId="ProjectList">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <StackPanel ToolTip="{Binding StatusLineFull}">
+                  <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="14"
+                             Foreground="{StaticResource HudText}" TextTrimming="CharacterEllipsis"/>
+                  <TextBlock Text="{Binding StatusLine}" Style="{StaticResource MutedCaption}"
+                             Margin="0,3,0,0" MaxHeight="34" TextWrapping="Wrap"
+                             TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <TextBlock x:Name="EmptyText" HorizontalAlignment="Center" VerticalAlignment="Center"
+                     Style="{StaticResource MutedCaption}" Visibility="Collapsed" TextAlignment="Center"/>
+        </Grid>
+      </Border>
+    </DockPanel>
+  </Border>
+</UserControl>

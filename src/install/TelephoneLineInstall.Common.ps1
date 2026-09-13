@@ -303,6 +303,7 @@ function Get-TelephoneInstallInventory {
                 throw 'Source tree contains a reparse point.'
             }
             if ($item.PSIsContainer) {
+                if ($item.Name -eq 'bin' -or $item.Name -eq 'obj') { continue }
                 Add-TelephoneInstallWalk -Directory $item.FullName
             } else {
                 $identity = Get-TelephoneInstallFileIdentity -Path $item.FullName

@@ -1,0 +1,10 @@
+{
+  "registry_paths": [],
+  "additional_source_paths": [],
+  "refresh_seconds": 15,
+  "max_file_bytes": 1048576,
+  "max_files_per_refresh": 512,
+  "read_only": true,
+  "allow_network": false,
+  "send_messages_automatically": false
+}

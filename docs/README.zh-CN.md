@@ -90,6 +90,8 @@ pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$env:LOCA
 
 Doctor 返回 `healthy=true` 和 `code=HEALTHY` 后再派任务。Telephone Line 使用严格的身份、路径和 JSON 契约，普通用户通常不需要手写请求文件；让本机 Agent 根据 [快速开始](quick-start.md)、[安装说明](install.md)、[路线说明](routes.md) 和对应 adapter 文档生成，会比复制别人的绝对路径安全。Lead CLI 请用 `TELEPHONE_LINE_STABLE_CLI` 指向独立可执行文件，不要指向 App 版本目录；详见 [安装说明](install.md)。
 
+安装目录里还有可选的驾驶舱窗口，不是 Lead，也不替代自带看板。从已安装树运行 `src/cockpit/Start-TelephoneCockpit.ps1`。随包默认配置没有任务来源，不传本机状态目录时窗口是空的。命令见 [src/cockpit/README.md](../src/cockpit/README.md)。
+
 如果 Doctor 报告 `SUPERVISOR_INSTALL_VIEW_MISMATCH`，说明已登记的计划任务和当前进程看到的安装目录不是同一物理位置。请按 Doctor 已核实的物理安装来绑定任务、后续启动和安装/状态设置，使用 `TELEPHONE_LINE_INSTALL_ROOT` 或 `-InstallRoot`。不要复制别人的绝对路径；当 Doctor 指出视图不一致时，不要假定 `%LOCALAPPDATA%\TelephoneLine` 就是计划任务实际读取的目录。
 
 已经有可恢复的 Codex Lead binding 时，普通单任务使用一个 `telephone-line-dispatch-v1` 请求：
@@ -253,6 +255,7 @@ v0.1 目前仅验证 Windows 生产环境。macOS 用户不要强行运行 Windo
 
 - [快速开始](quick-start.md)
 - [v0.1.2 发行说明](releases/v0.1.2.md)
+- [v0.1.5 发行说明](releases/v0.1.5.md)
 - [仪表盘](dashboard.md)
 - [连续推进控制面](control-plane.md)
 - [架构](architecture.md)

@@ -47,6 +47,8 @@ pwsh -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$env:LOCA
 
 Do not dispatch work until Doctor reports `healthy=true` and `code=HEALTHY`. Telephone Line uses strict identity, path, and JSON contracts. Most users should let a local Agent generate requests from [Quick start](docs/quick-start.md), [Install](docs/install.md), [Routes](docs/routes.md), and the selected adapter documentation instead of copying another machine's absolute paths. Configure the Lead CLI with `TELEPHONE_LINE_STABLE_CLI` (an independent executable, not an App version folder); see [Install](docs/install.md).
 
+The install also copies a companion cockpit. It is optional, not a Lead, and not a replacement for the bundled dashboard. Open it from the installed tree with `src/cockpit/Start-TelephoneCockpit.ps1`. The shipped default config has no task sources, so the window stays empty until you pass your own Telephone state or registry. Commands are in [src/cockpit/README.md](src/cockpit/README.md).
+
 If Doctor reports `SUPERVISOR_INSTALL_VIEW_MISMATCH`, the registered task and the current process file view are not the same physical install. Bind the task, later launches, and install/state settings to the physical install Doctor already verified, using `TELEPHONE_LINE_INSTALL_ROOT` or `-InstallRoot`. Do not paste another machine's absolute path. When Doctor says the views differ, do not assume `%LOCALAPPDATA%\TelephoneLine` is the directory the scheduler reads.
 
 If a resumable Codex Lead binding already exists, an ordinary single job uses one `telephone-line-dispatch-v1` request:
@@ -209,6 +211,7 @@ Using a Windows host for Telephone Line remains an available option. If native m
 
 - [Quick start](docs/quick-start.md)
 - [v0.1.2 notes](docs/releases/v0.1.2.md)
+- [v0.1.5 notes](docs/releases/v0.1.5.md)
 - [Dashboard](docs/dashboard.md)
 - [Continuity control plane](docs/control-plane.md)
 - [Architecture](docs/architecture.md)
