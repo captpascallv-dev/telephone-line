@@ -85,7 +85,16 @@ if (-not [string]::IsNullOrWhiteSpace($ConfigPath)) {
 }
 
 $env:PASCAL_COCKPIT_CONFIG = $resolvedConfig
-$argList = @('--config', $resolvedConfig)
-$proc = Start-Process -FilePath $exe -WorkingDirectory ([IO.Path]::GetDirectoryName($exe)) -ArgumentList $argList -PassThru
+# ProcessStartInfo.ArgumentList quotes each argv. Start-Process -ArgumentList joins
+# with spaces and drops quotes, so a DataDir/ConfigPath with spaces or non-ASCII
+# was split and App.ReadExplicitConfigPath took only the prefix.
+$psi = [Diagnostics.ProcessStartInfo]::new()
+$psi.FileName = $exe
+$psi.WorkingDirectory = [IO.Path]::GetDirectoryName($exe)
+$psi.UseShellExecute = $false
+[void]$psi.ArgumentList.Add('--config')
+[void]$psi.ArgumentList.Add($resolvedConfig)
+$proc = [Diagnostics.Process]::Start($psi)
+if ($null -eq $proc) { throw 'Failed to start PascalCockpit.App.exe.' }
 Write-Host ('pid=' + $proc.Id)
 if ($PassThru) { return $proc }

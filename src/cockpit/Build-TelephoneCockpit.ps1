@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: MPL-2.0
 # Publish the bundled cockpit runtime into src/cockpit/runtime/win-x64.
 # Maps local source paths to a generic prefix so binaries do not embed this machine.
+# Recursive clean is only allowed for that owned runtime folder. A custom
+# -OutputPath that already has files, resolves inside the source tree, or
+# uses a reparse/alias is refused before any delete or publish.
 [CmdletBinding()]
 param(
     [string]$SdkCommand,
@@ -25,8 +28,51 @@ if ([string]::IsNullOrWhiteSpace($dotnet) -or -not [IO.File]::Exists($dotnet)) {
 }
 
 $srcMap = ($here.TrimEnd('\') + '=/_/src/cockpit')
-$outFull = [IO.Path]::GetFullPath($OutputPath)
-if ([IO.Directory]::Exists($outFull)) {
+$ownedRuntime = [IO.Path]::GetFullPath((Join-Path $here 'runtime\win-x64')).TrimEnd('\')
+$outFull = [IO.Path]::GetFullPath($OutputPath).TrimEnd('\')
+
+function Test-TelephoneCockpitReparseInChain {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $probe = $Path
+    while (-not [string]::IsNullOrWhiteSpace($probe)) {
+        if ([IO.Directory]::Exists($probe) -or [IO.File]::Exists($probe)) {
+            $item = Get-Item -LiteralPath $probe -Force
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw 'OUTPUT_REPARSE_REFUSED: output path involves a reparse point or alias.'
+            }
+        }
+        $parent = [IO.Path]::GetDirectoryName($probe)
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $probe) { break }
+        $probe = $parent
+    }
+}
+
+function Test-TelephoneCockpitPathEquals {
+    param([string]$Left, [string]$Right)
+    return [string]::Equals($Left.TrimEnd('\'), $Right.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Test-TelephoneCockpitPathUnder {
+    param([string]$Path, [string]$Root)
+    $p = $Path.TrimEnd('\') + '\'
+    $r = $Root.TrimEnd('\') + '\'
+    return $p.StartsWith($r, [StringComparison]::OrdinalIgnoreCase)
+}
+
+Test-TelephoneCockpitReparseInChain -Path $outFull
+$sourceRoot = [IO.Path]::GetFullPath($here).TrimEnd('\')
+$isOwnedRuntime = Test-TelephoneCockpitPathEquals -Left $outFull -Right $ownedRuntime
+if (-not $isOwnedRuntime) {
+    if (Test-TelephoneCockpitPathUnder -Path $outFull -Root $sourceRoot) {
+        throw 'OUTPUT_INSIDE_SOURCE: custom output resolves inside the cockpit source tree.'
+    }
+    if ([IO.Directory]::Exists($outFull)) {
+        $existing = @(Get-ChildItem -LiteralPath $outFull -Force)
+        if ($existing.Count -gt 0) {
+            throw 'OUTPUT_NOT_EMPTY: refusing to clean a non-owned output directory that already has files.'
+        }
+    }
+} elseif ([IO.Directory]::Exists($outFull)) {
     Get-ChildItem -LiteralPath $outFull -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
 }
 [IO.Directory]::CreateDirectory($outFull) | Out-Null

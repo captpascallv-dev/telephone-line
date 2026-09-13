@@ -757,8 +757,8 @@
     },
     {
       "path": "src/cockpit/Build-TelephoneCockpit.ps1",
-      "bytes": 2436,
-      "sha256": "87c5f0f1aa81c143fd84f7989edb4558f7414e31145b2c132ced6b41f9ce0eb1"
+      "bytes": 4525,
+      "sha256": "5c080e78eb2a5c42a074f88375bbb8d87fe2ab0fa19a71c5cdd565f52c40da81"
     },
     {
       "path": "src/cockpit/Directory.Build.props",
@@ -987,8 +987,8 @@
     },
     {
       "path": "src/cockpit/Start-TelephoneCockpit.ps1",
-      "bytes": 3567,
-      "sha256": "1223215011d71451c8d017d8e233471f1ce28d3fa7e7afb7ebda50f90c0a3273"
+      "bytes": 3985,
+      "sha256": "e37399d35ba4eede523f1cf142dc575f4ab74164fa539c06de3b3ab00319c081"
     },
     {
       "path": "src/cockpit/config/default.json",
@@ -3113,7 +3113,7 @@
   ],
   "counts": {
     "files": 616,
-    "bytes": 157348332
+    "bytes": 157350839
   },
   "excluded": [
     ".control/**",
