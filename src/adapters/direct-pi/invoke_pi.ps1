@@ -63,6 +63,37 @@ function Get-DirectPiAssistantText {
     return [string]::Concat($pieces)
 }
 
+function Save-DirectPiTransportDiagnostic {
+    param(
+        [Parameter(Mandatory = $true)][string]$Stage,
+        [int]$FailureLine = 0,
+        [string]$FailureType = ''
+    )
+    $path = Join-Path ([IO.Path]::GetDirectoryName($RequestPath)) 'transport-diagnostics.json'
+    if ([IO.File]::Exists($path)) { return }
+    $streamFacts = $null
+    if ($null -ne $streamSummary) {
+        $streamFacts = [ordered]@{
+            event_count = [int]$streamSummary.event_count
+            agent_end_count = [int]$streamSummary.agent_end_count
+            stdout_bytes = [int64]$streamSummary.stdout_bytes
+            stdout_sha256 = [string]$streamSummary.stdout_sha256
+            retained_events = [int]$streamSummary.retained_events
+        }
+    }
+    $diagnostic = [ordered]@{
+        stage = $Stage
+        stdout_bytes = [int64]$stdoutBytesCount
+        stdout_sha256 = $stdoutSha256
+        event_count = [int]$eventCount
+        agent_end_count = [int]$agentEndCount
+        failure_script_line = [int]$FailureLine
+        failure_exception_type = $FailureType
+        stream_summary = $streamFacts
+    }
+    try { $null = Write-DirectPiJsonCreateNew -Path $path -Value $diagnostic } catch { }
+}
+
 $request = $null
 $process = $null
 $stdoutBuffer = $null
@@ -76,6 +107,10 @@ $assistantMessage = $null
 $assistantText = ''
 $stopReason = ''
 $stderrBytesCount = 0
+$stdoutBytesCount = 0
+$stdoutSha256 = ''
+$failureStage = 'preflight'
+$streamSummary = $null
 try {
     $wrapperIdentity = Get-DirectPiFileIdentity -Path $PSCommandPath
     if ([int64]$wrapperIdentity.bytes -ne $ExpectedWrapperBytes -or [string]$wrapperIdentity.sha256 -cne $ExpectedWrapperSha256) {
@@ -168,6 +203,7 @@ try {
         foreach ($argument in @($cliPath) + $piArgs) { [void]$startInfo.ArgumentList.Add([string]$argument) }
     }
 
+    $failureStage = 'native-run'
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
     if (-not $process.Start()) { throw 'PI process did not start.' }
@@ -191,6 +227,8 @@ try {
     [void]$stderrTask.GetAwaiter().GetResult()
     $stdoutBytes = $stdoutBuffer.ToArray()
     $stderrBytesCount = [int64]$stderrBuffer.Length
+    $stdoutBytesCount = [int64]$stdoutBytes.Length
+    $stdoutSha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($stdoutBytes)).ToLowerInvariant()
     $piExitCode = if ($finished) { [int]$process.ExitCode } else { 124 }
 
     $boundAfter = Find-DirectPiExactSessionFile -SessionDir $sessionDir -SessionId ([string]$request.session_id) -Workspace $workspace -MaxBytes $sessionFileMaxBytes
@@ -199,11 +237,14 @@ try {
     }
     $boundSessionPath = $boundAfter
 
-    $events = @(ConvertFrom-DirectPiJsonLinesStrict -Bytes $stdoutBytes -Label 'PI JSON event stream' -MaxBytes ([int64]$request.max_output_bytes))
-    $eventCount = $events.Count
-    if ($events.Count -lt 1) { throw 'PI JSON event stream has no header.' }
+    $failureStage = 'event-stream-parse'
+    $streamSummary = ConvertFrom-DirectPiTerminalStream -Bytes $stdoutBytes -MaxRecordBytes ([int64]$request.max_output_bytes)
+    $events = @($streamSummary.events)
+    $eventCount = [int]$streamSummary.event_count
+    $failureStage = 'terminal-check'
+    if ($eventCount -lt 1 -or $events.Count -lt 1) { throw 'PI JSON event stream has no header.' }
     $headerCount = 0
-    $lastAssistantIndex = -1
+    $lastAssistantIndex = [int]$streamSummary.last_assistant_index
     $agentEndIndices = [Collections.Generic.List[int]]::new()
     for ($index = 0; $index -lt $events.Count; $index++) {
         $event = $events[$index]
@@ -211,13 +252,12 @@ try {
             $headerCount++
             if ($index -ne 0) { throw 'PI session header is not the first event.' }
         }
-        if ($event.Contains('type') -and [string]$event.type -ceq 'agent_end') { $agentEndIndices.Add($index) }
+        if ($event.Contains('type') -and [string]$event.type -ceq 'agent_end') { $agentEndIndices.Add([int]$streamSummary.last_agent_end_index) }
         if (
             $event.Contains('type') -and [string]$event.type -ceq 'message_end' -and
             $event.Contains('message') -and $event.message -is [Collections.IDictionary] -and
             $event.message.Contains('role') -and [string]$event.message.role -ceq 'assistant'
         ) {
-            $lastAssistantIndex = $index
             $assistantMessage = $event.message
         }
     }
@@ -233,8 +273,8 @@ try {
     if (-not $assistantMessage.Contains('stopReason')) { throw 'PI final assistant has no stopReason.' }
     $stopReason = [string]$assistantMessage.stopReason
     if ([string]::IsNullOrWhiteSpace($stopReason) -or $stopReason -in @('error', 'aborted', 'pending')) { throw 'PI final assistant has a non-terminal stopReason.' }
-    $agentEndCount = $agentEndIndices.Count
-    if ($agentEndCount -lt 1 -or -not (@($agentEndIndices | Where-Object { $_ -gt $lastAssistantIndex }).Count -gt 0)) {
+    $agentEndCount = [int]$streamSummary.agent_end_count
+    if ($agentEndCount -lt 1 -or [int]$streamSummary.last_agent_end_index -le $lastAssistantIndex) {
         throw 'PI JSON event stream has no agent_end after the final assistant.'
     }
     if (-not $finished) { throw 'PI process exceeded a bounded startup window.' }
@@ -263,6 +303,7 @@ try {
         stderr_bytes = $stderrBytesCount
         duration_ms = [int64]$startedAt.ElapsedMilliseconds
     } | ConvertTo-Json -Depth 64
+    Save-DirectPiTransportDiagnostic -Stage 'complete'
     exit 0
 } catch {
     [ordered]@{
@@ -288,6 +329,12 @@ try {
         stderr_bytes = $stderrBytesCount
         duration_ms = [int64]$startedAt.ElapsedMilliseconds
     } | ConvertTo-Json -Depth 64
+    $failType = $_.Exception.GetType().Name
+    $failLine = 0
+    if ($null -ne $_.InvocationInfo -and $null -ne $_.InvocationInfo.ScriptLineNumber) {
+        $failLine = [int]$_.InvocationInfo.ScriptLineNumber
+    }
+    Save-DirectPiTransportDiagnostic -Stage $failureStage -FailureLine $failLine -FailureType $failType
     exit 4
 } finally {
     if ($null -ne $stdoutBuffer) { $stdoutBuffer.Dispose() }

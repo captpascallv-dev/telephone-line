@@ -162,6 +162,33 @@ internal static class DocumentNormalizers
             }
         }
 
+        var currentWork = JsonField.Arr(doc.Data, "current_work");
+        if (currentWork is not null)
+        {
+            var emittedWork = 0;
+            foreach (var item in currentWork)
+            {
+                if (item is not JsonObject row) continue;
+                var role = JsonField.Str(row, "role") ?? string.Empty;
+                if (role.Equals("lead", StringComparison.OrdinalIgnoreCase)
+                    || role.Contains("review", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var workRoute = JsonField.Str(row, "route");
+                if (!role.Contains("exec", StringComparison.OrdinalIgnoreCase)
+                    && string.IsNullOrWhiteSpace(workRoute))
+                    continue;
+                var key = !string.IsNullOrWhiteSpace(workRoute) ? workRoute : "exec-" + emittedWork;
+                EmitActiveLaneWork(doc, projectId, key, row, productPass, facts, routesSeenLive, routesSeenProtocol);
+                emittedWork++;
+            }
+
+            if (emittedWork > 0)
+            {
+                HandlingLogic.EmitHistoricalFromSwitchFields(doc, projectId, facts);
+                return;
+            }
+        }
+
         ApplyCurrentHandler(values, doc.Data, state, humanNext);
         StampExecutorIdentity(values, doc.Data);
         StampNestedRoundVerdicts(values, doc.Data);
@@ -250,6 +277,12 @@ internal static class DocumentNormalizers
             values["lead_handling_state"] = "repair_prepared";
             values["acceptance_state"] = "handled_fail_repair";
             values["execution_state"] = "returned";
+            return;
+        }
+
+        if (s.Contains("not_dispatched", StringComparison.OrdinalIgnoreCase))
+        {
+            values["execution_state"] = "unknown";
             return;
         }
 

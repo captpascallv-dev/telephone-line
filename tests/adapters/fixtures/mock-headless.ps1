@@ -110,6 +110,34 @@ if (-not [string]::IsNullOrWhiteSpace($statePath)) {
     [IO.File]::WriteAllText($statePath, (($state | ConvertTo-Json -Compress) + "`n"), [Text.UTF8Encoding]::new($false))
 }
 
+$sessionStoreDir = Join-Path $dshHome ('sessions\workspace-token\' + [string]$state.native_session_id)
+[IO.Directory]::CreateDirectory($sessionStoreDir) | Out-Null
+$sessionBlob = Join-Path $sessionStoreDir 'session.v3.jsonl.zstd'
+if (-not [IO.File]::Exists($sessionBlob)) {
+    [IO.File]::WriteAllBytes($sessionBlob, [Text.UTF8Encoding]::new($false).GetBytes("dsh-contained-session:$($state.native_session_id)`n"))
+}
+$projDir = Join-Path $dshHome 'storages\session_projcache\sessions'
+[IO.Directory]::CreateDirectory($projDir) | Out-Null
+$projPath = Join-Path $projDir ([string]$state.native_session_id + '.json')
+$proj = [ordered]@{
+    record = [ordered]@{
+        rows = [ordered]@{
+            turnBoundary = [ordered]@{
+                val = [ordered]@{
+                    openTurnStartSeq = $null
+                }
+            }
+        }
+    }
+}
+[IO.File]::WriteAllText($projPath, (($proj | ConvertTo-Json -Depth 8 -Compress) + "`n"), [Text.UTF8Encoding]::new($false))
+$attDir = Join-Path $dshHome 'attachments\v1\objects\00'
+[IO.Directory]::CreateDirectory($attDir) | Out-Null
+$attPath = Join-Path $attDir 'mock-attachment.bin'
+if (-not [IO.File]::Exists($attPath)) {
+    [IO.File]::WriteAllBytes($attPath, [byte[]](7, 7, 7, 7))
+}
+
 $sessionParent = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($SessionOut))
 if (-not [IO.Directory]::Exists($sessionParent)) { [IO.Directory]::CreateDirectory($sessionParent) | Out-Null }
 $sessionRecord = [ordered]@{

@@ -10,7 +10,7 @@ param(
     [string]$ResumeSessionPath = '',
     [ValidateRange(0, 2147483647)][int]$PiTimeoutSeconds = 0,
     [ValidateRange(0, 2147483647)][int]$WaitTimeoutSeconds = 0,
-    [ValidateRange(65536, 67108864)][int]$MaxOutputBytes = 16777216,
+    [ValidateRange(65536, 67108864)][int]$MaxOutputBytes = 16777216, # per JSON event record in the native stdout stream; session files keep the original larger bound
     [string]$NodePath = '',
     [string]$PiCliPath = '',
     [ValidatePattern('^[A-Za-z0-9._:/-]+$')][string]$Provider = 'xai',
@@ -43,6 +43,157 @@ function Get-DirectPiSessionBindingPaths {
     param([Parameter(Mandatory = $true)][string]$Root, [Parameter(Mandatory = $true)][string]$SessionId)
     $sessionRoot = Join-Path $Root ('bindings\' + $SessionId)
     return [ordered]@{ root = $sessionRoot; binding = Join-Path $sessionRoot 'binding.json' }
+}
+
+function Get-DirectPiSessionLastAssistant {
+    param([Parameter(Mandatory = $true)][object[]]$Records)
+    $last = $null
+    foreach ($record in $Records) {
+        if ($record -isnot [Collections.IDictionary]) { continue }
+        $message = $null
+        if ($record.Contains('message') -and $record.message -is [Collections.IDictionary]) {
+            $message = $record.message
+        } elseif ($record.Contains('role')) {
+            $message = $record
+        }
+        if ($null -eq $message) { continue }
+        if (-not $message.Contains('role') -or [string]$message.role -cne 'assistant') { continue }
+        $last = $message
+    }
+    return $last
+}
+
+function Restore-DirectPiMissingBinding {
+    param(
+        [Parameter(Mandatory = $true)][string]$State,
+        [Parameter(Mandatory = $true)][string]$JobId,
+        [Parameter(Mandatory = $true)][string]$NativeSessionId,
+        [Parameter(Mandatory = $true)][string]$ResumeSessionPath
+    )
+    if ([string]::IsNullOrWhiteSpace($JobId) -or $JobId -notmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') {
+        throw 'Adapter native session id is missing or unknown.'
+    }
+    if ([string]::IsNullOrWhiteSpace($ResumeSessionPath)) { throw 'Adapter native session id is missing or unknown.' }
+    $bindingPaths = Get-DirectPiSessionBindingPaths -Root $State -SessionId $NativeSessionId
+    if ([IO.File]::Exists($bindingPaths.binding)) { throw 'Direct PI session binding already exists.' }
+    $paths = Get-DirectPiJobPaths -Root $State -Id $JobId
+    foreach ($required in @($paths.request, $paths.receipt, $paths.stdout)) {
+        if (-not [IO.File]::Exists($required)) { throw 'Adapter durable state was not found.' }
+    }
+    $requestRead = Read-DirectPiJson -Path $paths.request
+    $receiptRead = Read-DirectPiJson -Path $paths.receipt
+    $resultRead = Read-DirectPiJson -Path $paths.stdout
+    $request = $requestRead.value
+    $receipt = $receiptRead.value
+    $result = $resultRead.value
+    if ([string]$request.job_id -cne $JobId -or [string]$receipt.job_id -cne $JobId) { throw 'Direct PI terminal job differs.' }
+    if ([string]$request.session_id -cne $NativeSessionId) { throw 'Adapter native session id does not match the frozen session.' }
+    if ($null -ne $result.session_id -and -not [string]::IsNullOrWhiteSpace([string]$result.session_id) -and [string]$result.session_id -cne $NativeSessionId) {
+        throw 'Adapter native session id does not match the frozen session.'
+    }
+    if ([bool]$receipt.transport_complete -or [bool]$receipt.pi_success -or [bool]$result.success) {
+        throw 'Direct PI missing-binding recovery requires the original failed wrapper result.'
+    }
+    if ([int]$result.pi_exit_code -ne 0) { throw 'Direct PI missing-binding recovery requires native exit 0.' }
+    if ([IO.File]::Exists($paths.owner)) {
+        $owner = (Read-DirectPiJson -Path $paths.owner).value
+        if (Test-DirectPiOwnerAlive -Owner $owner) { throw 'Direct PI job still has a live owner; refusing recovery.' }
+    }
+    $sessionPath = [IO.Path]::GetFullPath($ResumeSessionPath)
+    $item = Get-Item -LiteralPath $sessionPath -Force
+    if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'PI session is a reparse point.' }
+    $sessionDir = Get-DirectPiCanonicalDirectory -Path ([string]$request.session_dir)
+    if (-not (Test-DirectPiPathWithin -Root $sessionDir -Path $sessionPath)) { throw 'Direct PI follow-up session escaped the private session directory.' }
+    if (-not [string]::IsNullOrWhiteSpace([string]$request.session_path)) {
+        if (-not $sessionPath.Equals([IO.Path]::GetFullPath([string]$request.session_path), [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Direct PI follow-up exact session path differs.'
+        }
+    }
+    $workspace = Get-DirectPiCanonicalDirectory -Path ([string]$request.workspace)
+    $found = Find-DirectPiExactSessionFile -SessionDir $sessionDir -SessionId $NativeSessionId -Workspace $workspace -MaxBytes ([Math]::Max([int64]$request.max_output_bytes, 67108864))
+    if (-not $found.Equals($sessionPath, [StringComparison]::OrdinalIgnoreCase)) { throw 'Direct PI follow-up exact session path differs.' }
+    $sessionBytes = [IO.File]::ReadAllBytes($sessionPath)
+    $records = @(ConvertFrom-DirectPiJsonLinesStrict -Bytes $sessionBytes -Label 'PI session file' -MaxBytes ([Math]::Max([int64]$request.max_output_bytes, 67108864)))
+    if ($records.Count -lt 1) { throw 'PI session file has no header.' }
+    $header = $records[0]
+    if (-not $header.Contains('type') -or [string]$header.type -cne 'session') { throw 'PI session file has no session header.' }
+    if ([string]$header.id -cne $NativeSessionId) { throw 'Adapter native session id does not match the frozen session.' }
+    $headerCwd = Get-DirectPiCanonicalDirectory -Path ([string]$header.cwd)
+    if (-not $headerCwd.Equals($workspace, [StringComparison]::OrdinalIgnoreCase)) { throw 'PI JSON header returned another cwd.' }
+    $assistant = Get-DirectPiSessionLastAssistant -Records $records
+    if ($null -eq $assistant) { throw 'PI JSON event stream has no final assistant message_end.' }
+    if (-not $assistant.Contains('stopReason')) { throw 'PI final assistant has no stopReason.' }
+    $stopReason = [string]$assistant.stopReason
+    if ([string]::IsNullOrWhiteSpace($stopReason) -or $stopReason -in @('error', 'aborted', 'pending')) { throw 'PI final assistant has a non-terminal stopReason.' }
+    if (-not $assistant.Contains('provider') -or [string]$assistant.provider -cne [string]$request.provider) { throw 'PI final assistant provider differs.' }
+    if (-not $assistant.Contains('model') -or [string]$assistant.model -cne [string]$request.model) { throw 'PI final assistant model differs.' }
+    $requestIdentity = Get-DirectPiFileIdentity -Path $paths.request
+    $receiptIdentity = Get-DirectPiFileIdentity -Path $paths.receipt
+    $resultIdentity = Get-DirectPiFileIdentity -Path $paths.stdout
+    if ($receipt.request -is [Collections.IDictionary]) {
+        if ([int64]$receipt.request.bytes -ne [int64]$requestIdentity.bytes -or [string]$receipt.request.sha256 -cne [string]$requestIdentity.sha256) {
+            throw 'Direct PI request identity changed before launch.'
+        }
+    }
+    $bindingValue = [ordered]@{
+        protocol_version = 'telephone-line-direct-pi-binding-v1'
+        native_session_id = $NativeSessionId
+        latest_job_id = $JobId
+        session_path = $sessionPath
+        created_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+        recovered_missing_binding = $true
+    }
+    $bindingIdentity = Write-DirectPiJsonCreateNew -Path $bindingPaths.binding -Value $bindingValue
+    $afterRequest = Get-DirectPiFileIdentity -Path $paths.request
+    $afterReceipt = Get-DirectPiFileIdentity -Path $paths.receipt
+    $afterResult = Get-DirectPiFileIdentity -Path $paths.stdout
+    if ([string]$afterRequest.sha256 -cne [string]$requestIdentity.sha256 -or [string]$afterReceipt.sha256 -cne [string]$receiptIdentity.sha256 -or [string]$afterResult.sha256 -cne [string]$resultIdentity.sha256) {
+        throw 'Direct PI original failed durable state changed during recovery.'
+    }
+    $null = Write-DirectPiJsonCreateNew -Path (Join-Path $paths.root 'binding-recovery.json') -Value ([ordered]@{
+        protocol_version = 'telephone-line-direct-pi-binding-recovery-v1'
+        native_session_id = $NativeSessionId
+        job_id = $JobId
+        session_path = $sessionPath
+        original_request = $requestIdentity
+        original_receipt = $receiptIdentity
+        original_result = $resultIdentity
+        recovered_binding = $bindingIdentity
+        owner_absent = $true
+        native_writer_absent = $true
+        model_calls = 0
+        automatic_rerun = $false
+        replacement_started = $false
+        forged_agent_end = $false
+        wrapper_success_rewritten = $false
+        original_transport_complete = $false
+    })
+}
+
+function Find-DirectPiExactSessionFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$SessionDir,
+        [Parameter(Mandatory = $true)][string]$SessionId,
+        [Parameter(Mandatory = $true)][string]$Workspace,
+        [Parameter(Mandatory = $true)][long]$MaxBytes
+    )
+    $matches = [Collections.Generic.List[string]]::new()
+    $canonicalWorkspace = Get-DirectPiCanonicalDirectory -Path $Workspace
+    foreach ($file in @(Get-ChildItem -LiteralPath $SessionDir -Filter '*.jsonl' -File -Force -ErrorAction Stop)) {
+        if (($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'PI session is a reparse point.' }
+        $bytes = [IO.File]::ReadAllBytes($file.FullName)
+        $records = @(ConvertFrom-DirectPiJsonLinesStrict -Bytes $bytes -Label 'PI session file' -MaxBytes $MaxBytes)
+        if ($records.Count -lt 1) { continue }
+        $header = $records[0]
+        if (-not $header.Contains('type') -or [string]$header.type -cne 'session') { continue }
+        if (-not $header.Contains('id') -or -not $header.Contains('cwd')) { continue }
+        $headerCwd = Get-DirectPiCanonicalDirectory -Path ([string]$header.cwd)
+        if ([string]$header.id -ceq $SessionId -and $headerCwd.Equals($canonicalWorkspace, [StringComparison]::OrdinalIgnoreCase)) {
+            $matches.Add($file.FullName)
+        }
+    }
+    if ($matches.Count -ne 1) { throw 'Expected one exact PI session file.' }
+    return [IO.Path]::GetFullPath($matches[0])
 }
 
 function Start-DirectPiHost {
@@ -219,7 +370,9 @@ if ($Operation -ne 'start' -and $NativeSessionId -cnotmatch '^[A-Za-z0-9._:-]+$'
 
 if ($Operation -eq 'recover') {
     $bindingPaths = Get-DirectPiSessionBindingPaths -Root $state -SessionId $NativeSessionId
-    if (-not [IO.File]::Exists($bindingPaths.binding)) { throw 'Adapter native session id is missing or unknown.' }
+    if (-not [IO.File]::Exists($bindingPaths.binding)) {
+        Restore-DirectPiMissingBinding -State $state -JobId $JobId -NativeSessionId $NativeSessionId -ResumeSessionPath $ResumeSessionPath
+    }
     $binding = (Read-DirectPiJson -Path $bindingPaths.binding).value
     if ([string]$binding.native_session_id -cne $NativeSessionId) { throw 'Adapter native session id does not match the frozen session.' }
     $paths = Get-DirectPiJobPaths -Root $state -Id ([string]$binding.latest_job_id)

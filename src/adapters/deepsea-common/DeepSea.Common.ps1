@@ -322,6 +322,166 @@ function Copy-DeepSeaRegularFile {
     return $copied
 }
 
+function Test-DeepSeaPathWithinHome {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$ContainedRoot,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+    $root = [IO.Path]::GetFullPath($ContainedRoot).TrimEnd('\')
+    $full = [IO.Path]::GetFullPath($Path)
+    $prefix = $root + [IO.Path]::DirectorySeparatorChar
+    return $full.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Enter-DeepSeaNativeWriterLock {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$LockPath,
+        [Parameter(Mandatory = $true)][string]$SessionId,
+        [Parameter(Mandatory = $true)][string]$JobId
+    )
+    $full = [IO.Path]::GetFullPath($LockPath)
+    $parent = [IO.Path]::GetDirectoryName($full)
+    if (-not [IO.Directory]::Exists($parent)) { [IO.Directory]::CreateDirectory($parent) | Out-Null }
+    $payload = [ordered]@{
+        protocol_version = 'telephone-line-deepsea-native-writer-lock-v1'
+        native_session_id = $SessionId
+        job_id = $JobId
+        created_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+        automatic_rerun = $false
+        replacement_started = $false
+    }
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes((($payload | ConvertTo-Json -Depth 8).Replace("`r`n", "`n") + "`n"))
+    try {
+        $stream = [IO.FileStream]::new($full, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    } catch [IO.IOException] {
+        throw 'Native session writer is occupied; refusing continuation.'
+    }
+    try {
+        $stream.SetLength(0)
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Flush($true)
+        return $stream
+    } catch {
+        $stream.Dispose()
+        throw
+    }
+}
+
+function Test-DeepSeaNativeTurnClosed {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$ProjectionPath,
+        [Parameter(Mandatory = $true)][string]$NativeSessionId
+    )
+    if (-not [IO.File]::Exists($ProjectionPath)) {
+        throw 'Previous native turn is still open; refusing duplicate continuation.'
+    }
+    $item = Get-Item -LiteralPath $ProjectionPath -Force
+    if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'Native continuation state contains a reparse point.'
+    }
+    $projectionRecord = (Read-DeepSeaJson -Path $ProjectionPath).value
+    $seq = $null
+    try {
+        if ($null -eq $projectionRecord.record -or $null -eq $projectionRecord.record.rows -or $null -eq $projectionRecord.record.rows.turnBoundary -or $null -eq $projectionRecord.record.rows.turnBoundary.val) {
+            throw 'missing'
+        }
+        $val = $projectionRecord.record.rows.turnBoundary.val
+        if ($val -is [Collections.IDictionary] -and $val.Contains('openTurnStartSeq')) {
+            $seq = $val.openTurnStartSeq
+        } else {
+            $seq = $val.openTurnStartSeq
+        }
+    } catch {
+        throw 'Previous native turn is still open; refusing duplicate continuation.'
+    }
+    if ($null -ne $seq) {
+        throw 'Previous native turn is still open; refusing duplicate continuation.'
+    }
+    $null = $NativeSessionId
+}
+
+function Copy-DeepSeaClosedContainedState {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$PreviousHome,
+        [Parameter(Mandatory = $true)][string]$NewHome,
+        [Parameter(Mandatory = $true)][string]$NativeSessionId
+    )
+    $sourceHome = [IO.Path]::GetFullPath($PreviousHome).TrimEnd('\')
+    $destinationHome = [IO.Path]::GetFullPath($NewHome).TrimEnd('\')
+    if (-not [IO.Directory]::Exists($sourceHome)) { throw 'Exact previous native session is not durably complete; refusing continuation.' }
+    $copies = [Collections.Generic.List[object]]::new()
+    foreach ($storeName in @('sessions', 'storages', 'attachments')) {
+        $sourceStore = Join-Path $sourceHome $storeName
+        if (-not [IO.Directory]::Exists($sourceStore)) { continue }
+        $storeItem = Get-Item -LiteralPath $sourceStore -Force
+        if (-not $storeItem.PSIsContainer -or ($storeItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'Native continuation state contains a reparse point.'
+        }
+        foreach ($sourceItem in @(Get-ChildItem -LiteralPath $sourceStore -Recurse -Force)) {
+            if (($sourceItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Native continuation state contains a reparse point.' }
+            if ($sourceItem.PSIsContainer) { continue }
+            $relativeStorePath = [IO.Path]::GetRelativePath($sourceHome, $sourceItem.FullName)
+            if ([string]::IsNullOrWhiteSpace($relativeStorePath) -or $relativeStorePath.StartsWith('..', [StringComparison]::Ordinal)) {
+                throw 'Native continuation state escaped the previous job home.'
+            }
+            $destinationPath = Join-Path $destinationHome $relativeStorePath
+            if (-not (Test-DeepSeaPathWithinHome -ContainedRoot $destinationHome -Path $destinationPath)) {
+                throw 'Native continuation state escaped the previous job home.'
+            }
+            [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($destinationPath)) | Out-Null
+            $copied = Copy-DeepSeaRegularFile -Source $sourceItem.FullName -Destination $destinationPath
+            $sourceIdentity = Get-DeepSeaFileIdentity -Path $sourceItem.FullName
+            if ([string]$sourceIdentity.sha256 -cne [string]$copied.sha256 -or [int64]$sourceIdentity.bytes -ne [int64]$copied.bytes) {
+                throw 'Native continuation state copy differs.'
+            }
+            $copies.Add([ordered]@{ source = $sourceIdentity; destination = $copied })
+        }
+    }
+    $copiedSessions = @($copies | Where-Object { [string]$_.destination.path -like ('*' + $NativeSessionId + '*session.v3.jsonl.zstd') })
+    if ($copiedSessions.Count -ne 1) { throw 'Exact native session history was not restored.' }
+    return $copies.ToArray()
+}
+
+function Assert-DeepSeaFollowUpPredecessor {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][Collections.IDictionary]$Binding,
+        [Parameter(Mandatory = $true)][string]$StateRoot,
+        [Parameter(Mandatory = $true)][string]$NativeSessionId,
+        [Parameter(Mandatory = $true)][string]$Workspace,
+        [Parameter(Mandatory = $true)][Collections.IDictionary]$Config
+    )
+    if ([string]$Binding.native_session_id -cne $NativeSessionId) { throw 'Adapter native session id does not match the frozen session.' }
+    $previousPaths = Get-DeepSeaJobPaths -Root $StateRoot -Id ([string]$Binding.latest_job_id)
+    if (-not [IO.File]::Exists($previousPaths.receipt) -or -not [IO.File]::Exists($previousPaths.request)) {
+        throw 'Exact previous native session is not durably complete; refusing continuation.'
+    }
+    $previousReceipt = (Read-DeepSeaJson -Path $previousPaths.receipt).value
+    $previousRequest = (Read-DeepSeaJson -Path $previousPaths.request).value
+    if (-not [bool]$previousReceipt.transport_complete -or [string]$previousReceipt.native_session_id -cne $NativeSessionId) {
+        throw 'Exact previous native session is not durably complete; refusing continuation.'
+    }
+    if ([string]$previousRequest.workspace -cne $Workspace) {
+        throw 'Native continuation workspace/model/effort differs from the frozen binding.'
+    }
+    if ([string]$Binding.provider -cne [string]$Config.provider -or [string]$previousRequest.provider -cne [string]$Config.provider) {
+        throw 'Native continuation workspace/model/effort differs from the frozen binding.'
+    }
+    if ([string]$Binding.model -cne [string]$Config.model -or [string]$previousRequest.model -cne [string]$Config.model) {
+        throw 'Native continuation workspace/model/effort differs from the frozen binding.'
+    }
+    if ([string]$Binding.reasoning_effort -cne [string]$Config.reasoning_effort -or [string]$previousRequest.reasoning_effort -cne [string]$Config.reasoning_effort) {
+        throw 'Native continuation workspace/model/effort differs from the frozen binding.'
+    }
+    $previousProjection = Join-Path $previousPaths.dsh_home ('storages\session_projcache\sessions\' + $NativeSessionId + '.json')
+    Test-DeepSeaNativeTurnClosed -ProjectionPath $previousProjection -NativeSessionId $NativeSessionId
+    return $previousPaths
+}
+
 function New-DeepSeaContainedProfile {
     [CmdletBinding()]
     param(
@@ -632,7 +792,11 @@ function Get-DeepSeaBindingPaths {
     [CmdletBinding()]
     param([Parameter(Mandatory = $true)][string]$Root, [Parameter(Mandatory = $true)][string]$SessionId)
     $sessionRoot = Join-Path $Root ('sessions\' + $SessionId)
-    return [ordered]@{ root = $sessionRoot; binding = Join-Path $sessionRoot 'binding.json' }
+    return [ordered]@{
+        root = $sessionRoot
+        binding = Join-Path $sessionRoot 'binding.json'
+        writer_lock = Join-Path $sessionRoot 'native-writer.lock'
+    }
 }
 
 function Write-DeepSeaAdapterResult {
@@ -900,6 +1064,15 @@ function Invoke-DeepSeaPublicAdapter {
         & $Route.AssertAdapterInput -Operation $Operation -Workspace $workspace -Mode $Mode -AllowedWritePath $AllowedWritePath -RequestFile $requestFileValue
     }
 
+    $writerLock = $null
+    $previousFollowPaths = $null
+    try {
+    if ($routeId -ceq 'deepsea-v4' -and $Operation -ceq 'follow_up' -and $exactNative) {
+        $writerLock = Enter-DeepSeaNativeWriterLock -LockPath ([string]$bindingPaths.writer_lock) -SessionId $NativeSessionId -JobId $job
+        $existingBinding = (Read-DeepSeaJson -Path $bindingPaths.binding).value
+        $previousFollowPaths = Assert-DeepSeaFollowUpPredecessor -Binding $existingBinding -StateRoot $state -NativeSessionId $NativeSessionId -Workspace $workspace -Config $config
+    }
+
     [IO.Directory]::CreateDirectory($paths.root) | Out-Null
     $requestRecord = [ordered]@{
         protocol_version = [string]$Route.request_protocol
@@ -929,6 +1102,16 @@ function Invoke-DeepSeaPublicAdapter {
     $diag = $null
     try {
         $profile = New-DeepSeaContainedProfile -HomeRoot $paths.dsh_home -Provider ([string]$config.provider) -Model ([string]$config.model) -ReasoningEffort ([string]$config.reasoning_effort) -IncludeSubscriptionOauth $includeSubscription
+        if ($null -ne $previousFollowPaths) {
+            $resumeCopies = @(Copy-DeepSeaClosedContainedState -PreviousHome ([string]$previousFollowPaths.dsh_home) -NewHome ([string]$paths.dsh_home) -NativeSessionId $NativeSessionId)
+            $null = Write-DeepSeaJsonCreateNew -Path (Join-Path $paths.root 'native-resume-state.json') -Value ([ordered]@{
+                native_session_id = $NativeSessionId
+                source_job_id = [string]$existingBinding.latest_job_id
+                original_state_unchanged = $true
+                replacement_started = $false
+                files = $resumeCopies
+            })
+        }
         $target = Resolve-DeepSeaHeadlessTarget -DshCommand $DshCommand -MockHeadlessPath $MockHeadlessPath
         $resume = if ($Operation -eq 'follow_up') { $NativeSessionId } else { '' }
         $run = Invoke-DeepSeaOwnedHarness -Target $target -HomeRoot ([string]$profile.home) -Workspace $workspace -Task $promptText -ResumeSessionId $resume -SessionOutPath $paths.session_out -CommunityCredentialKey $CommunityCredentialKey
@@ -1022,4 +1205,7 @@ function Invoke-DeepSeaPublicAdapter {
 
     Write-DeepSeaAdapterResult -RouteId $routeId -Operation $Operation -NativeSessionId $native -JobId $job -Complete $true -ExactNativeSession $exactNative -ReceiptIdentity $receiptIdentity -ResultIdentity $resultIdentity -Extra $extra
     exit 0
+    } finally {
+        if ($null -ne $writerLock) { $writerLock.Dispose() }
+    }
 }

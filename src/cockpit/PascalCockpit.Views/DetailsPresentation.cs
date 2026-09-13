@@ -37,6 +37,8 @@ public sealed record DetailsModel(
     string? SelectedProjectId,
     string? EmptyMessage,
     string Name,
+    string OverallJudgment,
+    string OverallBasis,
     string Goal,
     string Phase,
     string NextStep,
@@ -74,8 +76,13 @@ public static class DetailsPresentation
             return Empty("本轮快照没有项目。", lang);
         }
 
-        var id = HudPresentation.ResolveSelection(snapshot, selectedProjectId);
-        var project = snapshot.Projects.FirstOrDefault(p => p.Id == id);
+        var project = snapshot.Projects.FirstOrDefault(p =>
+            !string.IsNullOrWhiteSpace(selectedProjectId) && p.Id == selectedProjectId);
+        if (project is null)
+        {
+            var id = CurrentList.ResolveSelection(snapshot, selectedProjectId, showHistory: false);
+            project = snapshot.Projects.FirstOrDefault(p => p.Id == id);
+        }
         if (project is null)
         {
             return Empty("选中项目已不在当前快照中。", lang);
@@ -109,10 +116,13 @@ public static class DetailsPresentation
             lastFact = StatusLanguage.CollectedAtText(fa);
 
         var situation = Situation(project, lang);
+        var overall = StatusLanguage.OverallJudgment(project, lang);
         return new DetailsModel(
             project.Id,
             null,
             HudPresentation.DisplayName(project),
+            overall.Label,
+            overall.Basis,
             situation.Goal,
             situation.Phase,
             situation.Next,
@@ -186,6 +196,8 @@ public static class DetailsPresentation
         null,
         ConsumerCopy.Localize(zhMessage, lang),
         string.Empty,
+        ConsumerCopy.Localize("状态待核实", lang),
+        ConsumerCopy.Localize("缺少足够来源", lang),
         ConsumerCopy.Localize("未声明", lang),
         ConsumerCopy.Localize("未声明", lang),
         ConsumerCopy.Localize("未声明", lang),

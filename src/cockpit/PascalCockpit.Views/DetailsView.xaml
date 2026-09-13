@@ -46,6 +46,8 @@
         <TextBlock x:Name="EmptyText" Style="{StaticResource MutedCaption}" Visibility="Collapsed" Margin="0,20"/>
         <StackPanel x:Name="ContentPanel">
           <TextBlock x:Name="NameText" FontSize="18" FontWeight="SemiBold" Foreground="{StaticResource HudText}" TextWrapping="Wrap" AutomationProperties.AutomationId="DetailsSelectedName"/>
+          <TextBlock x:Name="OverallJudgmentText" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource HudMint}" Margin="0,4,0,0" TextWrapping="Wrap" AutomationProperties.AutomationId="DetailsOverallJudgment"/>
+          <TextBlock x:Name="OverallBasisText" Style="{StaticResource MutedCaption}" Margin="0,2,0,0" TextWrapping="Wrap" AutomationProperties.AutomationId="DetailsOverallBasis"/>
           <TextBlock x:Name="SelectedIdText" Style="{StaticResource MutedCaption}" Margin="0,2,0,0" Visibility="Collapsed" AutomationProperties.AutomationId="DetailsSelectedProjectId"/>
           <TextBlock x:Name="MetaText" Style="{StaticResource MutedCaption}" Margin="0,4,0,0"/>
           <TextBlock x:Name="FreshnessText" Style="{StaticResource MutedCaption}" Margin="0,4,0,0" Visibility="Collapsed"/>

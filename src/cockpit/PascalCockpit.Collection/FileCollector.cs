@@ -165,9 +165,7 @@ public sealed class FileCollector : ICollector
                     && LooksLikeJsonMetadata(path))
                 {
                     var pointerScope = scope;
-                    if (string.Equals(kv.Key, "dashboard_active_work_path", StringComparison.OrdinalIgnoreCase))
-                        pointerScope = "current";
-                    else if (string.Equals(scope, "current", StringComparison.OrdinalIgnoreCase)
+                    if (string.Equals(scope, "current", StringComparison.OrdinalIgnoreCase)
                         && JobRootLagsCurrentId(kv.Key, path, currentLineId, currentDirectId))
                     {
                         pointerScope = "historical";

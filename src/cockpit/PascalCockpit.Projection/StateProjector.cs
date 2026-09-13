@@ -153,21 +153,19 @@ public sealed class StateProjector : IProjector
                 || pContrib.Count > 0
                 || attentions.Count > 0
                 || pLeads.Count > 0;
+            var waiting = IsWaitingRegistryStatus(registryStatus);
+            var terminal = IsTerminalRegistryStatus(registryStatus);
             if (pf is null)
             {
                 if (!hasCurrentSignal) continue;
             }
-            else
+            else if (!terminal && !registryActive && !paused && !waiting && !hasCurrentSignal)
             {
-                var waiting = IsWaitingRegistryStatus(registryStatus);
-                var terminal = IsTerminalRegistryStatus(registryStatus);
-                if (terminal && !paused && !waiting && !hasCurrentSignal)
-                    continue;
-                if (!registryActive && !paused && !waiting && !hasCurrentSignal)
-                    continue;
+                continue;
             }
 
-            var isActive = !paused && (hasCurrentSignal || registryActive);
+            // Explicit completion stays historical even if old AW/receipts still exist.
+            var isActive = !paused && !terminal && (hasCurrentSignal || registryActive);
 
             var progress = BuildProgress(pf, pContrib, pWorksCurrent);
             var targets = BuildTargets(pid, pf, pWorksCurrent);

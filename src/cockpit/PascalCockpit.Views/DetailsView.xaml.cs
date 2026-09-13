@@ -105,6 +105,8 @@ public partial class DetailsView : UserControl
         ContentPanel.Visibility = Visibility.Visible;
 
         NameText.Text = model.Name;
+        OverallJudgmentText.Text = model.OverallJudgment;
+        OverallBasisText.Text = model.OverallBasis;
         SelectedIdText.Text = string.Empty;
         SelectedIdText.Visibility = Visibility.Collapsed;
         var metaParts = new List<string> { ConsumerCopy.T(_lang, "quality_short") + model.ProjectQualityText };

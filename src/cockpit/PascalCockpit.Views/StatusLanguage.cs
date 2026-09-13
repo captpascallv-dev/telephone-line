@@ -31,6 +31,54 @@ public static class StatusLanguage
             _ => "未知"
         }, lang);
 
+    public static (string Label, string Basis) OverallJudgment(ProjectView project, UiLang lang = UiLang.Zh)
+    {
+        var current = project.WorkItems.Where(w => !IsHistoricalWork(w) && !IsDiagnosticNoise(w)).ToList();
+        string L(string zh) => ConsumerCopy.Localize(zh, lang);
+        if (project.IsPaused)
+            return (L("已暂停"), L("项目已暂停"));
+        if (!project.IsActive)
+            return (L("已完成"), L("项目已结束；结果可在历史中查看"));
+        if (project.Attention.Any(a => a.Owner == AttentionOwner.Pascal))
+            return (L("需要你处理"), L("当前有需要你决定的事项"));
+
+        var execs = current.Where(IsExecutionLike).ToList();
+        var failed = execs.Where(w =>
+            IsFailed(w.Axes.Execution)
+            && !HasLiveHandler(w)
+            && !IsConsumedHistoricalHandling(w.Axes.LeadHandling)).ToList();
+        if (failed.Count > 0)
+        {
+            var phrase = WorkStatusPhrase(failed[0]);
+            return (L("故障/部分异常"), L(string.IsNullOrWhiteSpace(phrase) ? "当前执行失败，待处理" : phrase + "；由原负责人处理"));
+        }
+
+        if (current.Any(w =>
+                (w.Axes.LeadHandling ?? "").Equals("lead_accepting", StringComparison.OrdinalIgnoreCase)
+                || (w.Axes.Acceptance ?? "").Equals("acceptance_in_progress", StringComparison.OrdinalIgnoreCase)))
+        {
+            return (L("等待验收"), L("结果已交回，负责人正在验收"));
+        }
+
+        var running = execs.Any(w => IsActive(w.Axes.Execution));
+        if (running)
+            return (L("正常推进"), L("原执行者正在做，本轮还没交回"));
+
+        if (execs.Any(w => (w.Axes.LeadHandling ?? "").Equals("repair_dispatched", StringComparison.OrdinalIgnoreCase)))
+            return (L("等待结果"), L("退修已派出，等待本轮结果"));
+        if (execs.Any(w => (w.Axes.LeadHandling ?? "").Equals("repair_prepared", StringComparison.OrdinalIgnoreCase)))
+            return (L("等待结果"), L("准备退修续接"));
+
+        if (execs.Any(w =>
+                w.Axes.Execution.Equals("returned", StringComparison.OrdinalIgnoreCase)
+                || w.Axes.Execution.Equals("succeeded", StringComparison.OrdinalIgnoreCase)))
+        {
+            return (L("等待验收"), L("结果已交回，等待负责人处理"));
+        }
+
+        return (L("状态待核实"), L("缺少足够来源"));
+    }
+
     public static string AttentionOwnerLabel(AttentionOwner owner, UiLang lang = UiLang.Zh) =>
         ConsumerCopy.Localize(owner switch
         {

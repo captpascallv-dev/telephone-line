@@ -183,6 +183,52 @@ try {
         $followResult = Get-Content -LiteralPath (Join-Path $stateRoot ("jobs\$($follow.value.job_id)\result.json")) -Raw | ConvertFrom-Json -AsHashtable
         Assert-AdapterTest ([string]$followResult.result_text -ceq 'dsh-result-2') 'Follow-up did not persist a distinct result nonce.'
         $v4ExactSession = 1
+        $resumeStatePath = Join-Path $stateRoot ("jobs\$($follow.value.job_id)\native-resume-state.json")
+        Assert-AdapterTest ([IO.File]::Exists($resumeStatePath)) 'V4 follow-up did not record contained resume state.'
+        $resumeState = Get-Content -LiteralPath $resumeStatePath -Raw | ConvertFrom-Json -AsHashtable -Depth 16
+        Assert-AdapterTest ([string]$resumeState.native_session_id -ceq $session) 'Contained resume recorded another session.'
+        Assert-AdapterTest ([string]$resumeState.source_job_id -ceq $jobId) 'Contained resume did not freeze the previous job.'
+        Assert-AdapterTest ([bool]$resumeState.original_state_unchanged -eq $true) 'Contained resume claimed the previous job changed.'
+        $copiedSession = @($resumeState.files | Where-Object { [string]$_.destination.path -like ('*' + $session + '*session.v3.jsonl.zstd') })
+        Assert-AdapterTest ($copiedSession.Count -eq 1) 'Contained resume did not copy exactly one native session blob.'
+        $oldSessionPath = [string]$copiedSession[0].source.path
+        $oldSessionAfter = Get-FileHash -LiteralPath $oldSessionPath -Algorithm SHA256
+        Assert-AdapterTest ([string]$oldSessionAfter.Hash.ToLowerInvariant() -ceq [string]$copiedSession[0].source.sha256) 'Previous contained session bytes changed after follow-up.'
+        $newProfilePatch = Join-Path $stateRoot ("jobs\$($follow.value.job_id)\dsh-home\profiles\headless\cordis.patch.yml")
+        $oldProfilePatch = Join-Path $stateRoot ("jobs\$jobId\dsh-home\profiles\headless\cordis.patch.yml")
+        Assert-AdapterTest ([IO.File]::Exists($newProfilePatch) -and [IO.File]::Exists($oldProfilePatch)) 'Contained profiles missing after follow-up.'
+        Assert-AdapterTest ((Get-FileHash -LiteralPath $newProfilePatch -Algorithm SHA256).Hash -ne $null) 'New contained profile was not created.'
+
+        $lockPath = Join-Path $stateRoot ("sessions\$session\native-writer.lock")
+        $occupiedJob = [Guid]::NewGuid().ToString('D')
+        $holder = [IO.FileStream]::new($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        try {
+            $countBeforeOccupied = Get-MockCount
+            $occupied = Invoke-AdapterEntrypoint -Entrypoint $invoke -Arguments @(
+                '-Operation', 'follow_up', '-NativeSessionId', $session, '-StateRoot', $stateRoot, '-WorkspacePath', $workspace,
+                '-PromptFile', $promptPath, '-JobId', $occupiedJob, '-MockHeadlessPath', $mockHeadless
+            )
+            Assert-AdapterTest ($occupied.exit_code -ne 0) 'Occupied native writer was accepted.'
+            Assert-AdapterTest ((Get-MockCount) -eq $countBeforeOccupied) 'Occupied follow-up invoked Headless.'
+            Assert-AdapterTest (-not [IO.Directory]::Exists((Join-Path $stateRoot ("jobs\$occupiedJob")))) 'Occupied follow-up created a new job root.'
+        } finally { $holder.Dispose() }
+
+        $openProj = Join-Path $stateRoot ("jobs\$($follow.value.job_id)\dsh-home\storages\session_projcache\sessions\$session.json")
+        $closedProjText = [IO.File]::ReadAllText($openProj)
+        $openProjValue = $closedProjText | ConvertFrom-Json -AsHashtable -Depth 16
+        $openProjValue.record.rows.turnBoundary.val.openTurnStartSeq = 1
+        [IO.File]::WriteAllText($openProj, (($openProjValue | ConvertTo-Json -Depth 16 -Compress) + "`n"), [Text.UTF8Encoding]::new($false))
+        $unclosedJob = [Guid]::NewGuid().ToString('D')
+        $countBeforeUnclosed = Get-MockCount
+        $unclosed = Invoke-AdapterEntrypoint -Entrypoint $invoke -Arguments @(
+            '-Operation', 'follow_up', '-NativeSessionId', $session, '-StateRoot', $stateRoot, '-WorkspacePath', $workspace,
+            '-PromptFile', $promptPath, '-JobId', $unclosedJob, '-MockHeadlessPath', $mockHeadless
+        )
+        Assert-AdapterTest ($unclosed.exit_code -ne 0) 'Open native turn was accepted.'
+        Assert-AdapterTest ((Get-MockCount) -eq $countBeforeUnclosed) 'Unclosed follow-up invoked Headless.'
+        Assert-AdapterTest (-not [IO.Directory]::Exists((Join-Path $stateRoot ("jobs\$unclosedJob")))) 'Unclosed follow-up created a new job root.'
+        [IO.File]::WriteAllText($openProj, $closedProjText, [Text.UTF8Encoding]::new($false))
+
         $wrong = Invoke-AdapterEntrypoint -Entrypoint $invoke -Arguments @(
             '-Operation', 'follow_up', '-NativeSessionId', 'wrong-session', '-StateRoot', $stateRoot, '-WorkspacePath', $workspace,
             '-PromptFile', $promptPath, '-JobId', ([Guid]::NewGuid().ToString('D')), '-MockHeadlessPath', $mockHeadless

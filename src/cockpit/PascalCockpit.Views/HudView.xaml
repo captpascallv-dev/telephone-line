@@ -110,11 +110,14 @@
                    AutomationProperties.AutomationId="ProjectList">
             <ListBox.ItemTemplate>
               <DataTemplate>
-                <StackPanel ToolTip="{Binding StatusLineFull}">
+                <StackPanel ToolTip="{Binding OverallLineFull}">
                   <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="14"
                              Foreground="{StaticResource HudText}" TextTrimming="CharacterEllipsis"/>
+                  <TextBlock Text="{Binding OverallLine}" FontSize="12" FontWeight="SemiBold"
+                             Foreground="{StaticResource HudMint}" Margin="0,2,0,0"
+                             TextTrimming="CharacterEllipsis"/>
                   <TextBlock Text="{Binding StatusLine}" Style="{StaticResource MutedCaption}"
-                             Margin="0,3,0,0" MaxHeight="34" TextWrapping="Wrap"
+                             Margin="0,2,0,0" MaxHeight="34" TextWrapping="Wrap"
                              TextTrimming="CharacterEllipsis"/>
                 </StackPanel>
               </DataTemplate>

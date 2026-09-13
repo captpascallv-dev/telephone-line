@@ -286,3 +286,71 @@ function Resolve-DirectPiLaunchHost {
         default { return Resolve-DirectPiNodeCommand -NodePath $NodePath }
     }
 }
+
+function ConvertFrom-DirectPiTerminalStream {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][byte[]]$Bytes,
+        [Parameter(Mandatory = $true)][ValidateRange(1, [long]::MaxValue)][long]$MaxRecordBytes
+    )
+
+    if ($Bytes.Length -eq 0) { throw 'PI JSON event stream is empty.' }
+    if ($Bytes[$Bytes.Length - 1] -ne 10) { throw 'PI JSON event stream has no terminal LF.' }
+    if ([Array]::IndexOf($Bytes, [byte]13) -ge 0) { throw 'PI JSON event stream is not strict LF JSONL.' }
+    if ($Bytes.Length -ge 3 -and $Bytes[0] -eq 0xEF -and $Bytes[1] -eq 0xBB -and $Bytes[2] -eq 0xBF) {
+        throw 'PI JSON event stream must not contain a UTF-8 BOM.'
+    }
+
+    $memory = [IO.MemoryStream]::new($Bytes, $false)
+    $reader = [IO.StreamReader]::new($memory, [Text.UTF8Encoding]::new($false, $true), $false)
+    $headers = [Collections.Generic.List[object]]::new()
+    $lastAssistant = $null
+    $lastEnd = $null
+    $count = 0
+    $endCount = 0
+    try {
+        while ($null -ne ($line = $reader.ReadLine())) {
+            if ([string]::IsNullOrWhiteSpace($line)) { throw 'PI JSON event stream contains a blank record.' }
+            if ([Text.Encoding]::UTF8.GetByteCount($line) -gt $MaxRecordBytes) { throw 'PI JSON event record exceeded the bounded size.' }
+            $value = $line | ConvertFrom-Json -AsHashtable -Depth 64 -DateKind String
+            if ($value -isnot [Collections.IDictionary]) { throw 'PI JSON event stream contains a non-object record.' }
+            if ($value.Contains('type') -and [string]$value.type -ceq 'session') {
+                if ($count -ne 0 -or $headers.Count -ne 0) { throw 'PI session header is not the first and unique event.' }
+                $headers.Add([ordered]@{ index = $count; value = $value })
+            }
+            if ($value.Contains('type') -and [string]$value.type -ceq 'agent_end') {
+                $endCount++
+                $lastEnd = [ordered]@{ index = $count; value = $value }
+            }
+            if (
+                $value.Contains('type') -and [string]$value.type -ceq 'message_end' -and
+                $value.Contains('message') -and $value.message -is [Collections.IDictionary] -and
+                $value.message.Contains('role') -and [string]$value.message.role -ceq 'assistant'
+            ) {
+                $lastAssistant = [ordered]@{ index = $count; value = $value }
+            }
+            $count++
+        }
+    } finally {
+        $reader.Dispose()
+        $memory.Dispose()
+    }
+
+    $retained = [Collections.Generic.List[object]]::new()
+    foreach ($header in $headers) { $retained.Add($header) }
+    if ($null -ne $lastAssistant) { $retained.Add($lastAssistant) }
+    if ($null -ne $lastEnd) { $retained.Add($lastEnd) }
+    $events = @(
+        $retained | Sort-Object { $_.index } | ForEach-Object { $_.value }
+    )
+    return [ordered]@{
+        events = $events
+        event_count = $count
+        agent_end_count = $endCount
+        stdout_bytes = [int64]$Bytes.Length
+        stdout_sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($Bytes)).ToLowerInvariant()
+        retained_events = $events.Count
+        last_assistant_index = if ($null -ne $lastAssistant) { [int]$lastAssistant.index } else { -1 }
+        last_agent_end_index = if ($null -ne $lastEnd) { [int]$lastEnd.index } else { -1 }
+    }
+}

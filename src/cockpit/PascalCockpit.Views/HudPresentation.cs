@@ -7,6 +7,8 @@ public sealed record HudAttentionLine(string Id, string Text, string FullText, I
 public sealed record HudProjectRow(
     string ProjectId,
     string Name,
+    string OverallLine,
+    string OverallLineFull,
     string StatusLine,
     string StatusLineFull,
     bool IsSelected,
@@ -105,15 +107,21 @@ public static class HudPresentation
         else if (currentProjects.Count == 0)
             banner = ConsumerCopy.Localize(snapshot.Projects.Count == 0 ? "本轮快照没有项目。" : "当前没有进行中的任务。暂停和历史可按需查看。", lang);
 
-        HudProjectRow Row(ProjectView p) => new(
-            p.Id,
-            DisplayName(p),
-            StatusLanguage.ProjectOneLiner(p, statusMaxLen, lang),
-            StatusLanguage.ProjectOneLinerFull(p, lang),
-            selected is not null && p.Id == selected,
-            p.IsPaused,
-            p.IsActive,
-            p.Quality);
+        HudProjectRow Row(ProjectView p)
+        {
+            var overall = StatusLanguage.OverallJudgment(p, lang);
+            return new(
+                p.Id,
+                DisplayName(p),
+                overall.Label,
+                overall.Label + " · " + overall.Basis,
+                StatusLanguage.ProjectOneLiner(p, statusMaxLen, lang),
+                StatusLanguage.ProjectOneLinerFull(p, lang),
+                selected is not null && p.Id == selected,
+                p.IsPaused,
+                p.IsActive,
+                p.Quality);
+        }
 
         var visible = showHistory
             ? currentProjects.Concat(historicalProjects).Select(Row).ToList()
