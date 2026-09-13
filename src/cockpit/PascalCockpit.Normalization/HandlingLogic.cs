@@ -103,14 +103,20 @@ internal static class HandlingLogic
             var pid = project.ProjectId ?? project.EntityId;
             project.Links.TryGetValue("line_job_id", out var regLine);
             project.Links.TryGetValue("direct_job_id", out var regDirect);
+            project.Links.TryGetValue("line_job_root_id", out var rootLine);
+            project.Links.TryGetValue("direct_job_root_id", out var rootDirect);
 
             string? awLine = null;
             string? awDirect = null;
+            string? awNative = null;
+            string? awPriorFailConsumed = null;
             foreach (var f in facts.Where(x => x.Kind == "work" && string.Equals(x.ProjectId, pid, StringComparison.Ordinal)))
             {
                 if (!f.Evidence.Any(e => e.Kind == "active_work")) continue;
                 f.Links.TryGetValue("line_job_id", out awLine);
                 f.Links.TryGetValue("direct_job_id", out awDirect);
+                f.Links.TryGetValue("native_session_id", out awNative);
+                awPriorFailConsumed = f.Values["prior_fail_consumed"]?.GetValue<string>();
                 if (!string.IsNullOrWhiteSpace(awLine) || !string.IsNullOrWhiteSpace(awDirect))
                     break;
             }
@@ -118,12 +124,30 @@ internal static class HandlingLogic
             if (string.IsNullOrWhiteSpace(awLine) && string.IsNullOrWhiteSpace(awDirect))
                 continue;
 
-            var staleLine = string.IsNullOrWhiteSpace(awLine) || string.Equals(awLine, regLine, StringComparison.Ordinal)
-                ? null : regLine;
-            var staleDirect = string.IsNullOrWhiteSpace(awDirect) || string.Equals(awDirect, regDirect, StringComparison.Ordinal)
-                ? null : regDirect;
+            var staleLines = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var staleDirects = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            AddIfLagging(staleLines, regLine, awLine);
+            AddIfLagging(staleLines, rootLine, awLine);
+            AddIfLagging(staleDirects, regDirect, awDirect);
+            AddIfLagging(staleDirects, rootDirect, awDirect);
 
-            var disposition = HasProducerDisposition(pid, awLine, awDirect, staleLine, staleDirect, facts, handlingRecords);
+            var staleLine = staleLines.FirstOrDefault();
+            var staleDirect = staleDirects.FirstOrDefault();
+            var pointerLag = staleLines.Count > 0 || staleDirects.Count > 0;
+            var nativeSupersede = facts.Any(x =>
+                x.Kind == "work"
+                && string.Equals(x.ProjectId, pid, StringComparison.Ordinal)
+                && SameNativeSuperseded(x, awNative, awLine, awDirect));
+            var disposition = pointerLag
+                || nativeSupersede
+                || HasProducerDisposition(pid, awLine, awDirect, staleLine, staleDirect, facts, handlingRecords);
+
+            if (!string.IsNullOrWhiteSpace(rootLine) && !string.IsNullOrWhiteSpace(rootDirect)
+                && !string.Equals(rootLine, awLine, StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(rootDirect, awDirect, StringComparison.OrdinalIgnoreCase))
+            {
+                CrossLinkPair(facts, pid, rootLine, rootDirect);
+            }
 
             for (var i = 0; i < facts.Count; i++)
             {
@@ -132,7 +156,8 @@ internal static class HandlingLogic
                     continue;
 
                 var authorized = MatchesId(f, awLine, awDirect);
-                var stale = !authorized && MatchesId(f, staleLine, staleDirect);
+                var stale = !authorized && (MatchesAny(f, staleLines, staleDirects)
+                                            || SameNativeSuperseded(f, awNative, awLine, awDirect));
                 if (authorized)
                 {
                     var values = NormUtil.CloneValues(f.Values);
@@ -172,13 +197,23 @@ internal static class HandlingLogic
                         consumed["authorized_current"] = "false";
                         consumed["registry_pointer_lag"] = "true";
                         var existing = consumed["lead_handling_state"]?.GetValue<string>() ?? string.Empty;
+                        var existingAcc = consumed["acceptance_state"]?.GetValue<string>() ?? string.Empty;
                         if (disposition
                             && !existing.Contains("lead_handled", StringComparison.OrdinalIgnoreCase)
                             && !existing.StartsWith("handled", StringComparison.OrdinalIgnoreCase)
-                            && !NormUtil.IsLiveHandlerState(existing, consumed["acceptance_state"]?.GetValue<string>()))
+                            && !NormUtil.IsLiveHandlerState(existing, existingAcc))
                         {
-                            consumed["lead_handling_state"] = "consumed_old_terminal";
+                            consumed["lead_handling_state"] = string.Equals(awPriorFailConsumed, "true", StringComparison.OrdinalIgnoreCase)
+                                ? "lead_handled_fail_repair"
+                                : "consumed_old_terminal";
                         }
+
+                        if (string.Equals(awPriorFailConsumed, "true", StringComparison.OrdinalIgnoreCase)
+                            && (string.IsNullOrWhiteSpace(existingAcc) || existingAcc == "unknown"))
+                        {
+                            consumed["acceptance_state"] = "handled_fail_repair";
+                        }
+
                         facts[i] = new SourceFact(f.Kind, f.EntityId, f.ProjectId, f.Links, consumed, f.Evidence);
                         continue;
                     }
@@ -301,19 +336,76 @@ internal static class HandlingLogic
     {
         if (!string.IsNullOrWhiteSpace(line)
             && (f.EntityId.Contains(line, StringComparison.Ordinal)
-                || (f.Links.TryGetValue("line_job_id", out var l) && l == line)))
+                || (f.Links.TryGetValue("line_job_id", out var l) && string.Equals(l, line, StringComparison.OrdinalIgnoreCase))))
         {
             return true;
         }
 
         if (!string.IsNullOrWhiteSpace(direct)
             && (f.EntityId.Contains(direct, StringComparison.Ordinal)
-                || (f.Links.TryGetValue("direct_job_id", out var d) && d == direct)))
+                || (f.Links.TryGetValue("direct_job_id", out var d) && string.Equals(d, direct, StringComparison.OrdinalIgnoreCase))))
         {
             return true;
         }
 
         return false;
+    }
+
+    private static void AddIfLagging(HashSet<string> set, string? candidate, string? current)
+    {
+        if (string.IsNullOrWhiteSpace(candidate) || string.IsNullOrWhiteSpace(current)) return;
+        if (string.Equals(candidate, current, StringComparison.OrdinalIgnoreCase)) return;
+        set.Add(candidate);
+    }
+
+    private static bool MatchesAny(SourceFact f, HashSet<string> lines, HashSet<string> directs)
+    {
+        if (f.Links.TryGetValue("line_job_id", out var l) && !string.IsNullOrWhiteSpace(l) && lines.Contains(l))
+            return true;
+        if (f.Links.TryGetValue("direct_job_id", out var d) && !string.IsNullOrWhiteSpace(d) && directs.Contains(d))
+            return true;
+        foreach (var id in lines.Concat(directs))
+        {
+            if (f.EntityId.Contains(id, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+
+        return false;
+    }
+
+    private static bool SameNativeSuperseded(SourceFact f, string? awNative, string? awLine, string? awDirect)
+    {
+        if (string.IsNullOrWhiteSpace(awNative)) return false;
+        if (!f.Links.TryGetValue("native_session_id", out var native)
+            || !string.Equals(native, awNative, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var role = f.Values["role"]?.GetValue<string>() ?? string.Empty;
+        if (role.Contains("review", StringComparison.OrdinalIgnoreCase)
+            || role.Contains("army", StringComparison.OrdinalIgnoreCase)
+            || role.Contains("contrib", StringComparison.OrdinalIgnoreCase)
+            || role.Equals("lead", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return !MatchesId(f, awLine, awDirect);
+    }
+
+    private static void CrossLinkPair(List<SourceFact> facts, string? projectId, string lineId, string directId)
+    {
+        for (var i = 0; i < facts.Count; i++)
+        {
+            var f = facts[i];
+            if (f.Kind != "work" || !string.Equals(f.ProjectId, projectId, StringComparison.Ordinal))
+                continue;
+            if (!MatchesId(f, lineId, directId)) continue;
+            var links = new Dictionary<string, string>(f.Links, StringComparer.Ordinal);
+            NormUtil.PutLink(links, "line_job_id", lineId);
+            NormUtil.PutLink(links, "direct_job_id", directId);
+            facts[i] = new SourceFact(f.Kind, f.EntityId, f.ProjectId, links, f.Values, f.Evidence);
+        }
     }
 
     private static void ApplySuccessor(List<SourceFact> facts, HandlingRecord h, DateTimeOffset collectedAt)

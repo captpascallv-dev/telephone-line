@@ -155,6 +155,8 @@ public sealed class FileCollector : ICollector
                          || project["paused_by_pascal"]?.GetValue<bool>() == true
                          || string.Equals(status, "PAUSED", StringComparison.OrdinalIgnoreCase);
             var scope = paused || IsHistoricalRegistryStatus(status) ? "historical" : "current";
+            var currentLineId = Str(project, "current_line_job_id", "line_job_id");
+            var currentDirectId = Str(project, "current_direct_job_id", "direct_job_id");
             foreach (var kv in project)
             {
                 if (!CurrentPointerKeys.Contains(kv.Key) && !IsAuthorizedMetadataPointerKey(kv.Key))
@@ -162,7 +164,14 @@ public sealed class FileCollector : ICollector
                 if (kv.Value is JsonValue v && v.TryGetValue<string>(out var path) && !string.IsNullOrWhiteSpace(path)
                     && LooksLikeJsonMetadata(path))
                 {
-                    await CollectExplicitAsync(path, hint, kv.Key, documents, issues, seen, budget, observedAt, cancellationToken, scope).ConfigureAwait(false);
+                    var pointerScope = scope;
+                    if (string.Equals(scope, "current", StringComparison.OrdinalIgnoreCase)
+                        && JobRootLagsCurrentId(kv.Key, path, currentLineId, currentDirectId))
+                    {
+                        pointerScope = "historical";
+                    }
+
+                    await CollectExplicitAsync(path, hint, kv.Key, documents, issues, seen, budget, observedAt, cancellationToken, pointerScope).ConfigureAwait(false);
                 }
             }
         }
@@ -852,14 +861,85 @@ public sealed class FileCollector : ICollector
         {
             if (DeniedJsonKeys.Contains(kv.Key))
             {
-                if (!IsAllowedShortEffortScalar(kv.Key, kv.Value))
+                if (IsAllowedShortEffortScalar(kv.Key, kv.Value))
+                {
+                    copy[kv.Key] = kv.Value is null ? null : StripPayloadNode(kv.Value);
                     continue;
+                }
+
+                if (kv.Value is JsonObject deniedObj)
+                    LiftRouteShellScalars(copy, deniedObj);
+                continue;
             }
 
             copy[kv.Key] = kv.Value is null ? null : StripPayloadNode(kv.Value);
         }
 
         return copy;
+    }
+
+    /// <summary>
+    /// Denied payload objects may still carry route-shell identity. Copy only
+    /// job/session/transport scalars already missing on the parent. Never copy
+    /// result/response/thought bodies.
+    /// </summary>
+    private static void LiftRouteShellScalars(JsonObject dest, JsonObject src)
+    {
+        foreach (var key in new[] { "job_id", "session_id", "native_session_id", "transport_complete" })
+        {
+            if (dest[key] is not null) continue;
+            if (src[key] is JsonValue v)
+                dest[key] = v.DeepClone();
+        }
+    }
+
+    internal static string? JobIdFromPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return null;
+        var n = path.Replace('\\', '/').Trim().TrimEnd('/');
+        const string longPrefix = "//?/";
+        if (n.StartsWith(longPrefix, StringComparison.Ordinal))
+            n = n[longPrefix.Length..];
+        var parts = n.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        for (var i = parts.Length - 1; i >= 0; i--)
+        {
+            var part = parts[i];
+            if (part.Contains('.', StringComparison.Ordinal)) continue;
+            if (Guid.TryParse(part, out _)) return part;
+        }
+
+        return null;
+    }
+
+    private static bool JobRootLagsCurrentId(string key, string path, string? currentLineId, string? currentDirectId)
+    {
+        var k = key.ToLowerInvariant();
+        var rootId = JobIdFromPath(path);
+        if (string.IsNullOrWhiteSpace(rootId)) return false;
+        if (k is "current_line_job_root" or "current_line_job_dir")
+        {
+            return !string.IsNullOrWhiteSpace(currentLineId)
+                   && !string.Equals(rootId, currentLineId, StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (k is "current_direct_job_root" or "current_direct_job_dir")
+        {
+            return !string.IsNullOrWhiteSpace(currentDirectId)
+                   && !string.Equals(rootId, currentDirectId, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
+    }
+
+    private static string? Str(JsonObject obj, params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            if (obj[key] is JsonValue v && v.TryGetValue<string>(out var s) && !string.IsNullOrWhiteSpace(s))
+                return s.Trim();
+        }
+
+        return null;
     }
 
     private static JsonNode? StripPayloadNode(JsonNode node)

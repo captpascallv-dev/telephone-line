@@ -199,6 +199,24 @@ internal static class NormUtil
         JsonField.Str(data, "old_line_job_id") is not null
         || JsonField.Str(data, "old_direct_job_id") is not null
         || JsonField.Bool(data, "actual_switch_complete") is not null;
+
+    public static string? JobIdFromPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return null;
+        var n = path.Replace('\\', '/').Trim().TrimEnd('/');
+        const string longPrefix = "//?/";
+        if (n.StartsWith(longPrefix, StringComparison.Ordinal))
+            n = n[longPrefix.Length..];
+        var parts = n.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        for (var i = parts.Length - 1; i >= 0; i--)
+        {
+            var part = parts[i];
+            if (part.Contains('.', StringComparison.Ordinal)) continue;
+            if (Guid.TryParse(part, out _)) return part;
+        }
+
+        return null;
+    }
 }
 
 internal sealed class HandlingRecord

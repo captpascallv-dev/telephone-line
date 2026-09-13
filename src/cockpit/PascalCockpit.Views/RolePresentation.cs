@@ -41,11 +41,7 @@ public static class RolePresentation
         }
 
         if (KindOf(w) == "reviewer")
-        {
-            if (string.Equals(w.Axes.Execution, "failed", StringComparison.OrdinalIgnoreCase))
-                return ConsumerCopy.Localize("当前执行失败，待处理", lang);
-            return ConsumerCopy.Localize("已安排审核", lang);
-        }
+            return ConsumerCopy.Localize(StatusLanguage.ReviewerStatusPhrase(w), lang);
 
         var execPhrase = StatusLanguage.WorkStatusPhrase(w);
         if (string.IsNullOrWhiteSpace(execPhrase) || StatusLanguage.LooksLikeTechnicalDump(execPhrase))
@@ -67,9 +63,10 @@ public static class RolePresentation
         if (acceptance.Contains("fail_repair", StringComparison.OrdinalIgnoreCase)
             || handling.Contains("fail_repair", StringComparison.OrdinalIgnoreCase))
             return "验收发现问题，等待退修";
+        if (acceptance.Equals("content_not_accepted", StringComparison.OrdinalIgnoreCase))
+            return "内容未验收";
         if (acceptance.Equals("handled_accepted", StringComparison.OrdinalIgnoreCase)
-            || (acceptance.Contains("accept", StringComparison.OrdinalIgnoreCase)
-                && !acceptance.Contains("fail", StringComparison.OrdinalIgnoreCase)))
+            || StatusLanguage.IsExplicitAccepted(acceptance))
             return "已验收";
         var others = siblings ?? Array.Empty<WorkView>();
         if (others.Any(o => KindOf(o) == "executor"
@@ -83,8 +80,8 @@ public static class RolePresentation
         if (IsUnknown(handling) && IsUnknown(acceptance)
             && IsUnknown(lead.Axes.Turn) && IsUnknown(lead.Axes.Execution))
             return "未获取";
-        if (handling.Contains("plan", StringComparison.OrdinalIgnoreCase)
-            || (lead.TaskName ?? "").Contains("plan", StringComparison.OrdinalIgnoreCase))
+        if (handling.Equals("planning", StringComparison.OrdinalIgnoreCase)
+            || handling.Equals("plan", StringComparison.OrdinalIgnoreCase))
             return "规划中";
         return "未获取";
     }

@@ -45,6 +45,9 @@ internal static class DocumentNormalizers
             NormUtil.PutLink(links, "worktree", worktree);
             NormUtil.PutLink(links, "line_job_id", JsonField.Str(p, "current_line_job_id"));
             NormUtil.PutLink(links, "direct_job_id", JsonField.Str(p, "current_direct_job_id"));
+            NormUtil.PutLink(links, "line_job_root_id", NormUtil.JobIdFromPath(JsonField.Str(p, "current_line_job_root")));
+            NormUtil.PutLink(links, "direct_job_root_id", NormUtil.JobIdFromPath(JsonField.Str(p, "current_direct_job_root")));
+            NormUtil.PutLink(links, "native_session_id", JsonField.Str(p, "current_executor_native_session_id", "executor_native_session_id", "native_session_id"));
             NormUtil.PutLink(links, "source_object_id", id);
 
             var pass = JsonField.Bool(p, "product_pass");
@@ -89,6 +92,7 @@ internal static class DocumentNormalizers
         NormUtil.PutLink(links, "line_job_id", lineId);
         NormUtil.PutLink(links, "direct_job_id", directId);
         NormUtil.PutLink(links, "lead_session_id", session);
+        NormUtil.PutLink(links, "native_session_id", JsonField.Str(doc.Data, "executor_native_session_id", "native_session_id"));
         NormUtil.PutLink(links, "workspace", JsonField.Str(doc.Data, "workspace", "worktree"));
         NormUtil.PutLink(links, "worktree", JsonField.Str(doc.Data, "worktree", "workspace"));
         NormUtil.PutLink(links, "source_object_id", doc.Id);
@@ -142,9 +146,38 @@ internal static class DocumentNormalizers
 
         ApplyCurrentHandler(values, doc.Data, state, humanNext);
         StampExecutorIdentity(values, doc.Data);
+        StampNestedRoundVerdicts(values, doc.Data);
 
         facts.Add(new SourceFact("work", entityId, projectId, links, values, new[] { NormUtil.Evidence(doc) }));
         HandlingLogic.EmitHistoricalFromSwitchFields(doc, projectId, facts);
+    }
+
+    /// <summary>
+    /// Nested package objects on ACTIVE_WORK carry verdict/integrated only.
+    /// Used to keep the then-repair conclusion on a replaced binding.
+    /// </summary>
+    private static void StampNestedRoundVerdicts(JsonObject values, JsonObject data)
+    {
+        var sawFail = false;
+        var sawPassIntegrated = false;
+        foreach (var kv in data)
+        {
+            if (kv.Value is not JsonObject nested) continue;
+            var verdict = JsonField.Str(nested, "verdict", "result");
+            var integrated = JsonField.Bool(nested, "integrated");
+            if (string.IsNullOrWhiteSpace(verdict)) continue;
+            if (verdict.Contains("FAIL", StringComparison.OrdinalIgnoreCase) && integrated != true)
+                sawFail = true;
+            if ((verdict.Contains("PASS", StringComparison.OrdinalIgnoreCase)
+                 || verdict.Equals("accepted", StringComparison.OrdinalIgnoreCase))
+                && integrated == true)
+            {
+                sawPassIntegrated = true;
+            }
+        }
+
+        if (sawFail) values["prior_fail_repair"] = "true";
+        if (sawFail && sawPassIntegrated) values["prior_fail_consumed"] = "true";
     }
 
     private static void ApplyCurrentHandler(JsonObject values, JsonObject data, string? state, string? humanNext)
@@ -477,7 +510,9 @@ internal static class DocumentNormalizers
             if (role.Contains("contrib", StringComparison.OrdinalIgnoreCase)
                 || role.Contains("process", StringComparison.OrdinalIgnoreCase)
                 || role.Contains("cli", StringComparison.OrdinalIgnoreCase)
-                || role.Contains("acceptance", StringComparison.OrdinalIgnoreCase))
+                || role.Contains("acceptance", StringComparison.OrdinalIgnoreCase)
+                || role.Contains("review", StringComparison.OrdinalIgnoreCase)
+                || role.Contains("审核", StringComparison.Ordinal))
             {
                 continue;
             }
@@ -526,23 +561,45 @@ internal static class DocumentNormalizers
             projectId = claimed;
         }
 
-        var lineId = JsonField.Str(doc.Data, "line_job_id", "job_id");
+        var lineId = JsonField.Str(doc.Data, "line_job_id") ?? LineIdFromReceiptPath(doc.Location);
+        if (string.IsNullOrWhiteSpace(lineId))
+            lineId = JsonField.Str(doc.Data, "job_id");
         var route = JsonField.Str(doc.Data, "route");
         NormUtil.NoteRoute(route, routesSeenLive, routesSeenProtocol);
         var entityId = "work:line:" + (lineId ?? doc.Id);
         var links = new Dictionary<string, string>(StringComparer.Ordinal);
+        var directId = JsonField.Str(doc.Data, "direct_job_id")
+                       ?? ExtractDirectFromCommand(doc.Data)
+                       ?? ExtractRouteShellJobId(doc.Data, lineId);
         NormUtil.PutLink(links, "line_job_id", lineId);
-        NormUtil.PutLink(links, "direct_job_id", JsonField.Str(doc.Data, "direct_job_id") ?? ExtractDirectFromCommand(doc.Data));
-        NormUtil.PutLink(links, "lead_session_id", JsonField.Str(doc.Data, "lead_session_id", "session_id"));
+        NormUtil.PutLink(links, "direct_job_id", directId);
+        NormUtil.PutLink(links, "lead_session_id", JsonField.Str(doc.Data, "lead_session_id")
+                                                  ?? JsonField.Str(JsonField.Obj(doc.Data, "lead"), "session_id", "lead_session_id"));
+        NormUtil.PutLink(links, "native_session_id", JsonField.Str(doc.Data, "native_session_id", "executor_native_session_id"));
         NormUtil.PutLink(links, "workspace", JsonField.Str(doc.Data, "workspace"));
         NormUtil.PutLink(links, "source_object_id", doc.Id);
 
         var transport = JsonField.Bool(doc.Data, "transport_complete");
+        var phase = JsonField.Str(doc.Data, "phase", "lifecycle_phase");
+        if (transport is null && phase is not null
+            && (phase.Equals("delivered", StringComparison.OrdinalIgnoreCase)
+                || phase.Equals("complete", StringComparison.OrdinalIgnoreCase)
+                || phase.Equals("completed", StringComparison.OrdinalIgnoreCase)
+                || phase.Equals("terminal", StringComparison.OrdinalIgnoreCase)))
+        {
+            transport = true;
+        }
+
         string execution = "unknown";
         var success = JsonField.Bool(doc.Data, "success", "grok_success", "cursor_success");
         if (success == true) execution = "succeeded";
         else if (success == false) execution = "failed";
         else if (transport == true) execution = "returned";
+        else if (phase is not null
+                 && (phase.Equals("running", StringComparison.OrdinalIgnoreCase)
+                     || phase.Equals("active", StringComparison.OrdinalIgnoreCase)
+                     || phase.Equals("starting", StringComparison.OrdinalIgnoreCase)))
+            execution = "active";
 
         var values = NormUtil.BaseAxes(
             JsonField.Str(doc.Data, "role") ?? "execution",
@@ -617,8 +674,9 @@ internal static class DocumentNormalizers
         var entityId = "work:direct:" + (jobId ?? doc.Id);
         var links = new Dictionary<string, string>(StringComparer.Ordinal);
         NormUtil.PutLink(links, "direct_job_id", jobId);
-        NormUtil.PutLink(links, "line_job_id", JsonField.Str(doc.Data, "line_job_id"));
-        NormUtil.PutLink(links, "lead_session_id", JsonField.Str(doc.Data, "session_id", "lead_session_id"));
+        NormUtil.PutLink(links, "line_job_id", JsonField.Str(doc.Data, "line_job_id") ?? ExtractRouteShellLineId(doc.Data, jobId));
+        NormUtil.PutLink(links, "lead_session_id", JsonField.Str(doc.Data, "lead_session_id"));
+        NormUtil.PutLink(links, "native_session_id", JsonField.Str(doc.Data, "native_session_id", "executor_native_session_id", "session_id"));
         NormUtil.PutLink(links, "workspace", JsonField.Str(doc.Data, "workspace"));
         NormUtil.PutLink(links, "source_object_id", doc.Id);
 
@@ -1137,9 +1195,46 @@ internal static class DocumentNormalizers
         return string.IsNullOrWhiteSpace(id) ? null : id;
     }
 
+    internal static string? ExtractRouteShellJobId(JsonObject data, string? selfId)
+    {
+        foreach (var key in new[] { "route_return", "route", "native", "terminal", "receipt" })
+        {
+            var obj = JsonField.Obj(data, key);
+            var id = JsonField.Str(obj, "direct_job_id", "job_id", "native_job_id");
+            if (!string.IsNullOrWhiteSpace(id)
+                && !string.Equals(id, selfId, StringComparison.OrdinalIgnoreCase)
+                && Guid.TryParse(id, out _))
+            {
+                return id;
+            }
+        }
+
+        var lifted = JsonField.Str(data, "direct_job_id");
+        return string.IsNullOrWhiteSpace(lifted) || string.Equals(lifted, selfId, StringComparison.OrdinalIgnoreCase)
+            ? null
+            : lifted;
+    }
+
+    internal static string? ExtractRouteShellLineId(JsonObject data, string? selfId)
+    {
+        foreach (var key in new[] { "route_return", "route", "native", "terminal", "line" })
+        {
+            var obj = JsonField.Obj(data, key);
+            var id = JsonField.Str(obj, "line_job_id", "line_id");
+            if (!string.IsNullOrWhiteSpace(id)
+                && !string.Equals(id, selfId, StringComparison.OrdinalIgnoreCase)
+                && Guid.TryParse(id, out _))
+            {
+                return id;
+            }
+        }
+
+        return null;
+    }
+
     internal static string? ExtractDirectFromCommand(JsonObject data)
     {
-        var existing = JsonField.Str(data, "direct_job_id", "job_id");
+        var existing = JsonField.Str(data, "direct_job_id");
         var cmd = JsonField.Obj(data, "command");
         if (cmd is null) return existing;
         var fromObj = JsonField.Str(JsonField.Obj(cmd, "arguments"), "DirectJobId", "direct_job_id", "JobId", "job_id");

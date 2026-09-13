@@ -584,8 +584,62 @@ public static class StatusLanguage
 
     public static string WorkStatusPhrase(WorkView work) => ComposeSingleWorkPhrase(work);
 
+    public static string ReviewerStatusPhrase(WorkView work)
+    {
+        var a = work.Axes;
+        if (IsFailed(a.Execution))
+            return "当前执行失败，待处理";
+        if (string.Equals(a.Acceptance, "content_not_accepted", StringComparison.OrdinalIgnoreCase))
+            return "内容未验收";
+        if (IsExplicitAccepted(a.Acceptance))
+            return IsAdoptedValue(a.Adoption) ? "已接受并已采用" : "已验收";
+        if (a.Execution.Equals("active", StringComparison.OrdinalIgnoreCase)
+            || a.Execution.Equals("running", StringComparison.OrdinalIgnoreCase))
+            return "正在审核";
+        if (IsComplete(a.Execution) || IsComplete(a.Delivery) || IsComplete(a.Transport))
+            return "结果已交回，等待负责人处理";
+        if (HasReviewAssignment(work))
+            return "已安排审核；当前状态未获取";
+        return "未获取";
+    }
+
+    public static bool HasReviewAssignment(WorkView work)
+    {
+        if (string.Equals(work.ReviewAssigned, "true", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (string.Equals(work.ReviewAssigned, "false", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var role = work.Role ?? string.Empty;
+        return role.Contains("review", StringComparison.OrdinalIgnoreCase)
+               || role.Contains("审核", StringComparison.Ordinal)
+               || string.Equals(work.ActorKind, "reviewer", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static bool IsExplicitAccepted(string? s)
+    {
+        if (IsUnknown(s)) return false;
+        var t = s!.Trim();
+        if (t.Contains("not_accept", StringComparison.OrdinalIgnoreCase)
+            || t.Contains("unaccept", StringComparison.OrdinalIgnoreCase)
+            || t.Contains("pending", StringComparison.OrdinalIgnoreCase)
+            || t.Contains("in_progress", StringComparison.OrdinalIgnoreCase)
+            || t.Contains("fail", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return t.Equals("handled_accepted", StringComparison.OrdinalIgnoreCase)
+               || t.Equals("accepted", StringComparison.OrdinalIgnoreCase)
+               || t.Equals("accepted_partial_or_full", StringComparison.OrdinalIgnoreCase)
+               || t.Equals("已验收", StringComparison.Ordinal)
+               || t.Equals("已接受", StringComparison.Ordinal);
+    }
+
     private static string ComposeSingleWorkPhrase(WorkView work)
     {
+        if (IsReviewerWork(work))
+            return ReviewerStatusPhrase(work);
+
         var a = work.Axes;
         if ((a.LeadHandling ?? "").Equals("blocked_after_acceptance", StringComparison.OrdinalIgnoreCase)
             || (a.LeadHandling ?? "").Contains("blocked_after_acceptance", StringComparison.OrdinalIgnoreCase))
@@ -615,7 +669,7 @@ public static class StatusLanguage
             || (a.LeadHandling ?? "").Contains("fail_repair", StringComparison.OrdinalIgnoreCase))
             return "结果已交回；负责人验收发现问题，需要原执行者退修";
         if ((a.Acceptance ?? "").Equals("handled_accepted", StringComparison.OrdinalIgnoreCase)
-            || (IsAcceptedValue(a.Acceptance) && !(a.Acceptance ?? "").Contains("fail", StringComparison.OrdinalIgnoreCase)))
+            || IsExplicitAccepted(a.Acceptance))
             return IsAdoptedValue(a.Adoption) ? "已接受并已采用" : "已验收";
         if ((a.LeadHandling ?? "").Contains("lead_handled", StringComparison.OrdinalIgnoreCase)
             || ((a.Acceptance ?? "").StartsWith("handled", StringComparison.OrdinalIgnoreCase)
@@ -648,7 +702,7 @@ public static class StatusLanguage
 
             if (IsPending(a.Acceptance) || IsUnknown(a.Acceptance))
                 return "结果已交回，等待负责人处理";
-            if (IsAcceptedValue(a.Acceptance))
+            if (IsExplicitAccepted(a.Acceptance))
                 return IsAdoptedValue(a.Adoption) ? "已接受并已采用" : "已接受";
             return "结果已交回";
         }
@@ -658,7 +712,7 @@ public static class StatusLanguage
             return "待验收";
         if (IsAdoptedValue(a.Adoption))
             return "已采用贡献";
-        if (IsAcceptedValue(a.Acceptance))
+        if (IsExplicitAccepted(a.Acceptance))
             return "已接受";
         if (IsPausedToken(a.LeadHandling) || IsPausedToken(a.Execution))
             return "主动暂停";
@@ -667,12 +721,32 @@ public static class StatusLanguage
         if (!string.IsNullOrWhiteSpace(summary)
             && !IsHistoricalWork(work)
             && !LooksLikePassClaim(summary)
+            && !LooksLikeStageCode(summary)
             && IsConsumerPhrase(summary))
         {
             return Truncate(summary, 40);
         }
 
         return "未获取";
+    }
+
+    private static bool IsReviewerWork(WorkView work) =>
+        string.Equals(work.ActorKind, "reviewer", StringComparison.OrdinalIgnoreCase)
+        || (work.Role ?? string.Empty).Contains("review", StringComparison.OrdinalIgnoreCase)
+        || (work.Role ?? string.Empty).Contains("审核", StringComparison.Ordinal);
+
+    private static bool LooksLikeStageCode(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text) || HasCjk(text)) return false;
+        var t = text.Trim();
+        if (t.Contains("assigned", StringComparison.OrdinalIgnoreCase) && t.Contains('-'))
+        {
+            return true;
+        }
+
+        return t.Contains('_', StringComparison.Ordinal)
+               && t.Any(char.IsAscii)
+               && t.Any(char.IsDigit);
     }
 
     public static bool IsConsumerPhrase(string? text)
@@ -868,6 +942,7 @@ public static class StatusLanguage
         if (t.Contains("axis=", StringComparison.OrdinalIgnoreCase)) return true;
         if (t.Contains("present/attempted", StringComparison.OrdinalIgnoreCase)) return true;
         if (t.Contains("V23_", StringComparison.OrdinalIgnoreCase)) return true;
+        if (LooksLikeStageCode(t)) return true;
         return false;
     }
 
@@ -887,29 +962,13 @@ public static class StatusLanguage
         if (HasLiveHandler(work))
             return false;
         if (work.ActorKind is "progress") return true;
-        if (work.ActorKind is "executor")
-        {
-            var exec = work.Axes.Execution ?? "";
-            if (exec.Equals("failed", StringComparison.OrdinalIgnoreCase)
-                || exec.Equals("active", StringComparison.OrdinalIgnoreCase)
-                || exec.Equals("running", StringComparison.OrdinalIgnoreCase)
-                || exec.Equals("returned", StringComparison.OrdinalIgnoreCase)
-                || exec.Equals("succeeded", StringComparison.OrdinalIgnoreCase))
-                return false;
-            if (IsUnknown(work.Axes.Execution) && IsUnknown(work.Axes.LeadHandling)
-                && IsUnknown(work.Axes.Acceptance) && IsUnknown(work.Axes.Transport)
-                && string.IsNullOrWhiteSpace(work.Model) && string.IsNullOrWhiteSpace(work.TaskName)
-                && string.IsNullOrWhiteSpace(work.ActorName))
-                return true;
-            return false;
-        }
-        if (work.ActorKind is "lead" or "reviewer" or "legion")
+        if (work.ActorKind is "executor" or "lead" or "reviewer" or "legion")
             return false;
         if (work.Role.Equals("lead", StringComparison.OrdinalIgnoreCase)) return false;
         if (work.Role.Contains("review", StringComparison.OrdinalIgnoreCase)) return false;
+        if (work.Role.Contains("exec", StringComparison.OrdinalIgnoreCase)) return false;
         if (work.Role.Equals("process", StringComparison.OrdinalIgnoreCase)) return true;
         if (work.Role.Equals("cli", StringComparison.OrdinalIgnoreCase)) return true;
-        if (LooksLikeTechnicalDump(work.Summary)) return true;
         if (work.Summary.StartsWith("process_observation", StringComparison.OrdinalIgnoreCase)) return true;
         var role = work.Role ?? string.Empty;
         if (role.Contains("lead", StringComparison.OrdinalIgnoreCase)
@@ -917,6 +976,11 @@ public static class StatusLanguage
             && IsUnknown(work.Axes.Acceptance)
             && IsUnknown(work.Axes.Execution)
             && !IsConsumerPhrase(work.Summary))
+            return true;
+        if (LooksLikeTechnicalDump(work.Summary)
+            && IsUnknown(work.Axes.Execution)
+            && IsUnknown(work.Axes.LeadHandling)
+            && string.IsNullOrWhiteSpace(work.Model))
             return true;
         return false;
     }
@@ -977,7 +1041,7 @@ public static class StatusLanguage
         || (IsComplete(w.Axes.Delivery) && (IsUnknown(w.Axes.Acceptance) || IsPending(w.Axes.Acceptance)));
 
     private static bool IsAdopted(WorkView w) => IsAdoptedValue(w.Axes.Adoption);
-    private static bool IsAccepted(WorkView w) => IsAcceptedValue(w.Axes.Acceptance);
+    private static bool IsAccepted(WorkView w) => IsExplicitAccepted(w.Axes.Acceptance);
     private static bool IsGoalComplete(WorkView w) =>
         string.Equals(w.Axes.Goal, "complete", StringComparison.OrdinalIgnoreCase)
         || string.Equals(w.Axes.Goal, "completed", StringComparison.OrdinalIgnoreCase);
@@ -1010,9 +1074,7 @@ public static class StatusLanguage
             || s.Equals("returned", StringComparison.OrdinalIgnoreCase)
             || s.Equals("delivered", StringComparison.OrdinalIgnoreCase));
 
-    private static bool IsAcceptedValue(string? s) =>
-        !IsUnknown(s) && (s!.Contains("accept", StringComparison.OrdinalIgnoreCase)
-            || s.Contains("已接受", StringComparison.Ordinal));
+    private static bool IsAcceptedValue(string? s) => IsExplicitAccepted(s);
 
     private static bool IsAdoptedValue(string? s) =>
         !IsUnknown(s) && (s!.Contains("adopt", StringComparison.OrdinalIgnoreCase)
