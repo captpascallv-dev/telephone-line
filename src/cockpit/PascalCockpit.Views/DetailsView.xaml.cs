@@ -77,13 +77,13 @@ public partial class DetailsView : UserControl
         GoalLabel.Text = ConsumerCopy.T(_lang, "goal");
         ProgressTitle.Text = ConsumerCopy.T(_lang, "progress");
         PascalSectionTitle.Text = ConsumerCopy.T(_lang, "pascal_section");
-        CurrentWorkTitle.Text = ConsumerCopy.T(_lang, "current_work");
-        NoCurrentWorkText.Text = ConsumerCopy.T(_lang, "no_current_work");
+        CurrentWorkTitle.Text = ConsumerCopy.T(_lang, "current_roles");
+        NoCurrentWorkText.Text = ConsumerCopy.T(_lang, "no_current_roles");
         ArtifactTitle.Text = ConsumerCopy.T(_lang, "artifacts");
         NoArtifactText.Text = ConsumerCopy.T(_lang, "no_artifacts");
         LeadTitle.Text = ConsumerCopy.T(_lang, "lead_pending");
         SecretaryTitle.Text = ConsumerCopy.T(_lang, "secretary");
-        HistoryTitle.Text = ConsumerCopy.T(_lang, "history_section");
+        HistoryTitle.Text = ConsumerCopy.T(_lang, "history_roles");
         NoHistoryText.Text = ConsumerCopy.T(_lang, "no_history");
         NavTitle.Text = ConsumerCopy.T(_lang, "nav");
         NoNavText.Text = ConsumerCopy.T(_lang, "no_nav");
@@ -155,6 +155,16 @@ public partial class DetailsView : UserControl
 
         CurrentWorkList.ItemsSource = model.CurrentWorks;
         NoCurrentWorkText.Visibility = model.CurrentWorks.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (string.IsNullOrWhiteSpace(model.UnassignedReviewText))
+        {
+            UnassignedReviewText.Visibility = Visibility.Collapsed;
+            UnassignedReviewText.Text = string.Empty;
+        }
+        else
+        {
+            UnassignedReviewText.Visibility = Visibility.Visible;
+            UnassignedReviewText.Text = model.UnassignedReviewText;
+        }
 
         ArtifactList.ItemsSource = model.Artifacts;
         NoArtifactText.Visibility = model.Artifacts.Count == 0 ? Visibility.Visible : Visibility.Collapsed;

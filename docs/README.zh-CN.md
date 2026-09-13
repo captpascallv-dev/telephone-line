@@ -256,6 +256,7 @@ v0.1 目前仅验证 Windows 生产环境。macOS 用户不要强行运行 Windo
 - [快速开始](quick-start.md)
 - [v0.1.2 发行说明](releases/v0.1.2.md)
 - [v0.1.5 发行说明](releases/v0.1.5.md)
+- [v0.1.6 发行说明](releases/v0.1.6.md)
 - [仪表盘](dashboard.md)
 - [连续推进控制面](control-plane.md)
 - [架构](architecture.md)

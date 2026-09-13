@@ -8,14 +8,28 @@ public sealed record DetailsArtifactRow(string Id, string Label, string State, N
 
 public sealed record DetailsWorkRow(
     string Id,
+    string RoleKind,
     string RoleLabel,
+    string ActorName,
+    string TaskText,
+    string ModelText,
+    string EffortText,
+    string StatusText,
+    string BlockerText,
     string? Route,
     string Summary,
     string AxesPhrase,
     string QualityLabel,
     bool IsHistorical,
     IReadOnlyList<DetailsArtifactRow> Artifacts,
-    IReadOnlyList<NavigationTarget> Targets);
+    IReadOnlyList<NavigationTarget> Targets)
+{
+    public string AutomationName =>
+        string.Join(" · ", new[] { RoleLabel, ActorName, StatusText, ModelText, EffortText }
+            .Where(s => !string.IsNullOrWhiteSpace(s)));
+
+    public override string ToString() => AutomationName;
+}
 
 public sealed record DetailsNavButton(string Label, NavigationTarget Target);
 
@@ -43,7 +57,8 @@ public sealed record DetailsModel(
     string NextOwner,
     string NeedsPascal,
     string FreshnessHint,
-    string DiagnosticsText);
+    string DiagnosticsText,
+    string? UnassignedReviewText);
 
 public static class DetailsPresentation
 {
@@ -66,16 +81,8 @@ public static class DetailsPresentation
             return Empty("选中项目已不在当前快照中。", lang);
         }
 
-        var current = new List<DetailsWorkRow>();
-        var historical = new List<DetailsWorkRow>();
-        foreach (var w in project.WorkItems)
-        {
-            if (!StatusLanguage.IsHistoricalWork(w) && StatusLanguage.IsDiagnosticNoise(w))
-                continue;
-            var row = ToWorkRow(w);
-            if (row.IsHistorical) historical.Add(row);
-            else current.Add(row);
-        }
+        var current = RolePresentation.CurrentRows(project, lang);
+        var historical = RolePresentation.HistoricalRows(project, lang);
 
         var pascal = project.Attention.Where(a => a.Owner == AttentionOwner.Pascal).Select(a => ToAtt(a, lang)).ToList();
         var lead = project.Attention.Where(a => a.Owner == AttentionOwner.Lead).Select(a => ToAtt(a, lang)).ToList();
@@ -126,7 +133,10 @@ public static class DetailsPresentation
             situation.Next,
             situation.Pascal,
             project.Quality == DataQuality.LastKnown ? ConsumerCopy.Localize("沿用上次已知，不是这一轮刚采到的。", lang) : string.Empty,
-            BuildDiagnostics(project, snapshot, lang));
+            BuildDiagnostics(project, snapshot, lang),
+            RolePresentation.HasExplicitNoReviewer(project)
+                ? ConsumerCopy.T(lang, "review_not_assigned")
+                : null);
     }
 
     /// <summary>
@@ -196,7 +206,8 @@ public static class DetailsPresentation
         string.Empty,
         string.Empty,
         string.Empty,
-        string.Empty);
+        string.Empty,
+        null);
 
     private static (string Who, string HowFar, string Stuck, string Next, string Pascal, string Phase, string Goal, string Summary) Situation(ProjectView project, UiLang lang)
     {
@@ -214,6 +225,7 @@ public static class DetailsPresentation
         var failed = current.Any(w =>
             !StatusLanguage.HasLiveHandler(w)
             && w.Axes.Execution.Equals("failed", StringComparison.OrdinalIgnoreCase));
+        var failedStuck = RolePresentation.FailedItemsStuck(current, lang);
         var pascal = project.Attention.Any(a => a.Owner == AttentionOwner.Pascal);
         var who = blocked || accepting
             ? "原负责人"
@@ -230,13 +242,17 @@ public static class DetailsPresentation
             ? "后续处理被平台限制中断，退修尚未派出"
             : lineZh.Contains("验收发现问题", StringComparison.Ordinal)
                 ? "卡在验收发现的问题上，需要原执行者退修"
-            : failed && !accepting && !inFlight
+            : !string.IsNullOrWhiteSpace(failedStuck)
+                ? null
+            : failed && !accepting
                 ? "当前执行失败，待处理"
             : accepting || inFlight || repairOut || lineZh.Contains("还没交回", StringComparison.Ordinal)
                 || lineZh.Contains("正在验收", StringComparison.Ordinal)
                 ? "目前没有已知阻点"
             : "无法判断卡点的具体部分：缺少足够来源";
-        var stuck = ConsumerCopy.Localize(stuckZh, lang);
+        var stuck = !string.IsNullOrWhiteSpace(failedStuck)
+            ? failedStuck
+            : ConsumerCopy.Localize(stuckZh ?? "当前执行失败，待处理", lang);
         var returned = !inFlight && current.Any(w =>
             w.Axes.Execution.Equals("returned", StringComparison.OrdinalIgnoreCase)
             || w.Axes.Execution.Equals("succeeded", StringComparison.OrdinalIgnoreCase)
@@ -323,33 +339,6 @@ public static class DetailsPresentation
         if (!string.IsNullOrWhiteSpace(issues))
             lines.Add(issues);
         return string.Join(Environment.NewLine, lines);
-    }
-
-    private static DetailsWorkRow ToWorkRow(WorkView w)
-    {
-        var historical = StatusLanguage.IsHistoricalWork(w);
-        var artifacts = w.Artifacts.Select(a => new DetailsArtifactRow(a.Id, a.Label, a.State, a.Target)).ToList();
-        var qualityLabel = historical
-            ? "历史/上次已知（非当前故障）"
-            : StatusLanguage.DataQualityShort(w.Quality);
-        var phrase = StatusLanguage.IsGenerationInFlight(w)
-            ? StatusLanguage.GenerationPhrase(w, null)
-            : StatusLanguage.ProjectOneLiner(
-                new ProjectView("x", "x", w.Summary, "x", null, null, true, false, null, new[] { w },
-                    Array.Empty<AttentionItem>(), Array.Empty<NavigationTarget>(), w.Quality, null),
-                int.MaxValue);
-        if (string.IsNullOrWhiteSpace(phrase) || StatusLanguage.LooksLikeTechnicalDump(phrase))
-            phrase = StatusLanguage.LooksLikeTechnicalDump(w.Summary) ? "当前事实见上面的人话说明" : w.Summary;
-        return new DetailsWorkRow(
-            w.Id,
-            StatusLanguage.WorkRoleLabel(w.Role),
-            null,
-            phrase,
-            string.Empty,
-            qualityLabel,
-            historical,
-            artifacts,
-            w.Targets);
     }
 
     private static DetailsAttentionRow ToAtt(AttentionItem a, UiLang lang) => new(

@@ -141,6 +141,7 @@ internal static class DocumentNormalizers
         }
 
         ApplyCurrentHandler(values, doc.Data, state, humanNext);
+        StampIdentity(values, doc.Data);
 
         facts.Add(new SourceFact("work", entityId, projectId, links, values, new[] { NormUtil.Evidence(doc) }));
         HandlingLogic.EmitHistoricalFromSwitchFields(doc, projectId, facts);
@@ -229,6 +230,49 @@ internal static class DocumentNormalizers
         }
     }
 
+    /// <summary>
+    /// Copy current actor/task/model/effort from the same document. Nested lead
+    /// objects are read; CLI/owner documents are not rewritten as Lead.
+    /// </summary>
+    private static void StampIdentity(JsonObject values, JsonObject data)
+    {
+        var leadObj = JsonField.Obj(data, "lead", "lead_binding", "binding");
+        PutIfMissing(values, "actor_name",
+            JsonField.Str(data, "actor_name", "display_name", "executor_name", "client", "client_name", "agent_name")
+            ?? JsonField.Str(leadObj, "display_name", "name"));
+        PutIfMissing(values, "task_name",
+            JsonField.Str(data, "task_name", "task", "package_id", "current_package_id", "title", "stage"));
+        PutIfMissing(values, "model",
+            JsonField.Str(data, "model", "lead_model", "model_name")
+            ?? JsonField.Str(leadObj, "model", "lead_model", "model_name"));
+        PutIfMissing(values, "effort",
+            JsonField.Str(data, "reasoning_effort", "effort", "lead_reasoning")
+            ?? JsonField.Str(leadObj, "reasoning_effort", "effort", "lead_reasoning"));
+        PutIfMissing(values, "blocker",
+            JsonField.Str(data, "blocker", "execution_blocker")
+            ?? JsonField.Str(JsonField.Obj(data, "execution_blocker"), "code", "classification", "detail"));
+
+        var reviewAssigned = JsonField.Bool(data, "review_assigned", "reviewer_assigned");
+        if (reviewAssigned is not null)
+            values["review_assigned"] = reviewAssigned.Value ? "true" : "false";
+
+        var role = values["role"]?.GetValue<string>();
+        if (string.IsNullOrWhiteSpace(role) || role.Equals("unknown", StringComparison.OrdinalIgnoreCase))
+        {
+            var rawRole = JsonField.Str(data, "role");
+            if (!string.IsNullOrWhiteSpace(rawRole))
+                values["role"] = rawRole;
+        }
+    }
+
+    private static void PutIfMissing(JsonObject values, string key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+        var existing = values[key]?.GetValue<string>();
+        if (string.IsNullOrWhiteSpace(existing) || existing.Equals("unknown", StringComparison.OrdinalIgnoreCase))
+            values[key] = value;
+    }
+
     public static void NormalizeLead(RawDocument doc, List<SourceFact> facts, List<SourceIssue> issues, HashSet<string> knownProjects)
     {
         var projectId = NormUtil.ResolveProjectId(doc, knownProjects, issues);
@@ -261,6 +305,7 @@ internal static class DocumentNormalizers
         var ticks = JsonField.Long(doc.Data, "start_time_utc_ticks", "start_ticks");
         if (pid is not null) values["pid"] = pid.Value.ToString(CultureInfo.InvariantCulture);
         if (ticks is not null) values["start_time_utc_ticks"] = ticks.Value.ToString(CultureInfo.InvariantCulture);
+        StampIdentity(values, doc.Data);
         facts.Add(new SourceFact("lead", entityId, projectId, links, values, new[] { NormUtil.Evidence(doc) }));
     }
 
@@ -483,6 +528,7 @@ internal static class DocumentNormalizers
         if (NormUtil.LooksCancelledArchived(doc.Data))
             NormUtil.MarkCancelledArchived(values);
 
+        StampIdentity(values, doc.Data);
         StampCollectedScope(doc, values);
         facts.Add(new SourceFact("work", entityId, projectId, links, values, new[] { NormUtil.Evidence(doc) }));
     }
@@ -575,6 +621,7 @@ internal static class DocumentNormalizers
         if (NormUtil.LooksCancelledArchived(doc.Data))
             NormUtil.MarkCancelledArchived(values);
 
+        StampIdentity(values, doc.Data);
         StampCollectedScope(doc, values);
         facts.Add(new SourceFact("work", entityId, projectId, links, values, new[] { NormUtil.Evidence(doc) }));
     }

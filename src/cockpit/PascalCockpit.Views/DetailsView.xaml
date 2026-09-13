@@ -81,29 +81,60 @@
             </ItemsControl.ItemTemplate>
           </ItemsControl>
 
-          <StackPanel x:Name="TechnicalPanel" Visibility="Collapsed">
-          <TextBlock x:Name="CurrentWorkTitle" Text="当前工作（并发）" Style="{StaticResource SectionTitle}"/>
-          <ItemsControl x:Name="CurrentWorkList">
+          <TextBlock x:Name="CurrentWorkTitle" Text="当前角色" Style="{StaticResource SectionTitle}"
+                     AutomationProperties.AutomationId="DetailsCurrentRolesTitle"/>
+          <ItemsControl x:Name="CurrentWorkList" AutomationProperties.AutomationId="DetailsCurrentRoles">
             <ItemsControl.ItemTemplate>
               <DataTemplate>
                 <Border Margin="0,0,0,8" Padding="10" Background="{StaticResource HudPanel}"
-                        BorderBrush="{StaticResource HudLine}" BorderThickness="1" CornerRadius="7">
+                        BorderBrush="{StaticResource HudLine}" BorderThickness="1" CornerRadius="7"
+                        AutomationProperties.Name="{Binding AutomationName, Mode=OneWay}">
                   <StackPanel>
-                    <TextBlock FontWeight="SemiBold" Foreground="{StaticResource HudText}">
-                      <Run Text="{Binding RoleLabel, Mode=OneWay}"/>
-                      <Run Text="  "/>
-                      <Run Text="{Binding Route, Mode=OneWay}" Foreground="#FF53625A"/>
+                    <TextBlock FontWeight="SemiBold" Foreground="{StaticResource HudMint}" FontSize="14"
+                               Text="{Binding RoleLabel, Mode=OneWay}"/>
+                    <TextBlock Style="{StaticResource BodyText}" Margin="0,4,0,0">
+                      <Run Text="{Binding ActorName, Mode=OneWay}"/>
                     </TextBlock>
-                    <TextBlock Text="{Binding Summary}" Style="{StaticResource BodyText}" Margin="0,4,0,0"/>
-                    <TextBlock Text="{Binding AxesPhrase}" Style="{StaticResource MutedCaption}" Margin="0,4,0,0"/>
-                    <TextBlock Text="{Binding QualityLabel}" Style="{StaticResource MutedCaption}" Margin="0,2,0,0"/>
+                    <TextBlock Style="{StaticResource MutedCaption}" Margin="0,4,0,0">
+                      <Run Text="{Binding TaskText, Mode=OneWay}"/>
+                    </TextBlock>
+                    <TextBlock Style="{StaticResource BodyText}" Margin="0,4,0,0">
+                      <Run Text="{Binding ModelText, Mode=OneWay}"/>
+                      <Run Text="  ·  "/>
+                      <Run Text="{Binding EffortText, Mode=OneWay}"/>
+                    </TextBlock>
+                    <TextBlock Text="{Binding StatusText, Mode=OneWay}" Style="{StaticResource BodyText}" Margin="0,6,0,0"/>
+                    <TextBlock Text="{Binding BlockerText, Mode=OneWay}" Style="{StaticResource MutedCaption}" Margin="0,4,0,0"/>
                   </StackPanel>
                 </Border>
               </DataTemplate>
             </ItemsControl.ItemTemplate>
           </ItemsControl>
-          <TextBlock x:Name="NoCurrentWorkText" Style="{StaticResource MutedCaption}" Text="无当前工作项。" Visibility="Collapsed"/>
+          <TextBlock x:Name="NoCurrentWorkText" Style="{StaticResource MutedCaption}" Text="无当前角色项。" Visibility="Collapsed"/>
+          <TextBlock x:Name="UnassignedReviewText" Style="{StaticResource MutedCaption}" Margin="0,4,0,0" Visibility="Collapsed"
+                     AutomationProperties.AutomationId="DetailsUnassignedReview"/>
 
+          <TextBlock x:Name="HistoryTitle" Text="历史角色（可追溯，非当前）" Style="{StaticResource SectionTitle}"/>
+          <ItemsControl x:Name="HistoricalWorkList">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Border Margin="0,0,0,8" Padding="10" Background="{StaticResource HistBg}"
+                        BorderBrush="{StaticResource HudLine}" BorderThickness="1" CornerRadius="7"
+                        AutomationProperties.Name="{Binding AutomationName, Mode=OneWay}">
+                  <StackPanel>
+                    <TextBlock FontWeight="SemiBold" Foreground="{StaticResource HudMuted}"
+                               Text="{Binding RoleLabel, Mode=OneWay}"/>
+                    <TextBlock Text="{Binding ActorName, Mode=OneWay}" Style="{StaticResource BodyText}" Margin="0,4,0,0"/>
+                    <TextBlock Text="{Binding StatusText, Mode=OneWay}" Style="{StaticResource BodyText}" Margin="0,4,0,0"/>
+                    <TextBlock Text="{Binding QualityLabel, Mode=OneWay}" Style="{StaticResource MutedCaption}" Margin="0,2,0,0"/>
+                  </StackPanel>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <TextBlock x:Name="NoHistoryText" Style="{StaticResource MutedCaption}" Text="无历史/上次已知条目。" Visibility="Collapsed"/>
+
+          <StackPanel x:Name="TechnicalPanel" Visibility="Collapsed">
           <TextBlock x:Name="ArtifactTitle" Text="成果" Style="{StaticResource SectionTitle}"/>
           <ItemsControl x:Name="ArtifactList">
             <ItemsControl.ItemTemplate>
@@ -134,24 +165,6 @@
               </DataTemplate>
             </ItemsControl.ItemTemplate>
           </ItemsControl>
-
-          <TextBlock x:Name="HistoryTitle" Text="历史 / 上次已知（可追溯，非当前故障）" Style="{StaticResource SectionTitle}"/>
-          <ItemsControl x:Name="HistoricalWorkList">
-            <ItemsControl.ItemTemplate>
-              <DataTemplate>
-                <Border Margin="0,0,0,8" Padding="10" Background="{StaticResource HistBg}"
-                        BorderBrush="{StaticResource HudLine}" BorderThickness="1" CornerRadius="7">
-                  <StackPanel>
-                    <TextBlock FontWeight="SemiBold" Foreground="{StaticResource HudMuted}" Text="历史条目"/>
-                    <TextBlock Text="{Binding Summary}" Style="{StaticResource BodyText}" Margin="0,4,0,0"/>
-                    <TextBlock Text="{Binding AxesPhrase}" Style="{StaticResource MutedCaption}" Margin="0,4,0,0"/>
-                    <TextBlock Text="{Binding QualityLabel}" Style="{StaticResource MutedCaption}" Margin="0,2,0,0"/>
-                  </StackPanel>
-                </Border>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
-          <TextBlock x:Name="NoHistoryText" Style="{StaticResource MutedCaption}" Text="无历史/上次已知条目。" Visibility="Collapsed"/>
 
           <TextBlock x:Name="NavTitle" Text="导航（仅快照已有目标）" Style="{StaticResource SectionTitle}"/>
           <WrapPanel x:Name="NavPanel"/>

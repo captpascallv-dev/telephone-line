@@ -204,8 +204,9 @@ internal static class HandlingLogic
                     continue;
                 var handling = f.Values["lead_handling_state"]?.GetValue<string>() ?? string.Empty;
                 var acceptance = f.Values["acceptance_state"]?.GetValue<string>() ?? string.Empty;
-                if (!IsCompleteLeadHandled(handling, acceptance)
-                    && !NormUtil.IsLiveHandlerState(handling, acceptance))
+                // Live handler (accepting / repair dispatched) on a sibling line is
+                // current concurrent work, not consumed history.
+                if (!IsCompleteLeadHandled(handling, acceptance))
                     continue;
                 var values = NormUtil.CloneValues(f.Values);
                 values["historical"] = "true";

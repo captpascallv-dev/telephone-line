@@ -53,6 +53,26 @@ public static class HelpSummaryText
                 sb.AppendLine(ConsumerCopy.T(lang, "next_label") + details.NextOwner);
             if (!string.IsNullOrWhiteSpace(details.NeedsPascal))
                 sb.AppendLine(ConsumerCopy.T(lang, "need_you_label") + details.NeedsPascal);
+            if (details.CurrentWorks.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine(ConsumerCopy.T(lang, "roles_section"));
+                foreach (var row in details.CurrentWorks)
+                {
+                    sb.AppendLine("- " + row.RoleLabel + " / " + row.ActorName + " / " + row.StatusText
+                        + " / " + row.ModelText + " / " + row.EffortText);
+                    if (!string.IsNullOrWhiteSpace(row.BlockerText))
+                        sb.AppendLine("  " + row.BlockerText);
+                }
+            }
+            if (details.HistoricalWorks.Count > 0)
+            {
+                sb.AppendLine(ConsumerCopy.T(lang, "history_roles_section"));
+                foreach (var row in details.HistoricalWorks)
+                    sb.AppendLine("- " + row.RoleLabel + " / " + row.ActorName + " / " + row.StatusText);
+            }
+            if (!string.IsNullOrWhiteSpace(details.UnassignedReviewText))
+                sb.AppendLine(details.UnassignedReviewText);
             if (!string.IsNullOrWhiteSpace(details.Goal)
                 && details.Goal is not "未声明" and not "未用一句话写明目标" and not "not stated" and not "no one-line goal")
             {

@@ -212,6 +212,7 @@ Using a Windows host for Telephone Line remains an available option. If native m
 - [Quick start](docs/quick-start.md)
 - [v0.1.2 notes](docs/releases/v0.1.2.md)
 - [v0.1.5 notes](docs/releases/v0.1.5.md)
+- [v0.1.6 notes](docs/releases/v0.1.6.md)
 - [Dashboard](docs/dashboard.md)
 - [Continuity control plane](docs/control-plane.md)
 - [Architecture](docs/architecture.md)

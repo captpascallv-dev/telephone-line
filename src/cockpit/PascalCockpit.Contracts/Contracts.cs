@@ -18,7 +18,23 @@ public sealed record NavigationTarget(string Kind, string Target, string Label, 
 public sealed record ArtifactView(string Id, string Label, string State, NavigationTarget? Target, IReadOnlyList<EvidenceRef> Evidence);
 public sealed record ProgressView(int Completed, int Total, string Basis, IReadOnlyList<EvidenceRef> Evidence);
 public sealed record AttentionItem(string Id, AttentionOwner Owner, string Description, string Reason, IReadOnlyList<NavigationTarget> Targets, IReadOnlyList<EvidenceRef> Evidence);
-public sealed record WorkView(string Id, string Role, string? Route, string Summary, WorkAxes Axes, IReadOnlyList<ArtifactView> Artifacts, IReadOnlyList<NavigationTarget> Targets, IReadOnlyList<EvidenceRef> Evidence, DataQuality Quality);
+public sealed record WorkView(
+    string Id,
+    string Role,
+    string? Route,
+    string Summary,
+    WorkAxes Axes,
+    IReadOnlyList<ArtifactView> Artifacts,
+    IReadOnlyList<NavigationTarget> Targets,
+    IReadOnlyList<EvidenceRef> Evidence,
+    DataQuality Quality,
+    string? ActorName = null,
+    string? TaskName = null,
+    string? Model = null,
+    string? Effort = null,
+    string? Blocker = null,
+    string? ActorKind = null,
+    string? ReviewAssigned = null);
 public sealed record ProjectView(string Id, string Name, string Summary, string Phase, string? Goal, string? NextStep, bool IsActive, bool IsPaused, ProgressView? Progress, IReadOnlyList<WorkView> WorkItems, IReadOnlyList<AttentionItem> Attention, IReadOnlyList<NavigationTarget> Targets, DataQuality Quality, DateTimeOffset? LastFactAt);
 public sealed record RouteCoverage(string RouteId, string Level, string? Gap, IReadOnlyList<EvidenceRef> Evidence);
 public sealed record CockpitSnapshot(DateTimeOffset CollectedAt, IReadOnlyList<ProjectView> Projects, IReadOnlyList<SourceIssue> Issues, IReadOnlyList<RouteCoverage> Routes, DataQuality Quality);

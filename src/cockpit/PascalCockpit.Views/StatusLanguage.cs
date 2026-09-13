@@ -582,6 +582,8 @@ public static class StatusLanguage
         return string.Join("；", phrases.Take(2)) + (phrases.Count > 2 ? "…" : string.Empty);
     }
 
+    public static string WorkStatusPhrase(WorkView work) => ComposeSingleWorkPhrase(work);
+
     private static string ComposeSingleWorkPhrase(WorkView work)
     {
         var a = work.Axes;
@@ -882,6 +884,10 @@ public static class StatusLanguage
     {
         if (HasLiveHandler(work))
             return false;
+        if (work.ActorKind is "lead" or "executor" or "reviewer" or "legion")
+            return false;
+        if (work.Role.Equals("lead", StringComparison.OrdinalIgnoreCase)) return false;
+        if (work.Role.Contains("review", StringComparison.OrdinalIgnoreCase)) return false;
         if (work.Role.Equals("process", StringComparison.OrdinalIgnoreCase)) return true;
         if (work.Role.Equals("cli", StringComparison.OrdinalIgnoreCase)) return true;
         if (LooksLikeTechnicalDump(work.Summary)) return true;

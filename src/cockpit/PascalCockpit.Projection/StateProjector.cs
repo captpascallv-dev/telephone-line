@@ -113,9 +113,19 @@ public sealed class StateProjector : IProjector
 
             foreach (var c in pContrib)
             {
-                var hist = string.Equals(Val(c, "historical"), "true", StringComparison.OrdinalIgnoreCase);
+                if (IsLeadAcceptanceCard(c))
+                    continue;
+                var adopted = string.Equals(Val(c, "counts_as_adopted_outcome"), "true", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(Val(c, "adoption_state"), "adopted", StringComparison.OrdinalIgnoreCase);
+                var hist = string.Equals(Val(c, "historical"), "true", StringComparison.OrdinalIgnoreCase)
+                    || adopted
+                    || !IsLiveLegion(c);
                 workViews.Add(ToWorkView(c, hist ? DataQuality.LastKnown : DataQuality.Fresh, historical: hist));
             }
+
+            var leadView = BuildCurrentLeadView(pid, pLeads, pWorksCurrent, pContrib, workViews);
+            if (leadView is not null)
+                workViews.Insert(0, leadView);
 
             var attentions = new List<AttentionItem>();
             foreach (var a in pAttFacts)
@@ -486,7 +496,8 @@ public sealed class StateProjector : IProjector
                      "start_time_utc_ticks", "attention_owner", "attention_reason",
                      "authorized_current", "contribution_item", "counts_as_adopted_outcome",
                      "contribution_id", "registry_pointer_lag", "next_step", "current_handler",
-                     "execution_blocker", "remaining_repair_dispatched", "pascal_decision_required"
+                     "execution_blocker", "remaining_repair_dispatched", "pascal_decision_required",
+                     "actor_name", "task_name", "model", "effort", "blocker", "review_assigned"
                  }))
         {
             var av = values[key]?.GetValue<string>();
@@ -868,8 +879,174 @@ public sealed class StateProjector : IProjector
             : BuildWorkTargets(f.ProjectId!, f);
 
         var q = historical ? DataQuality.LastKnown : quality;
-        return new WorkView(f.EntityId, role, route, summary, axes, artifacts, targets, f.Evidence, q);
+        return new WorkView(
+            f.EntityId,
+            role,
+            route,
+            summary,
+            axes,
+            artifacts,
+            targets,
+            f.Evidence,
+            q,
+            NullIfUnknown(Val(f, "actor_name")),
+            NullIfUnknown(Val(f, "task_name")),
+            NullIfUnknown(Val(f, "model")),
+            NullIfUnknown(Val(f, "effort")),
+            NullIfUnknown(Val(f, "blocker") ?? Val(f, "execution_blocker")),
+            ActorKindFromRole(role, historical),
+            NullIfUnknown(Val(f, "review_assigned")));
     }
+
+    private static bool IsLeadAcceptanceCard(SourceFact f)
+    {
+        var role = Val(f, "role") ?? string.Empty;
+        if (role.Contains("lead_acceptance", StringComparison.OrdinalIgnoreCase)) return true;
+        return f.Kind.Equals("acceptance", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(Val(f, "contribution_item"), "true", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsLiveLegion(SourceFact f)
+    {
+        var role = Val(f, "role") ?? string.Empty;
+        if (!role.Contains("army", StringComparison.OrdinalIgnoreCase)
+            && !role.Contains("contrib", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (string.Equals(Val(f, "counts_as_adopted_outcome"), "true", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var exec = Val(f, "execution_state");
+        return string.Equals(exec, "active", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(exec, "running", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(Val(f, "adoption_state"), "in_progress", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ActorKindFromRole(string role, bool historical)
+    {
+        if (historical) return "history";
+        if (role.Contains("review", StringComparison.OrdinalIgnoreCase)
+            || role.Contains("审核", StringComparison.Ordinal))
+            return "reviewer";
+        if (role.Contains("army", StringComparison.OrdinalIgnoreCase)
+            || role.Contains("contrib", StringComparison.OrdinalIgnoreCase)
+            || role.Contains("军团", StringComparison.Ordinal))
+            return "legion";
+        if (role.Equals("lead", StringComparison.OrdinalIgnoreCase)
+            || role.Contains("负责人", StringComparison.Ordinal))
+            return "lead";
+        if (role.Contains("exec", StringComparison.OrdinalIgnoreCase)
+            || role.Contains("generation", StringComparison.OrdinalIgnoreCase))
+            return "executor";
+        return "unknown";
+    }
+
+    /// <summary>
+    /// One current owner row. Never dump every collected lead session as extra owners.
+    /// </summary>
+    private static WorkView? BuildCurrentLeadView(
+        string projectId,
+        List<SourceFact> pLeads,
+        List<SourceFact> currentWorks,
+        List<SourceFact> contrib,
+        List<WorkView> already)
+    {
+        if (already.Any(w => string.Equals(w.ActorKind, "lead", StringComparison.OrdinalIgnoreCase)
+                             && w.Quality != DataQuality.LastKnown))
+        {
+            return null;
+        }
+
+        SourceFact? chosen = null;
+        var currentSessions = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var w in currentWorks)
+        {
+            if (w.Links.TryGetValue("lead_session_id", out var sid) && !string.IsNullOrWhiteSpace(sid))
+                currentSessions.Add(sid);
+        }
+
+        foreach (var lead in pLeads)
+        {
+            lead.Links.TryGetValue("lead_session_id", out var sid);
+            if (!string.IsNullOrWhiteSpace(sid) && currentSessions.Contains(sid))
+            {
+                chosen = lead;
+                break;
+            }
+        }
+
+        if (chosen is null)
+        {
+            chosen = pLeads.FirstOrDefault(l =>
+                !IsMissing(Val(l, "lead_handling_state"))
+                || !IsMissing(Val(l, "acceptance_state")));
+        }
+
+        if (chosen is null && pLeads.Count == 1)
+            chosen = pLeads[0];
+
+        if (chosen is null)
+        {
+            var handlingWork = currentWorks.FirstOrDefault(w =>
+                Val(w, "lead_handling_state") is "lead_accepting" or "repair_dispatched" or "blocked_after_acceptance"
+                || Val(w, "acceptance_state") is "acceptance_in_progress" or "handled_fail_repair");
+            if (handlingWork is not null)
+            {
+                var synthetic = CloneValues(handlingWork.Values);
+                synthetic["role"] = "lead";
+                synthetic["turn_state"] = "unknown";
+                chosen = new SourceFact(
+                    "lead",
+                    "lead:from-work:" + handlingWork.EntityId,
+                    projectId,
+                    handlingWork.Links,
+                    synthetic,
+                    handlingWork.Evidence);
+            }
+        }
+
+        if (chosen is null)
+            return null;
+
+        var folded = CloneValues(chosen.Values);
+        folded["role"] = "lead";
+        foreach (var w in currentWorks)
+        {
+            if (IsMissing(ValFrom(folded, "lead_handling_state")) && !IsMissing(Val(w, "lead_handling_state")))
+                folded["lead_handling_state"] = Val(w, "lead_handling_state");
+            if (IsMissing(ValFrom(folded, "acceptance_state")) && !IsMissing(Val(w, "acceptance_state")))
+                folded["acceptance_state"] = Val(w, "acceptance_state");
+        }
+        foreach (var c in contrib.Where(IsLeadAcceptanceCard))
+        {
+            if (string.Equals(Val(c, "contribution_item"), "true", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (string.Equals(Val(c, "counts_as_adopted_outcome"), "true", StringComparison.OrdinalIgnoreCase))
+                continue;
+            var cRole = Val(c, "role") ?? string.Empty;
+            if (cRole.Contains("army", StringComparison.OrdinalIgnoreCase))
+                continue;
+            c.Links.TryGetValue("line_job_id", out var cLine);
+            c.Links.TryGetValue("direct_job_id", out var cDirect);
+            if (string.IsNullOrWhiteSpace(cLine) && string.IsNullOrWhiteSpace(cDirect))
+                continue;
+            if (IsMissing(ValFrom(folded, "acceptance_state")) && !IsMissing(Val(c, "acceptance_state")))
+                folded["acceptance_state"] = Val(c, "acceptance_state");
+            if (IsMissing(ValFrom(folded, "lead_handling_state")) && !IsMissing(Val(c, "lead_handling_state")))
+                folded["lead_handling_state"] = Val(c, "lead_handling_state");
+            if (IsMissing(ValFrom(folded, "model")) && !IsMissing(Val(c, "model")))
+                folded["model"] = Val(c, "model");
+            if (IsMissing(ValFrom(folded, "effort")) && !IsMissing(Val(c, "effort")))
+                folded["effort"] = Val(c, "effort");
+        }
+
+        var fact = new SourceFact("lead", chosen.EntityId, projectId, chosen.Links, folded, chosen.Evidence);
+        return ToWorkView(fact, DataQuality.Fresh, historical: false);
+    }
+
+    private static string? ValFrom(JsonObject values, string key) =>
+        values[key]?.GetValue<string>();
 
     private static IReadOnlyList<ArtifactView> BuildArtifacts(SourceFact f)
     {
