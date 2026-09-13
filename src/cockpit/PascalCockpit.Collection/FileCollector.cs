@@ -433,7 +433,10 @@ public sealed class FileCollector : ICollector
         async Task Follow(string? path, string context)
         {
             if (string.IsNullOrWhiteSpace(path) || !LooksLikePath(path)) return;
-            await CollectExplicitAsync(path, document.ProjectHint, context, documents, issues, seen, budget, observedAt, cancellationToken, scope: "historical").ConfigureAwait(false);
+            var followScope = string.Equals(document.Scope, "historical", StringComparison.OrdinalIgnoreCase)
+                ? "historical"
+                : "current";
+            await CollectExplicitAsync(path, document.ProjectHint, context, documents, issues, seen, budget, observedAt, cancellationToken, scope: followScope).ConfigureAwait(false);
         }
 
         if (document.Data["job_root"] is JsonValue jv && jv.TryGetValue<string>(out var jobRoot))

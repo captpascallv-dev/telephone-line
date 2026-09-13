@@ -228,6 +228,8 @@ try {
     $headerCwd = Get-DirectPiCanonicalDirectory -Path ([string]$header.cwd)
     if (-not $headerCwd.Equals($workspace, [StringComparison]::OrdinalIgnoreCase)) { throw 'PI JSON header returned another cwd.' }
     if ($null -eq $assistantMessage) { throw 'PI JSON event stream has no final assistant message_end.' }
+    if (-not $assistantMessage.Contains('provider') -or [string]$assistantMessage.provider -cne [string]$request.provider) { throw 'PI final assistant provider differs.' }
+    if (-not $assistantMessage.Contains('model') -or [string]$assistantMessage.model -cne [string]$request.model) { throw 'PI final assistant model differs.' }
     if (-not $assistantMessage.Contains('stopReason')) { throw 'PI final assistant has no stopReason.' }
     $stopReason = [string]$assistantMessage.stopReason
     if ([string]::IsNullOrWhiteSpace($stopReason) -or $stopReason -in @('error', 'aborted', 'pending')) { throw 'PI final assistant has a non-terminal stopReason.' }
@@ -245,8 +247,8 @@ try {
         error = $null
         workspace = $workspace
         prompt = $promptIdentity
-        provider = [string]$request.provider
-        model = [string]$request.model
+        provider = [string]$assistantMessage.provider
+        model = [string]$assistantMessage.model
         thinking = [string]$request.thinking
         session_id = [string]$request.session_id
         session_path = $boundSessionPath

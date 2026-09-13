@@ -713,8 +713,7 @@ internal static class DocumentNormalizers
                 && JsonField.Str(doc.Data, "job_root") is not null))
         {
             values["starter_wrapper"] = "true";
-            if (string.Equals(doc.Scope, "historical", StringComparison.OrdinalIgnoreCase)
-                || JsonField.Bool(doc.Data, "lead_should_exit_now") == true)
+            if (string.Equals(doc.Scope, "historical", StringComparison.OrdinalIgnoreCase))
             {
                 values["historical"] = "true";
                 values["current_active_fault"] = "false";

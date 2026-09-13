@@ -70,6 +70,10 @@ public static class RolePresentation
             return "已验收";
         var others = siblings ?? Array.Empty<WorkView>();
         if (others.Any(o => KindOf(o) == "executor"
+                            && (o.Axes.LeadHandling.Equals("lead_accepting", StringComparison.OrdinalIgnoreCase)
+                                || o.Axes.Acceptance.Equals("acceptance_in_progress", StringComparison.OrdinalIgnoreCase))))
+            return "正在验收";
+        if (others.Any(o => KindOf(o) == "executor"
                             && (o.Axes.Execution.Equals("active", StringComparison.OrdinalIgnoreCase)
                                 || o.Axes.Execution.Equals("running", StringComparison.OrdinalIgnoreCase))))
             return "等待执行者交回";

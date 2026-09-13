@@ -74,24 +74,22 @@ function New-DeepSeaSafeDiagnostic {
 
     $raw = (([string]$Stderr) + "`n" + ([string]$Stdout))
     $sha = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.UTF8Encoding]::new($false).GetBytes($raw))).ToLowerInvariant()
-    $redacted = $raw
-    $redacted = [regex]::Replace($redacted, '(?i)\bsk-[A-Za-z0-9_-]{8,}', '[REDACTED_KEY]')
-    $redacted = [regex]::Replace($redacted, '(?i)Bearer\s+[^\s''"]+', 'Bearer [REDACTED]')
-    $redacted = [regex]::Replace($redacted, '(?i)(api[_-]?key|xai-|secret|token)[=:]\s*[^\s''"]+', '$1=[REDACTED]')
     $kept = [Collections.Generic.List[string]]::new()
-    foreach ($line in ($redacted -split '\r?\n')) {
-        $t = $line.Trim()
-        if ([string]::IsNullOrWhiteSpace($t)) { continue }
-        if ($t.Length -gt 240) { continue }
-        if ($t -cmatch '(?i)CANARY_(PROMPT|RESPONSE|SECRET)') { continue }
-        if ($t -cmatch '(?i)error|failed|waiting for service|ADAPTER_|dsh:|exception|denied|EACCES|ENOENT|not complete') {
-            [void]$kept.Add($t)
-        }
-        if ($kept.Count -ge 8) { break }
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($match in [regex]::Matches($raw, '(?i)waiting for service:\s*([A-Za-z0-9._-]+)')) {
+        $token = 'waiting for service: ' + [string]$match.Groups[1].Value
+        if ($seen.Add($token)) { [void]$kept.Add($token) }
+    }
+    foreach ($match in [regex]::Matches($raw, '\bADAPTER_[A-Z0-9_]+\b')) {
+        if ($seen.Add([string]$match.Value)) { [void]$kept.Add([string]$match.Value) }
     }
     $excerpt = ($kept -join ' | ')
-    if ([string]::IsNullOrWhiteSpace($excerpt) -and $ExitCode -ne 0 -and $null -ne $ExitCode) {
-        $excerpt = "headless exit $ExitCode"
+    if ([string]::IsNullOrWhiteSpace($excerpt)) {
+        if ($null -ne $ExitCode -and $ExitCode -ne 0) {
+            $excerpt = "headless exit $ExitCode"
+        } else {
+            $excerpt = 'unknown'
+        }
     }
     if ($excerpt.Length -gt 800) { $excerpt = $excerpt.Substring(0, 800) }
     return [ordered]@{

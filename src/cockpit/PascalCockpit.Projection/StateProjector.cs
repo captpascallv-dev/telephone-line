@@ -1038,21 +1038,33 @@ public sealed class StateProjector : IProjector
 
         var authorized = currentWorks.Where(w =>
             string.Equals(Val(w, "authorized_current"), "true", StringComparison.OrdinalIgnoreCase)).ToList();
-        var foldWorks = authorized.Count > 0 ? authorized : currentWorks;
-        var currentInFlight = foldWorks.Any(w =>
+        var acceptedSources = authorized.Count > 0 ? authorized : currentWorks;
+        var currentInFlight = acceptedSources.Any(w =>
         {
             var exec = Val(w, "execution_state") ?? string.Empty;
             return exec.Equals("active", StringComparison.OrdinalIgnoreCase)
                    || exec.Equals("running", StringComparison.OrdinalIgnoreCase);
         });
 
-        foreach (var w in foldWorks)
+        foreach (var w in currentWorks)
         {
-            if (IsMissing(ValFrom(folded, "lead_handling_state")) && !IsMissing(Val(w, "lead_handling_state")))
-                folded["lead_handling_state"] = Val(w, "lead_handling_state");
+            var handling = Val(w, "lead_handling_state");
+            var acc = Val(w, "acceptance_state");
+            if (!IsLiveHandlerFold(handling, acc))
+                continue;
+            if (IsMissing(ValFrom(folded, "lead_handling_state")))
+                folded["lead_handling_state"] = handling;
+            if (IsMissing(ValFrom(folded, "acceptance_state")) && !IsFoldedAccepted(acc))
+                folded["acceptance_state"] = acc;
+        }
+
+        foreach (var w in acceptedSources)
+        {
             var acc = Val(w, "acceptance_state");
             if (currentInFlight && IsFoldedAccepted(acc))
                 continue;
+            if (IsMissing(ValFrom(folded, "lead_handling_state")) && !IsMissing(Val(w, "lead_handling_state")))
+                folded["lead_handling_state"] = Val(w, "lead_handling_state");
             if (IsMissing(ValFrom(folded, "acceptance_state")) && !IsMissing(acc))
                 folded["acceptance_state"] = acc;
         }
@@ -1069,7 +1081,7 @@ public sealed class StateProjector : IProjector
             c.Links.TryGetValue("direct_job_id", out var cDirect);
             if (string.IsNullOrWhiteSpace(cLine) && string.IsNullOrWhiteSpace(cDirect))
                 continue;
-            if (!foldWorks.Any(w => MatchesWorkId(w, cLine, cDirect)))
+            if (!acceptedSources.Any(w => MatchesWorkId(w, cLine, cDirect)))
                 continue;
             if (currentInFlight && IsFoldedAccepted(Val(c, "acceptance_state")))
                 continue;
@@ -1085,6 +1097,16 @@ public sealed class StateProjector : IProjector
 
     private static string? ValFrom(JsonObject values, string key) =>
         values[key]?.GetValue<string>();
+
+    private static bool IsLiveHandlerFold(string? handling, string? acceptance)
+    {
+        var h = handling ?? string.Empty;
+        var a = acceptance ?? string.Empty;
+        return h.Equals("blocked_after_acceptance", StringComparison.OrdinalIgnoreCase)
+               || h.Equals("lead_accepting", StringComparison.OrdinalIgnoreCase)
+               || h.Equals("repair_dispatched", StringComparison.OrdinalIgnoreCase)
+               || a.Equals("acceptance_in_progress", StringComparison.OrdinalIgnoreCase);
+    }
 
     private static bool IsFoldedAccepted(string? acceptance) =>
         !string.IsNullOrWhiteSpace(acceptance)

@@ -122,7 +122,10 @@ internal static class HandlingLogic
             }
 
             if (string.IsNullOrWhiteSpace(awLine) && string.IsNullOrWhiteSpace(awDirect))
+            {
+                HistoricizeUnmatchedStarters(facts, pid, regLine, regDirect);
                 continue;
+            }
 
             var staleLines = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var staleDirects = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -157,7 +160,8 @@ internal static class HandlingLogic
 
                 var authorized = MatchesId(f, awLine, awDirect);
                 var stale = !authorized && (MatchesAny(f, staleLines, staleDirects)
-                                            || SameNativeSuperseded(f, awNative, awLine, awDirect));
+                                            || SameNativeSuperseded(f, awNative, awLine, awDirect)
+                                            || UnmatchedStarter(f, awLine, awDirect));
                 if (authorized)
                 {
                     var values = NormUtil.CloneValues(f.Values);
@@ -189,7 +193,8 @@ internal static class HandlingLogic
                     var acceptanceNow = f.Values["acceptance_state"]?.GetValue<string>();
                     var oldBindingClosed = IsCompleteLeadHandled(handlingNow, acceptanceNow)
                         || NormUtil.IsLiveHandlerState(handlingNow, acceptanceNow);
-                    if (disposition || oldBindingClosed)
+                    var unmatchedStarter = UnmatchedStarter(f, awLine, awDirect);
+                    if (disposition || oldBindingClosed || unmatchedStarter)
                     {
                         var consumed = NormUtil.CloneValues(f.Values);
                         consumed["historical"] = "true";
@@ -392,6 +397,34 @@ internal static class HandlingLogic
         }
 
         return !MatchesId(f, awLine, awDirect);
+    }
+
+    private static bool UnmatchedStarter(SourceFact f, string? currentLine, string? currentDirect)
+    {
+        if (!string.Equals(f.Values["starter_wrapper"]?.GetValue<string>(), "true", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (string.IsNullOrWhiteSpace(currentLine) && string.IsNullOrWhiteSpace(currentDirect))
+            return false;
+        return !MatchesId(f, currentLine, currentDirect);
+    }
+
+    private static void HistoricizeUnmatchedStarters(List<SourceFact> facts, string? projectId, string? currentLine, string? currentDirect)
+    {
+        if (string.IsNullOrWhiteSpace(currentLine) && string.IsNullOrWhiteSpace(currentDirect))
+            return;
+        for (var i = 0; i < facts.Count; i++)
+        {
+            var f = facts[i];
+            if (f.Kind != "work" || !string.Equals(f.ProjectId, projectId, StringComparison.Ordinal))
+                continue;
+            if (!UnmatchedStarter(f, currentLine, currentDirect))
+                continue;
+            var values = NormUtil.CloneValues(f.Values);
+            values["historical"] = "true";
+            values["current_active_fault"] = "false";
+            values["authorized_current"] = "false";
+            facts[i] = new SourceFact(f.Kind, f.EntityId, f.ProjectId, f.Links, values, f.Evidence);
+        }
     }
 
     private static bool WorkMatchesPriorRepair(SourceFact work, SourceFact aw)

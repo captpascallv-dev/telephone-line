@@ -54,9 +54,18 @@ $count = if ([IO.File]::Exists($env:DIRECT_PI_MOCK_COUNTER)) { [int][IO.File]::R
 [IO.File]::WriteAllText($env:DIRECT_PI_MOCK_COUNTER, [string]($count + 1), [Text.UTF8Encoding]::new($false))
 $cwdJson = ($PWD.Path).Replace('\','\\')
 $nl = [char]10
+$nativeProvider = ValueOf '--provider'
+$nativeModel = ValueOf '--model'
+if (-not [string]::IsNullOrWhiteSpace($env:DIRECT_PI_MOCK_PROVIDER)) { $nativeProvider = [string]$env:DIRECT_PI_MOCK_PROVIDER }
+if (-not [string]::IsNullOrWhiteSpace($env:DIRECT_PI_MOCK_MODEL)) { $nativeModel = [string]$env:DIRECT_PI_MOCK_MODEL }
+if ($env:DIRECT_PI_MOCK_OMIT_IDENTITY -ceq '1') {
+    $assistantJson = '{"role":"assistant","content":[{"type":"text","text":"pi-mock-ok"}],"stopReason":"stop"}'
+} else {
+    $assistantJson = '{"role":"assistant","provider":"' + $nativeProvider + '","model":"' + $nativeModel + '","content":[{"type":"text","text":"pi-mock-ok"}],"stopReason":"stop"}'
+}
 $payload = '{"type":"session","version":3,"id":"' + $sessionId + '","cwd":"' + $cwdJson + '"}' + $nl +
     '{"type":"agent_start"}' + $nl +
-    '{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"pi-mock-ok"}],"stopReason":"stop"}}' + $nl +
+    '{"type":"message_end","message":' + $assistantJson + '}' + $nl +
     '{"type":"agent_end"}' + $nl
 $payloadBytes = [Text.UTF8Encoding]::new($false).GetBytes($payload)
 $stdout = [Console]::OpenStandardOutput()
@@ -147,6 +156,43 @@ $stdout.Flush()
         '-Provider', 'xai', '-Model', 'grok-4.6', '-ThinkingLevel', 'xhigh'
     )
     Assert-AdapterTest ($dsMismatch.exit_code -ne 0) 'PI follow-up accepted a different model binding.'
+    $dsResult = Get-Content -LiteralPath (Join-Path $dsState ("jobs\$dsJob\pi-result.json")) -Raw | ConvertFrom-Json -AsHashtable
+    Assert-AdapterTest ([bool]$dsResult.success -eq $true) 'Matching native PI result was not success.'
+    Assert-AdapterTest ([string]$dsResult.assistant_message.provider -ceq 'deepseek' -and [string]$dsResult.assistant_message.model -ceq 'deepseek-flash') 'Successful PI result omitted observed native assistant identity.'
+    Assert-AdapterTest ([string]$dsResult.provider -ceq 'deepseek' -and [string]$dsResult.model -ceq 'deepseek-flash') 'Successful PI result did not keep observed native identity.'
+
+    $wrongNativeState = Join-Path $testRoot 'wrong-native-state'
+    $wrongNativeJob = [Guid]::NewGuid().ToString('D')
+    [Environment]::SetEnvironmentVariable('DIRECT_PI_MOCK_COUNTER', (Join-Path $testRoot 'wrong-native-count.txt'), 'Process')
+    [Environment]::SetEnvironmentVariable('DIRECT_PI_MOCK_PROVIDER', 'wrong-provider', 'Process')
+    [Environment]::SetEnvironmentVariable('DIRECT_PI_MOCK_MODEL', 'wrong-model', 'Process')
+    $wrongNative = Invoke-AdapterEntrypoint -Entrypoint $invoke -Arguments @(
+        '-Operation', 'start', '-StateRoot', $wrongNativeState, '-WorkspacePath', $workspace, '-PromptFile', $promptPath,
+        '-JobId', $wrongNativeJob, '-MockCliPath', $mockCliPath, '-WaitTimeoutSeconds', '60',
+        '-Provider', 'deepseek', '-Model', 'deepseek-flash', '-ThinkingLevel', 'max'
+    )
+    Assert-AdapterTest ($wrongNative.exit_code -ne 0) 'Native assistant provider/model mismatch was accepted.'
+    $wrongReceipt = Get-Content -LiteralPath (Join-Path $wrongNativeState ("jobs\$wrongNativeJob\receipt.json")) -Raw | ConvertFrom-Json -AsHashtable
+    Assert-AdapterTest ([bool]$wrongReceipt.transport_complete -eq $false -and [bool]$wrongReceipt.pi_success -eq $false) 'Native mismatch receipt claimed success.'
+    $wrongTerminal = Get-Content -LiteralPath (Join-Path $wrongNativeState ("jobs\$wrongNativeJob\pi-result.json")) -Raw | ConvertFrom-Json -AsHashtable
+    Assert-AdapterTest ([bool]$wrongTerminal.success -eq $false) 'Native mismatch terminal still reported success.'
+    Assert-AdapterTest ([string]$wrongTerminal.assistant_message.provider -ceq 'wrong-provider' -and [string]$wrongTerminal.assistant_message.model -ceq 'wrong-model') 'Native mismatch did not preserve the observed assistant identity on the failed terminal.'
+    [Environment]::SetEnvironmentVariable('DIRECT_PI_MOCK_PROVIDER', $null, 'Process')
+    [Environment]::SetEnvironmentVariable('DIRECT_PI_MOCK_MODEL', $null, 'Process')
+
+    $missingNativeState = Join-Path $testRoot 'missing-native-state'
+    $missingNativeJob = [Guid]::NewGuid().ToString('D')
+    [Environment]::SetEnvironmentVariable('DIRECT_PI_MOCK_COUNTER', (Join-Path $testRoot 'missing-native-count.txt'), 'Process')
+    [Environment]::SetEnvironmentVariable('DIRECT_PI_MOCK_OMIT_IDENTITY', '1', 'Process')
+    $missingNative = Invoke-AdapterEntrypoint -Entrypoint $invoke -Arguments @(
+        '-Operation', 'start', '-StateRoot', $missingNativeState, '-WorkspacePath', $workspace, '-PromptFile', $promptPath,
+        '-JobId', $missingNativeJob, '-MockCliPath', $mockCliPath, '-WaitTimeoutSeconds', '60',
+        '-Provider', 'deepseek', '-Model', 'deepseek-flash', '-ThinkingLevel', 'max'
+    )
+    Assert-AdapterTest ($missingNative.exit_code -ne 0) 'Missing native assistant provider/model was accepted.'
+    $missingReceipt = Get-Content -LiteralPath (Join-Path $missingNativeState ("jobs\$missingNativeJob\receipt.json")) -Raw | ConvertFrom-Json -AsHashtable
+    Assert-AdapterTest ([bool]$missingReceipt.transport_complete -eq $false -and [bool]$missingReceipt.pi_success -eq $false) 'Missing native identity receipt claimed success.'
+    [Environment]::SetEnvironmentVariable('DIRECT_PI_MOCK_OMIT_IDENTITY', $null, 'Process')
     [Environment]::SetEnvironmentVariable('DIRECT_PI_MOCK_COUNTER', $counterPath, 'Process')
 
     $pathDir = Join-Path $testRoot 'path-bin'
@@ -243,5 +289,8 @@ exit 0
 } finally {
     [Environment]::SetEnvironmentVariable('DIRECT_PI_MOCK_COUNTER', $null, 'Process')
     [Environment]::SetEnvironmentVariable('DIRECT_PI_FAIL_TEXT', $null, 'Process')
+    [Environment]::SetEnvironmentVariable('DIRECT_PI_MOCK_PROVIDER', $null, 'Process')
+    [Environment]::SetEnvironmentVariable('DIRECT_PI_MOCK_MODEL', $null, 'Process')
+    [Environment]::SetEnvironmentVariable('DIRECT_PI_MOCK_OMIT_IDENTITY', $null, 'Process')
     if ([IO.Directory]::Exists($testRoot)) { Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue }
 }

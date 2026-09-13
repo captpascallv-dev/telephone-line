@@ -14,31 +14,30 @@ $testRoot = [IO.Path]::GetFullPath($TestRoot).TrimEnd('\')
 try {
     $common = [IO.File]::ReadAllText((Join-Path $repoRoot 'src\adapters\deepsea-common\DeepSea.Common.ps1'))
     Assert-AdapterTest ($common.Contains('- id: web-fetch-http') -and $common.Contains('disabled: true')) 'Contained profile does not disable web-fetch-http with web.'
+    Assert-AdapterTest ($common -notmatch 'CANARY_') 'Production diagnostic filter still special-cases test canary names.'
     $runner = [IO.File]::ReadAllText((Join-Path $repoRoot 'src\adapters\deepsea-common\dsh-plugin\headless-runner.mjs'))
     Assert-AdapterTest ($runner.Contains('SessionSeq') -and $runner.Contains('eventAt(SessionSeq')) 'Headless runner still reads agent.session.events.'
 
-    $stdout = "CANARY_PROMPT please ignore`nmodel said CANARY_RESPONSE`nsk-abcdefghijklmnopqrstuvwxyz012345`n"
-    $stderr = "dsh: ERROR: waiting for service: web`nBearer super-secret-token`n"
-    $diag = New-DeepSeaSafeDiagnostic -Stdout $stdout -Stderr $stderr -ExitCode 1
-    Assert-AdapterTest ([string]$diag.excerpt -match 'waiting for service: web') 'Safe diagnostic dropped the real waiting-for-service error.'
-    Assert-AdapterTest ([string]$diag.excerpt -notmatch 'CANARY_PROMPT' -and [string]$diag.excerpt -notmatch 'CANARY_RESPONSE') 'Safe diagnostic leaked prompt/response canaries.'
-    Assert-AdapterTest ([string]$diag.excerpt -notmatch 'sk-abcdefghijklmnopqrstuvwxyz012345' -and [string]$diag.excerpt -notmatch 'super-secret-token') 'Safe diagnostic leaked credential material.'
-    Assert-AdapterTest ([string]$diag.sha256 -cmatch '^[0-9a-f]{64}$') 'Safe diagnostic omitted a stream digest.'
-
+    $nonce = [guid]::NewGuid().ToString('N')
+    $privatePrompt = "Please explain this error in my private order $nonce"
+    $privateResponse = "dsh: confidential answer $nonce"
+    $privateAuth = "Authorization: service-key-$nonce"
     $workspace = Join-Path $testRoot 'workspace'
     $stateRoot = Join-Path $testRoot 'state'
     $promptPath = Join-Path $testRoot 'prompt.txt'
     [IO.Directory]::CreateDirectory($workspace) | Out-Null
-    [IO.File]::WriteAllText($promptPath, 'dsh-fail-canary', [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($promptPath, "dsh-fail-$nonce", [Text.UTF8Encoding]::new($false))
     $mockFail = Join-Path $testRoot 'mock-fail.ps1'
-    @'
+    [IO.File]::WriteAllText($mockFail, @"
 # SPDX-License-Identifier: MPL-2.0
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
-[Console]::Error.WriteLine("waiting for service: web")
-[Console]::Error.WriteLine("CANARY_PROMPT leaked")
+`$ErrorActionPreference = 'Stop'
+[Console]::Error.WriteLine('$privateAuth')
+[Console]::Error.WriteLine('waiting for service: web')
+[Console]::Out.WriteLine('$privatePrompt')
+[Console]::Out.WriteLine('$privateResponse')
 exit 1
-'@ | Set-Content -LiteralPath $mockFail -Encoding utf8
+"@, [Text.UTF8Encoding]::new($false))
     $invoke = Join-Path $repoRoot 'src\adapters\deepsea-v4\Invoke-DeepSeaV4Headless.ps1'
     $jobId = [Guid]::NewGuid().ToString('D')
     $run = Invoke-AdapterEntrypoint -Entrypoint $invoke -Arguments @(
@@ -51,8 +50,16 @@ exit 1
     $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json -AsHashtable
     Assert-AdapterTest ([string]$receipt.error_code -ceq 'ADAPTER_HEADLESS_INVOCATION_FAILED') 'Failure receipt missing adapter error_code.'
     Assert-AdapterTest ([bool]$receipt.transport_complete -eq $false) 'Failure receipt claimed transport complete.'
-    Assert-AdapterTest ([string]$receipt.diagnostic_excerpt -match 'waiting for service: web') 'Failure receipt diagnostic omitted the service error.'
-    Assert-AdapterTest ([string]$receipt.diagnostic_excerpt -notmatch 'CANARY_PROMPT') 'Failure receipt diagnostic leaked the prompt canary.'
+    $excerpt = [string]$receipt.diagnostic_excerpt
+    Assert-AdapterTest ($excerpt -match 'waiting for service: web') 'Failure receipt diagnostic omitted the service error.'
+    Assert-AdapterTest ($excerpt -notmatch [regex]::Escape($nonce)) 'Failure receipt diagnostic leaked the generated nonce.'
+    Assert-AdapterTest ($excerpt -notmatch [regex]::Escape($privatePrompt)) 'Failure receipt diagnostic leaked the private prompt.'
+    Assert-AdapterTest ($excerpt -notmatch [regex]::Escape($privateResponse)) 'Failure receipt diagnostic leaked the model response.'
+    Assert-AdapterTest ($excerpt -notmatch [regex]::Escape($privateAuth) -and $excerpt -notmatch 'service-key-') 'Failure receipt diagnostic leaked the credential.'
+    Assert-AdapterTest ([string]$receipt.diagnostic_sha256 -cmatch '^[0-9a-f]{64}$') 'Failure receipt omitted a stream digest.'
+    $jobDir = Join-Path $stateRoot ("jobs\$jobId")
+    $stdoutFiles = @(Get-ChildItem -LiteralPath $jobDir -File | Where-Object { $_.Name -match 'stdout|stderr|stream' })
+    Assert-AdapterTest ($stdoutFiles.Count -eq 0) 'Failure wrote raw stream files into the job receipt directory.'
 
     [ordered]@{
         success = $true

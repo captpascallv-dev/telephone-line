@@ -117,6 +117,17 @@ function New-DirectPiReceipt {
         if ([int]$piResult.execution_count -ne 1) { throw 'Direct PI terminal execution count differs.' }
         if ([bool]$piResult.success) {
             if ([string]::IsNullOrWhiteSpace([string]$piResult.session_path)) { throw 'Direct PI successful terminal has no exact session path.' }
+            $assistant = $piResult.assistant_message
+            if ($assistant -isnot [Collections.IDictionary]) { throw 'Direct PI successful terminal has no native assistant message.' }
+            if (-not $assistant.Contains('provider') -or [string]$assistant.provider -cne [string]$request.provider) {
+                throw 'Direct PI native assistant provider differs.'
+            }
+            if (-not $assistant.Contains('model') -or [string]$assistant.model -cne [string]$request.model) {
+                throw 'Direct PI native assistant model differs.'
+            }
+            if ([string]$piResult.provider -cne [string]$assistant.provider -or [string]$piResult.model -cne [string]$assistant.model) {
+                throw 'Direct PI terminal identity is not the observed native assistant identity.'
+            }
         } else {
             $piResult.error = Get-DirectPiPublicError -Text ([string]$piResult.error)
         }
