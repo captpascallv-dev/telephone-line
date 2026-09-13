@@ -55,6 +55,8 @@ public static class RolePresentation
         var acceptance = lead.Axes.Acceptance ?? "";
         if (handling.Equals("blocked_after_acceptance", StringComparison.OrdinalIgnoreCase))
             return "验收后待派出退修";
+        if (handling.Equals("callback_wait", StringComparison.OrdinalIgnoreCase))
+            return "等待回叫";
         if (handling.Equals("repair_dispatched", StringComparison.OrdinalIgnoreCase))
             return "已派出退修";
         if (handling.Equals("repair_prepared", StringComparison.OrdinalIgnoreCase))
@@ -81,6 +83,9 @@ public static class RolePresentation
         if (others.Any(o => KindOf(o) == "executor"
                             && o.Axes.LeadHandling.Equals("repair_prepared", StringComparison.OrdinalIgnoreCase)))
             return "验收发现问题，等待退修";
+        if (others.Any(o => KindOf(o) == "executor"
+                            && o.Axes.LeadHandling.Equals("dispatch_pending_native", StringComparison.OrdinalIgnoreCase)))
+            return "等待回叫";
         if (others.Any(o => KindOf(o) == "executor"
                             && (o.Axes.Execution.Equals("active", StringComparison.OrdinalIgnoreCase)
                                 || o.Axes.Execution.Equals("running", StringComparison.OrdinalIgnoreCase))))

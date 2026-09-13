@@ -349,7 +349,9 @@ exit 0
     $recoverSessionPath = Join-Path $recoverSessionDir ("session-$recoverSession.jsonl")
     $cwdJson = $workspace.Replace('\', '\\')
     $sessionBody = '{"type":"session","version":3,"id":"' + $recoverSession + '","cwd":"' + $cwdJson + '"}' + [char]10 +
-        '{"type":"message","id":"n1","message":{"role":"assistant","provider":"xai","model":"grok-4.6","stopReason":"stop","content":[{"type":"text","text":"native-done"}]}}' + [char]10
+        '{"type":"thinking_level_change","thinkingLevel":"xhigh"}' + [char]10 +
+        '{"type":"message","id":"n1","message":{"role":"assistant","provider":"xai","model":"grok-4.6","stopReason":"stop","content":[{"type":"text","text":"native-done"}]}}' + [char]10 +
+        '{"type":"thinking_level_change","thinkingLevel":"xhigh"}' + [char]10
     [IO.File]::WriteAllText($recoverSessionPath, $sessionBody.Replace("`r`n", "`n"), $utf8)
     $promptId = Get-DirectPiFileIdentity -Path $promptPath
     $wrapperId = Get-DirectPiFileIdentity -Path (Join-Path $repoRoot 'src\adapters\direct-pi\invoke_pi.ps1')
@@ -540,11 +542,127 @@ exit 0
     Assert-AdapterTest (-not [IO.File]::Exists((Join-Path $openState "bindings\$openSession\binding.json"))) 'Unclosed recovery wrote a binding.'
     Assert-AdapterTest ([int][IO.File]::ReadAllText($counterPath) -eq $countBeforeOpen) 'Unclosed recovery invoked the model.'
 
+    function New-DirectPiRecoverFixture {
+        param(
+            [Parameter(Mandatory = $true)][string]$Name,
+            [Parameter(Mandatory = $true)][string]$SessionText,
+            [scriptblock]$MutateResult
+        )
+        $fxState = Join-Path $testRoot $Name
+        $fxJob = [Guid]::NewGuid().ToString('D')
+        $fxSession = [Guid]::NewGuid().ToString('D')
+        $fxRoot = Join-Path $fxState "jobs\$fxJob"
+        $fxSessionDir = Join-Path $fxState 'sessions'
+        [IO.Directory]::CreateDirectory($fxRoot) | Out-Null
+        [IO.Directory]::CreateDirectory($fxSessionDir) | Out-Null
+        $fxSessionPath = Join-Path $fxSessionDir ("session-$fxSession.jsonl")
+        $fxBody = $SessionText.Replace($recoverSession, $fxSession).Replace($cwdJson, ([IO.Path]::GetFullPath($workspace)).Replace('\', '\\'))
+        [IO.File]::WriteAllText($fxSessionPath, $fxBody.Replace("`r`n", "`n"), $utf8)
+        $fxRequest = [ordered]@{}
+        foreach ($key in @($recoverRequest.Keys)) { $fxRequest[$key] = $recoverRequest[$key] }
+        $fxRequest.job_id = $fxJob
+        $fxRequest.session_id = $fxSession
+        $fxRequest.session_path = $fxSessionPath
+        $fxRequest.session_dir = $fxSessionDir
+        $fxRequestId = Write-DirectPiJsonCreateNew -Path (Join-Path $fxRoot 'request.json') -Value $fxRequest
+        $fxResult = [ordered]@{}
+        foreach ($key in @($recoverResult.Keys)) { $fxResult[$key] = $recoverResult[$key] }
+        $fxResult.job_id = $fxJob
+        $fxResult.session_id = $fxSession
+        $fxResult.session_path = $fxSessionPath
+        $null = Write-DirectPiJsonCreateNew -Path (Join-Path $fxRoot 'pi-result.json') -Value $fxResult
+        $terminalBeforeMutate = Get-DirectPiFileIdentity -Path (Join-Path $fxRoot 'pi-result.json')
+        $null = Write-DirectPiJsonCreateNew -Path (Join-Path $fxRoot 'receipt.json') -Value ([ordered]@{
+            protocol_version = 'telephone-line-direct-pi-receipt-v1'
+            job_id = $fxJob
+            request = $fxRequestId
+            transport_complete = $false
+            transport_error = 'Telephone-line adapter transport failed.'
+            pi_success = $false
+            native_session_id = $fxSession
+            session_path = $fxSessionPath
+            stop_reason = 'stop'
+            execution_count = 1
+            terminal_result = $terminalBeforeMutate
+            owner = $null
+            automatic_rerun = $false
+            replacement_started = $false
+            completed_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+        })
+        if ($null -ne $MutateResult) {
+            & $MutateResult $fxRoot $fxResult
+        }
+        return [ordered]@{
+            state = $fxState
+            job = $fxJob
+            session = $fxSession
+            session_path = $fxSessionPath
+            root = $fxRoot
+            before_receipt = (Get-DirectPiFileIdentity -Path (Join-Path $fxRoot 'receipt.json'))
+            before_result = (Get-DirectPiFileIdentity -Path (Join-Path $fxRoot 'pi-result.json'))
+        }
+    }
+
+    $newUserBody = '{"type":"session","version":3,"id":"' + $recoverSession + '","cwd":"' + $cwdJson + '"}' + [char]10 +
+        '{"type":"thinking_level_change","thinkingLevel":"xhigh"}' + [char]10 +
+        '{"type":"message","id":"n1","message":{"role":"assistant","provider":"xai","model":"grok-4.6","stopReason":"stop","content":[{"type":"text","text":"native-done"}]}}' + [char]10 +
+        '{"type":"message","id":"n2","message":{"role":"user","content":[{"type":"text","text":"next-turn"}]}}' + [char]10
+    $newUser = New-DirectPiRecoverFixture -Name 'new-user-after-old-stop' -SessionText $newUserBody
+    $countBeforeNewUser = [int][IO.File]::ReadAllText($counterPath)
+    $newUserRecover = Invoke-AdapterEntrypoint -Entrypoint $invoke -Arguments @(
+        '-Operation', 'recover', '-NativeSessionId', $newUser.session, '-StateRoot', $newUser.state,
+        '-JobId', $newUser.job, '-ResumeSessionPath', $newUser.session_path, '-WaitTimeoutSeconds', '5'
+    )
+    Assert-AdapterTest ($newUserRecover.exit_code -ne 0) 'New-user-after-old-stop recovery was accepted.'
+    Assert-AdapterTest (-not [IO.File]::Exists((Join-Path $newUser.state "bindings\$($newUser.session)\binding.json"))) 'New-user-after-old-stop recovery wrote a binding.'
+    Assert-AdapterTest (-not [IO.File]::Exists((Join-Path $newUser.root 'binding-recovery.json'))) 'New-user-after-old-stop recovery wrote recovery evidence.'
+    $afterNewUserReceipt = Get-DirectPiFileIdentity -Path (Join-Path $newUser.root 'receipt.json')
+    $afterNewUserResult = Get-DirectPiFileIdentity -Path (Join-Path $newUser.root 'pi-result.json')
+    Assert-AdapterTest ([string]$afterNewUserReceipt.sha256 -ceq [string]$newUser.before_receipt.sha256 -and [string]$afterNewUserResult.sha256 -ceq [string]$newUser.before_result.sha256) 'New-user recovery changed original failed bytes.'
+    Assert-AdapterTest ([int][IO.File]::ReadAllText($counterPath) -eq $countBeforeNewUser) 'New-user recovery invoked the model.'
+
+    $hashMismatch = New-DirectPiRecoverFixture -Name 'result-hash-mismatch' -SessionText $sessionBody -MutateResult {
+        param($fxRoot, $fxResult)
+        $rewritten = [ordered]@{}
+        foreach ($key in @($fxResult.Keys)) { $rewritten[$key] = $fxResult[$key] }
+        $rewritten.pi_exit_code = 0
+        $rewritten.error = 'rewritten-success-label'
+        [IO.File]::Delete((Join-Path $fxRoot 'pi-result.json'))
+        $null = Write-DirectPiJsonCreateNew -Path (Join-Path $fxRoot 'pi-result.json') -Value $rewritten
+    }
+    $countBeforeHash = [int][IO.File]::ReadAllText($counterPath)
+    $hashRecover = Invoke-AdapterEntrypoint -Entrypoint $invoke -Arguments @(
+        '-Operation', 'recover', '-NativeSessionId', $hashMismatch.session, '-StateRoot', $hashMismatch.state,
+        '-JobId', $hashMismatch.job, '-ResumeSessionPath', $hashMismatch.session_path, '-WaitTimeoutSeconds', '5'
+    )
+    Assert-AdapterTest ($hashRecover.exit_code -ne 0) 'Result-hash-mismatch recovery was accepted.'
+    Assert-AdapterTest (-not [IO.File]::Exists((Join-Path $hashMismatch.state "bindings\$($hashMismatch.session)\binding.json"))) 'Result-hash-mismatch recovery wrote a binding.'
+    $afterHashReceipt = Get-DirectPiFileIdentity -Path (Join-Path $hashMismatch.root 'receipt.json')
+    $afterHashResult = Get-DirectPiFileIdentity -Path (Join-Path $hashMismatch.root 'pi-result.json')
+    Assert-AdapterTest ([string]$afterHashReceipt.sha256 -ceq [string]$hashMismatch.before_receipt.sha256) 'Hash-mismatch recovery changed original receipt bytes.'
+    Assert-AdapterTest ([string]$afterHashResult.sha256 -ceq [string]$hashMismatch.before_result.sha256) 'Hash-mismatch recovery changed rewritten result bytes.'
+    Assert-AdapterTest ([int][IO.File]::ReadAllText($counterPath) -eq $countBeforeHash) 'Hash-mismatch recovery invoked the model.'
+
+    $noThinkBody = '{"type":"session","version":3,"id":"' + $recoverSession + '","cwd":"' + $cwdJson + '"}' + [char]10 +
+        '{"type":"message","id":"n1","message":{"role":"assistant","provider":"xai","model":"grok-4.6","stopReason":"stop","content":[{"type":"text","text":"native-done"}]}}' + [char]10
+    $noThink = New-DirectPiRecoverFixture -Name 'missing-native-thinking' -SessionText $noThinkBody
+    $countBeforeThink = [int][IO.File]::ReadAllText($counterPath)
+    $noThinkRecover = Invoke-AdapterEntrypoint -Entrypoint $invoke -Arguments @(
+        '-Operation', 'recover', '-NativeSessionId', $noThink.session, '-StateRoot', $noThink.state,
+        '-JobId', $noThink.job, '-ResumeSessionPath', $noThink.session_path, '-WaitTimeoutSeconds', '5'
+    )
+    Assert-AdapterTest ($noThinkRecover.exit_code -ne 0) 'Missing-thinking recovery was accepted.'
+    Assert-AdapterTest (-not [IO.File]::Exists((Join-Path $noThink.state "bindings\$($noThink.session)\binding.json"))) 'Missing-thinking recovery wrote a binding.'
+    Assert-AdapterTest ([int][IO.File]::ReadAllText($counterPath) -eq $countBeforeThink) 'Missing-thinking recovery invoked the model.'
+
     [ordered]@{
         success = $true
         session_file = 1
         exact_session = 1
         recover_no_rerun = 1
+        recover_new_user_refused = 1
+        recover_hash_mismatch_refused = 1
+        recover_missing_thinking_refused = 1
         pi_path_discovery = $piPathDiscovery
         durable_generic_error_privacy = 1
         assertions = $assertions

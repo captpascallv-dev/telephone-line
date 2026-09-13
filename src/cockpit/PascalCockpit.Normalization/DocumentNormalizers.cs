@@ -144,49 +144,59 @@ internal static class DocumentNormalizers
             HandlingLogic.ApplySwitchToValues(values, links, doc.Data);
         }
 
+        var currentFacts = new List<SourceFact>();
         var lanes = JsonField.Obj(doc.Data, "lanes");
         if (lanes is not null)
         {
-            var emitted = 0;
             foreach (var kv in lanes)
             {
                 if (kv.Value is not JsonObject lane) continue;
-                EmitActiveLaneWork(doc, projectId, kv.Key, lane, productPass, facts, routesSeenLive, routesSeenProtocol);
-                emitted++;
-            }
-
-            if (emitted > 0)
-            {
-                HandlingLogic.EmitHistoricalFromSwitchFields(doc, projectId, facts);
-                return;
+                currentFacts.Add(EmitActiveLaneWork(doc, projectId, kv.Key, lane, productPass, facts, routesSeenLive, routesSeenProtocol));
             }
         }
 
         var currentWork = JsonField.Arr(doc.Data, "current_work");
         if (currentWork is not null)
         {
-            var emittedWork = 0;
             foreach (var item in currentWork)
             {
                 if (item is not JsonObject row) continue;
                 var role = JsonField.Str(row, "role") ?? string.Empty;
-                if (role.Equals("lead", StringComparison.OrdinalIgnoreCase)
-                    || role.Contains("review", StringComparison.OrdinalIgnoreCase))
+                if (role.Contains("review", StringComparison.OrdinalIgnoreCase))
                     continue;
+                if (role.Equals("lead", StringComparison.OrdinalIgnoreCase))
+                {
+                    MergeOrEmitCurrentLeadWork(doc, projectId, row, session, productPass, facts, currentFacts, routesSeenLive, routesSeenProtocol);
+                    continue;
+                }
+
                 var workRoute = JsonField.Str(row, "route");
                 if (!role.Contains("exec", StringComparison.OrdinalIgnoreCase)
                     && string.IsNullOrWhiteSpace(workRoute))
                     continue;
-                var key = !string.IsNullOrWhiteSpace(workRoute) ? workRoute : "exec-" + emittedWork;
-                EmitActiveLaneWork(doc, projectId, key, row, productPass, facts, routesSeenLive, routesSeenProtocol);
-                emittedWork++;
-            }
+                var matched = FindUniqueCurrentRoleMatch(
+                    currentFacts,
+                    "execution",
+                    workRoute,
+                    JsonField.Str(row, "line_job_id"),
+                    JsonField.Str(row, "job_id", "direct_job_id"));
+                if (matched is not null)
+                {
+                    MergeComplementaryCurrentWork(matched, row, doc);
+                    continue;
+                }
 
-            if (emittedWork > 0)
-            {
-                HandlingLogic.EmitHistoricalFromSwitchFields(doc, projectId, facts);
-                return;
+                if (currentFacts.Any(f => string.Equals(f.Values["role"]?.GetValue<string>(), "execution", StringComparison.OrdinalIgnoreCase)))
+                    continue;
+                var key = !string.IsNullOrWhiteSpace(workRoute) ? workRoute : "exec-" + currentFacts.Count;
+                currentFacts.Add(EmitActiveLaneWork(doc, projectId, key, row, productPass, facts, routesSeenLive, routesSeenProtocol));
             }
+        }
+
+        if (currentFacts.Count > 0)
+        {
+            HandlingLogic.EmitHistoricalFromSwitchFields(doc, projectId, facts);
+            return;
         }
 
         ApplyCurrentHandler(values, doc.Data, state, humanNext);
@@ -202,7 +212,7 @@ internal static class DocumentNormalizers
     /// generic top-level execution row, and do not copy comparison product_pass
     /// onto a lane as if the whole project were accepted.
     /// </summary>
-    private static void EmitActiveLaneWork(
+    private static SourceFact EmitActiveLaneWork(
         RawDocument doc,
         string? projectId,
         string laneKey,
@@ -258,7 +268,102 @@ internal static class DocumentNormalizers
         StampExecutorIdentity(values, lane);
         if (IsMissingIdentity(values["actor_name"]?.GetValue<string>()) && !string.IsNullOrWhiteSpace(route))
             values["actor_name"] = route;
-        facts.Add(new SourceFact("work", entityId, projectId, links, values, new[] { NormUtil.Evidence(doc) }));
+        var fact = new SourceFact("work", entityId, projectId, links, values, new[] { NormUtil.Evidence(doc) });
+        facts.Add(fact);
+        return fact;
+    }
+
+    private static void MergeOrEmitCurrentLeadWork(
+        RawDocument doc,
+        string? projectId,
+        JsonObject row,
+        string? session,
+        bool? comparisonProductPass,
+        List<SourceFact> facts,
+        List<SourceFact> currentFacts,
+        HashSet<string> routesSeenLive,
+        HashSet<string> routesSeenProtocol)
+    {
+        var existing = currentFacts.FirstOrDefault(f =>
+            string.Equals(f.Values["role"]?.GetValue<string>(), "lead", StringComparison.OrdinalIgnoreCase));
+        if (existing is not null)
+        {
+            MergeComplementaryCurrentWork(existing, row, doc);
+            return;
+        }
+
+        var leadRow = new JsonObject();
+        foreach (var kv in row)
+            leadRow[kv.Key] = kv.Value?.DeepClone();
+        if (!leadRow.ContainsKey("role"))
+            leadRow["role"] = "lead";
+        var emitted = EmitActiveLaneWork(doc, projectId, "lead", leadRow, comparisonProductPass, facts, routesSeenLive, routesSeenProtocol);
+        if (emitted.Links is Dictionary<string, string> leadLinks)
+            PutLinkIfMissing(leadLinks, "lead_session_id", session);
+        currentFacts.Add(emitted);
+    }
+
+    private static SourceFact? FindUniqueCurrentRoleMatch(
+        List<SourceFact> currentFacts,
+        string role,
+        string? route,
+        string? lineId,
+        string? jobId)
+    {
+        var matches = new List<SourceFact>();
+        foreach (var fact in currentFacts)
+        {
+            if (!string.Equals(fact.Values["role"]?.GetValue<string>(), role, StringComparison.OrdinalIgnoreCase)
+                && !(role.Equals("execution", StringComparison.OrdinalIgnoreCase)
+                     && (fact.Values["role"]?.GetValue<string>() ?? string.Empty).Contains("exec", StringComparison.OrdinalIgnoreCase)))
+                continue;
+            var factRoute = fact.Values["route"]?.GetValue<string>();
+            if (!string.IsNullOrWhiteSpace(route)
+                && !string.Equals(factRoute, route, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!string.IsNullOrWhiteSpace(lineId)
+                && fact.Links.TryGetValue("line_job_id", out var factLine)
+                && !string.IsNullOrWhiteSpace(factLine)
+                && !string.Equals(factLine, lineId, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!string.IsNullOrWhiteSpace(jobId)
+                && fact.Links.TryGetValue("direct_job_id", out var factJob)
+                && !string.IsNullOrWhiteSpace(factJob)
+                && !string.Equals(factJob, jobId, StringComparison.OrdinalIgnoreCase))
+                continue;
+            matches.Add(fact);
+        }
+
+        return matches.Count == 1 ? matches[0] : null;
+    }
+
+    private static void MergeComplementaryCurrentWork(SourceFact target, JsonObject row, RawDocument doc)
+    {
+        var handling = target.Values["lead_handling_state"]?.GetValue<string>();
+        var execution = target.Values["execution_state"]?.GetValue<string>();
+        if (IsMissingIdentity(handling) && IsMissingIdentity(execution))
+            ApplyLaneState(target.Values, JsonField.Str(row, "state", "status"));
+        StampExecutorIdentity(target.Values, row);
+        if (target.Links is Dictionary<string, string> links)
+        {
+            PutLinkIfMissing(links, "line_job_id", JsonField.Str(row, "line_job_id"));
+            PutLinkIfMissing(links, "direct_job_id", JsonField.Str(row, "job_id", "direct_job_id"));
+            PutLinkIfMissing(links, "native_session_id", JsonField.Str(row, "native_session_id", "executor_native_session_id"));
+        }
+        _ = doc;
+    }
+
+    private static void PutLinkIfMissing(Dictionary<string, string> links, string key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+        if (links.TryGetValue(key, out var existing) && !string.IsNullOrWhiteSpace(existing))
+        {
+            if (!string.Equals(existing, value, StringComparison.OrdinalIgnoreCase))
+                return;
+            return;
+        }
+
+        NormUtil.PutLink(links, key, value);
     }
 
     private static bool IsMissingIdentity(string? value) =>
@@ -286,13 +391,37 @@ internal static class DocumentNormalizers
             return;
         }
 
-        if (s.Contains("DISPATCH", StringComparison.OrdinalIgnoreCase)
+        if (s.Equals("callback_wait", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("callback_wait", StringComparison.OrdinalIgnoreCase))
+        {
+            values["lead_handling_state"] = "callback_wait";
+            values["execution_state"] = "unknown";
+            return;
+        }
+
+        var repair = s.Contains("REPAIR", StringComparison.OrdinalIgnoreCase)
+                     || s.Contains("fail_repair", StringComparison.OrdinalIgnoreCase);
+        if (repair
+            && s.Contains("DISPATCH", StringComparison.OrdinalIgnoreCase)
             && (s.Contains("PENDING", StringComparison.OrdinalIgnoreCase)
                 || s.Contains("NATIVE_RESULT", StringComparison.OrdinalIgnoreCase)
                 || s.Contains("WAITING", StringComparison.OrdinalIgnoreCase)))
         {
             values["lead_handling_state"] = "repair_dispatched";
             values["acceptance_state"] = "handled_fail_repair";
+            values["execution_state"] = "unknown";
+            return;
+        }
+
+        if (s.Contains("dispatched_native_evidence_pending", StringComparison.OrdinalIgnoreCase)
+            || (!repair
+                && s.Contains("DISPATCH", StringComparison.OrdinalIgnoreCase)
+                && (s.Contains("PENDING", StringComparison.OrdinalIgnoreCase)
+                    || s.Contains("NATIVE_EVIDENCE", StringComparison.OrdinalIgnoreCase)
+                    || s.Contains("WAITING", StringComparison.OrdinalIgnoreCase))
+                && !s.Contains("ACCEPTANCE", StringComparison.OrdinalIgnoreCase)))
+        {
+            values["lead_handling_state"] = "dispatch_pending_native";
             values["execution_state"] = "unknown";
             return;
         }

@@ -45,24 +45,6 @@ function Get-DirectPiSessionBindingPaths {
     return [ordered]@{ root = $sessionRoot; binding = Join-Path $sessionRoot 'binding.json' }
 }
 
-function Get-DirectPiSessionLastAssistant {
-    param([Parameter(Mandatory = $true)][object[]]$Records)
-    $last = $null
-    foreach ($record in $Records) {
-        if ($record -isnot [Collections.IDictionary]) { continue }
-        $message = $null
-        if ($record.Contains('message') -and $record.message -is [Collections.IDictionary]) {
-            $message = $record.message
-        } elseif ($record.Contains('role')) {
-            $message = $record
-        }
-        if ($null -eq $message) { continue }
-        if (-not $message.Contains('role') -or [string]$message.role -cne 'assistant') { continue }
-        $last = $message
-    }
-    return $last
-}
-
 function Restore-DirectPiMissingBinding {
     param(
         [Parameter(Mandatory = $true)][string]$State,
@@ -120,20 +102,29 @@ function Restore-DirectPiMissingBinding {
     if ([string]$header.id -cne $NativeSessionId) { throw 'Adapter native session id does not match the frozen session.' }
     $headerCwd = Get-DirectPiCanonicalDirectory -Path ([string]$header.cwd)
     if (-not $headerCwd.Equals($workspace, [StringComparison]::OrdinalIgnoreCase)) { throw 'PI JSON header returned another cwd.' }
-    $assistant = Get-DirectPiSessionLastAssistant -Records $records
-    if ($null -eq $assistant) { throw 'PI JSON event stream has no final assistant message_end.' }
-    if (-not $assistant.Contains('stopReason')) { throw 'PI final assistant has no stopReason.' }
-    $stopReason = [string]$assistant.stopReason
-    if ([string]::IsNullOrWhiteSpace($stopReason) -or $stopReason -in @('error', 'aborted', 'pending')) { throw 'PI final assistant has a non-terminal stopReason.' }
-    if (-not $assistant.Contains('provider') -or [string]$assistant.provider -cne [string]$request.provider) { throw 'PI final assistant provider differs.' }
-    if (-not $assistant.Contains('model') -or [string]$assistant.model -cne [string]$request.model) { throw 'PI final assistant model differs.' }
     $requestIdentity = Get-DirectPiFileIdentity -Path $paths.request
     $receiptIdentity = Get-DirectPiFileIdentity -Path $paths.receipt
     $resultIdentity = Get-DirectPiFileIdentity -Path $paths.stdout
-    if ($receipt.request -is [Collections.IDictionary]) {
-        if ([int64]$receipt.request.bytes -ne [int64]$requestIdentity.bytes -or [string]$receipt.request.sha256 -cne [string]$requestIdentity.sha256) {
-            throw 'Direct PI request identity changed before launch.'
+    if ($receipt.request -isnot [Collections.IDictionary]) { throw 'Direct PI request identity changed before launch.' }
+    Assert-DirectPiIdentity -Expected $receipt.request -Actual $requestIdentity -Label 'Direct PI request'
+    if ($receipt.terminal_result -isnot [Collections.IDictionary]) { throw 'Direct PI receipt is missing terminal_result identity.' }
+    foreach ($requiredKey in @('path', 'bytes', 'sha256')) {
+        if (-not $receipt.terminal_result.Contains($requiredKey) -or [string]::IsNullOrWhiteSpace([string]$receipt.terminal_result[$requiredKey])) {
+            throw 'Direct PI receipt is missing terminal_result identity.'
         }
+    }
+    Assert-DirectPiIdentity -Expected $receipt.terminal_result -Actual $resultIdentity -Label 'Direct PI terminal result'
+    $requestThinking = if ($request.Contains('thinking')) { [string]$request.thinking } else { '' }
+    if ([string]::IsNullOrWhiteSpace($requestThinking) -or $requestThinking -ceq 'unknown') {
+        throw 'Direct PI request thinking is missing or unknown.'
+    }
+    $closed = Assert-DirectPiLatestNativeTurnClosed -Records $records
+    $assistant = $closed.assistant
+    if (-not $assistant.Contains('provider') -or [string]$assistant.provider -cne [string]$request.provider) { throw 'PI final assistant provider differs.' }
+    if (-not $assistant.Contains('model') -or [string]$assistant.model -cne [string]$request.model) { throw 'PI final assistant model differs.' }
+    $observedThinking = [string]$closed.thinking
+    if ([string]::IsNullOrWhiteSpace($observedThinking) -or $observedThinking -cne $requestThinking) {
+        throw 'PI native thinking differs.'
     }
     $bindingValue = [ordered]@{
         protocol_version = 'telephone-line-direct-pi-binding-v1'

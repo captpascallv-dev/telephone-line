@@ -287,6 +287,70 @@ function Resolve-DirectPiLaunchHost {
     }
 }
 
+function Get-DirectPiRecordRole {
+    param([Parameter(Mandatory = $true)][Collections.IDictionary]$Record)
+    if ($Record.Contains('message') -and $Record.message -is [Collections.IDictionary] -and $Record.message.Contains('role')) {
+        return [string]$Record.message.role
+    }
+    if ($Record.Contains('role')) { return [string]$Record.role }
+    return ''
+}
+
+function Get-DirectPiRecordAssistantMessage {
+    param([Parameter(Mandatory = $true)][Collections.IDictionary]$Record)
+    $role = Get-DirectPiRecordRole -Record $Record
+    if ($role -cne 'assistant') { return $null }
+    if ($Record.Contains('message') -and $Record.message -is [Collections.IDictionary]) { return $Record.message }
+    return $Record
+}
+
+function Test-DirectPiRecordIsUserOrTool {
+    param([Parameter(Mandatory = $true)][Collections.IDictionary]$Record)
+    $type = if ($Record.Contains('type')) { [string]$Record.type } else { '' }
+    $role = Get-DirectPiRecordRole -Record $Record
+    if ($role -ceq 'user' -or $role -ceq 'tool') { return $true }
+    if ($type -match '^(tool|tool_use|tool_result|agent_start)$') { return $true }
+    return $false
+}
+
+function Assert-DirectPiLatestNativeTurnClosed {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Records)
+    $lastAssistantIndex = -1
+    $lastAssistant = $null
+    $lastThinking = ''
+    for ($index = 0; $index -lt $Records.Count; $index++) {
+        $record = $Records[$index]
+        if ($record -isnot [Collections.IDictionary]) { continue }
+        if ($record.Contains('type') -and [string]$record.type -ceq 'thinking_level_change') {
+            if ($record.Contains('thinkingLevel') -and -not [string]::IsNullOrWhiteSpace([string]$record.thinkingLevel)) {
+                $lastThinking = [string]$record.thinkingLevel
+            }
+        }
+        $assistant = Get-DirectPiRecordAssistantMessage -Record $record
+        if ($null -ne $assistant) {
+            $lastAssistantIndex = $index
+            $lastAssistant = $assistant
+        }
+    }
+    if ($null -eq $lastAssistant) { throw 'PI JSON event stream has no final assistant message_end.' }
+    if (-not $lastAssistant.Contains('stopReason')) { throw 'PI final assistant has no stopReason.' }
+    $stopReason = [string]$lastAssistant.stopReason
+    if ([string]::IsNullOrWhiteSpace($stopReason) -or $stopReason -in @('error', 'aborted', 'pending')) {
+        throw 'PI final assistant has a non-terminal stopReason.'
+    }
+    for ($index = $lastAssistantIndex + 1; $index -lt $Records.Count; $index++) {
+        $record = $Records[$index]
+        if ($record -isnot [Collections.IDictionary]) { continue }
+        if (Test-DirectPiRecordIsUserOrTool -Record $record) {
+            throw 'Latest native turn is not closed.'
+        }
+        $laterAssistant = Get-DirectPiRecordAssistantMessage -Record $record
+        if ($null -ne $laterAssistant) { throw 'Latest native turn is not closed.' }
+    }
+    return [ordered]@{ assistant = $lastAssistant; thinking = $lastThinking; index = $lastAssistantIndex }
+}
+
 function ConvertFrom-DirectPiTerminalStream {
     [CmdletBinding()]
     param(

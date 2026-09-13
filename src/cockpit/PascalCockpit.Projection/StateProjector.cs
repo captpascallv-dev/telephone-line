@@ -97,6 +97,8 @@ public sealed class StateProjector : IProjector
             var workViews = new List<WorkView>();
             foreach (var w in pWorksCurrent)
             {
+                if (string.Equals(Val(w, "role"), "lead", StringComparison.OrdinalIgnoreCase))
+                    continue;
                 if (string.Equals(Val(w, "diagnostic_only"), "true", StringComparison.OrdinalIgnoreCase)
                     && IsMissing(Val(w, "process_state")))
                 {
@@ -108,6 +110,8 @@ public sealed class StateProjector : IProjector
 
             foreach (var w in pWorksHist)
             {
+                if (string.Equals(Val(w, "role"), "lead", StringComparison.OrdinalIgnoreCase))
+                    continue;
                 // History-capable form: LastKnown quality; not raised as current active fault.
                 workViews.Add(ToWorkView(w, DataQuality.LastKnown, historical: true));
             }
@@ -991,7 +995,7 @@ public sealed class StateProjector : IProjector
         if (chosen is null)
         {
             var handlingWork = currentWorks.FirstOrDefault(w =>
-                Val(w, "lead_handling_state") is "lead_accepting" or "repair_dispatched" or "blocked_after_acceptance"
+                Val(w, "lead_handling_state") is "lead_accepting" or "repair_dispatched" or "blocked_after_acceptance" or "callback_wait"
                 || Val(w, "acceptance_state") is "acceptance_in_progress" or "handled_fail_repair");
             if (handlingWork is not null)
             {
@@ -1046,16 +1050,25 @@ public sealed class StateProjector : IProjector
                    || exec.Equals("running", StringComparison.OrdinalIgnoreCase);
         });
 
-        foreach (var w in currentWorks)
+        foreach (var w in currentWorks.OrderBy(w =>
+                     string.Equals(Val(w, "role"), "lead", StringComparison.OrdinalIgnoreCase) ? 0 : 1))
         {
             var handling = Val(w, "lead_handling_state");
             var acc = Val(w, "acceptance_state");
-            if (!IsLiveHandlerFold(handling, acc))
+            if (!IsLiveHandlerFold(handling, acc)
+                && !string.Equals(Val(w, "role"), "lead", StringComparison.OrdinalIgnoreCase))
                 continue;
-            if (IsMissing(ValFrom(folded, "lead_handling_state")))
+            if (IsMissing(ValFrom(folded, "lead_handling_state")) && !IsMissing(handling))
                 folded["lead_handling_state"] = handling;
-            if (IsMissing(ValFrom(folded, "acceptance_state")) && !IsFoldedAccepted(acc))
+            if (IsMissing(ValFrom(folded, "acceptance_state")) && !IsFoldedAccepted(acc) && !IsMissing(acc))
                 folded["acceptance_state"] = acc;
+            if (string.Equals(Val(w, "role"), "lead", StringComparison.OrdinalIgnoreCase))
+            {
+                if (IsMissing(ValFrom(folded, "model")) && !IsMissing(Val(w, "model")))
+                    folded["model"] = Val(w, "model");
+                if (IsMissing(ValFrom(folded, "effort")) && !IsMissing(Val(w, "effort")))
+                    folded["effort"] = Val(w, "effort");
+            }
         }
 
         foreach (var w in acceptedSources)
@@ -1105,6 +1118,7 @@ public sealed class StateProjector : IProjector
         return h.Equals("blocked_after_acceptance", StringComparison.OrdinalIgnoreCase)
                || h.Equals("lead_accepting", StringComparison.OrdinalIgnoreCase)
                || h.Equals("repair_dispatched", StringComparison.OrdinalIgnoreCase)
+               || h.Equals("callback_wait", StringComparison.OrdinalIgnoreCase)
                || a.Equals("acceptance_in_progress", StringComparison.OrdinalIgnoreCase);
     }
 

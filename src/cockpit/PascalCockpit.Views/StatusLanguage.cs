@@ -68,6 +68,9 @@ public static class StatusLanguage
             return (L("等待结果"), L("退修已派出，等待本轮结果"));
         if (execs.Any(w => (w.Axes.LeadHandling ?? "").Equals("repair_prepared", StringComparison.OrdinalIgnoreCase)))
             return (L("等待结果"), L("准备退修续接"));
+        if (execs.Any(w => (w.Axes.LeadHandling ?? "").Equals("dispatch_pending_native", StringComparison.OrdinalIgnoreCase))
+            || current.Any(w => (w.Axes.LeadHandling ?? "").Equals("callback_wait", StringComparison.OrdinalIgnoreCase)))
+            return (L("等待结果"), L("已派出，等待本轮结果证据"));
 
         if (execs.Any(w =>
                 w.Axes.Execution.Equals("returned", StringComparison.OrdinalIgnoreCase)
@@ -695,6 +698,12 @@ public static class StatusLanguage
             return "结果已交回，负责人已判退修；后续处理被平台限制中断，退修尚未派出";
         }
 
+        if ((a.LeadHandling ?? "").Equals("callback_wait", StringComparison.OrdinalIgnoreCase))
+            return "等待回叫";
+
+        if ((a.LeadHandling ?? "").Equals("dispatch_pending_native", StringComparison.OrdinalIgnoreCase))
+            return "已派出，等待原生运行/本轮结果证据";
+
         if ((a.LeadHandling ?? "").Equals("repair_prepared", StringComparison.OrdinalIgnoreCase))
             return "准备退修续接";
 
@@ -1168,6 +1177,8 @@ public static class StatusLanguage
             "blocked_after_acceptance" => "验收后退修被中断且未派出",
             "lead_accepting" or "acceptance_in_progress" => "负责人正在验收",
             "repair_dispatched" => "退修已派出",
+            "dispatch_pending_native" => "已派出，等待原生运行/本轮结果证据",
+            "callback_wait" => "等待回叫",
             "handled_fail_repair" or "lead_handled_fail_repair" => "已处理待修复",
             "handled_partial_adopted" or "lead_handled_partial_adopted" => "已处理（部分采用）",
             "content_not_accepted" => "内容未验收",
