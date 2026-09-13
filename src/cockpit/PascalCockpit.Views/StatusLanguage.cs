@@ -611,14 +611,16 @@ public static class StatusLanguage
             return "已处理（额度失败）；内容未验收";
         }
 
-        if ((a.LeadHandling ?? "").Contains("lead_handled", StringComparison.OrdinalIgnoreCase)
-            || (a.Acceptance ?? "").StartsWith("handled", StringComparison.OrdinalIgnoreCase)
-            || (a.Acceptance ?? "").Contains("fail_repair", StringComparison.OrdinalIgnoreCase)
+        if ((a.Acceptance ?? "").Contains("fail_repair", StringComparison.OrdinalIgnoreCase)
             || (a.LeadHandling ?? "").Contains("fail_repair", StringComparison.OrdinalIgnoreCase))
+            return "结果已交回；负责人验收发现问题，需要原执行者退修";
+        if ((a.Acceptance ?? "").Equals("handled_accepted", StringComparison.OrdinalIgnoreCase)
+            || (IsAcceptedValue(a.Acceptance) && !(a.Acceptance ?? "").Contains("fail", StringComparison.OrdinalIgnoreCase)))
+            return IsAdoptedValue(a.Adoption) ? "已接受并已采用" : "已验收";
+        if ((a.LeadHandling ?? "").Contains("lead_handled", StringComparison.OrdinalIgnoreCase)
+            || ((a.Acceptance ?? "").StartsWith("handled", StringComparison.OrdinalIgnoreCase)
+                && !(a.Acceptance ?? "").Contains("accept", StringComparison.OrdinalIgnoreCase)))
         {
-            if ((a.Acceptance ?? "").Contains("fail_repair", StringComparison.OrdinalIgnoreCase)
-                || (a.LeadHandling ?? "").Contains("fail_repair", StringComparison.OrdinalIgnoreCase))
-                return "结果已交回；负责人验收发现问题，需要原执行者退修";
             if ((a.Acceptance ?? "").Contains("partial", StringComparison.OrdinalIgnoreCase))
                 return "已处理（部分采用）";
             return "已处理";
@@ -645,7 +647,7 @@ public static class StatusLanguage
             }
 
             if (IsPending(a.Acceptance) || IsUnknown(a.Acceptance))
-                return "结果已交回，等待负责人验收";
+                return "结果已交回，等待负责人处理";
             if (IsAcceptedValue(a.Acceptance))
                 return IsAdoptedValue(a.Adoption) ? "已接受并已采用" : "已接受";
             return "结果已交回";
@@ -670,7 +672,7 @@ public static class StatusLanguage
             return Truncate(summary, 40);
         }
 
-        return string.Empty;
+        return "未获取";
     }
 
     public static bool IsConsumerPhrase(string? text)
@@ -884,7 +886,24 @@ public static class StatusLanguage
     {
         if (HasLiveHandler(work))
             return false;
-        if (work.ActorKind is "lead" or "executor" or "reviewer" or "legion")
+        if (work.ActorKind is "progress") return true;
+        if (work.ActorKind is "executor")
+        {
+            var exec = work.Axes.Execution ?? "";
+            if (exec.Equals("failed", StringComparison.OrdinalIgnoreCase)
+                || exec.Equals("active", StringComparison.OrdinalIgnoreCase)
+                || exec.Equals("running", StringComparison.OrdinalIgnoreCase)
+                || exec.Equals("returned", StringComparison.OrdinalIgnoreCase)
+                || exec.Equals("succeeded", StringComparison.OrdinalIgnoreCase))
+                return false;
+            if (IsUnknown(work.Axes.Execution) && IsUnknown(work.Axes.LeadHandling)
+                && IsUnknown(work.Axes.Acceptance) && IsUnknown(work.Axes.Transport)
+                && string.IsNullOrWhiteSpace(work.Model) && string.IsNullOrWhiteSpace(work.TaskName)
+                && string.IsNullOrWhiteSpace(work.ActorName))
+                return true;
+            return false;
+        }
+        if (work.ActorKind is "lead" or "reviewer" or "legion")
             return false;
         if (work.Role.Equals("lead", StringComparison.OrdinalIgnoreCase)) return false;
         if (work.Role.Contains("review", StringComparison.OrdinalIgnoreCase)) return false;

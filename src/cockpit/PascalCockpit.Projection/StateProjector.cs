@@ -89,6 +89,7 @@ public sealed class StateProjector : IProjector
 
             var pWorksCurrent = currentWorks.Where(w => string.Equals(w.ProjectId, pid, StringComparison.Ordinal)).ToList();
             var pWorksHist = historicalWorks.Where(w => string.Equals(w.ProjectId, pid, StringComparison.Ordinal)).ToList();
+            RelocateAdoptedFolderWorks(pWorksCurrent, pWorksHist, contributionFacts.Concat(facts.Where(f => f.Kind == "acceptance")));
             var pAttFacts = attentionFacts.Where(a => string.Equals(a.ProjectId, pid, StringComparison.Ordinal)).ToList();
             var pContrib = contributionFacts.Where(c => string.Equals(c.ProjectId, pid, StringComparison.Ordinal)).ToList();
             var pLeads = leadFacts.Where(l => string.Equals(l.ProjectId, pid, StringComparison.Ordinal)).ToList();
@@ -455,13 +456,16 @@ public sealed class StateProjector : IProjector
         var result = new List<SourceFact>();
         var byLine = new Dictionary<string, int>(StringComparer.Ordinal);
         var byDirect = new Dictionary<string, int>(StringComparer.Ordinal);
+        var byAccept = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var w in works)
         {
             w.Links.TryGetValue("line_job_id", out var line);
             w.Links.TryGetValue("direct_job_id", out var direct);
+            var accept = AcceptanceDir(w);
             var idx = -1;
             var found = (!string.IsNullOrWhiteSpace(line) && byLine.TryGetValue(line, out idx))
-                        || (!string.IsNullOrWhiteSpace(direct) && byDirect.TryGetValue(direct!, out idx));
+                        || (!string.IsNullOrWhiteSpace(direct) && byDirect.TryGetValue(direct!, out idx))
+                        || (!string.IsNullOrWhiteSpace(accept) && byAccept.TryGetValue(accept!, out idx));
             if (found)
             {
                 result[idx] = MergeFacts(result[idx], w);
@@ -474,9 +478,23 @@ public sealed class StateProjector : IProjector
 
             if (!string.IsNullOrWhiteSpace(line)) byLine[line] = idx;
             if (!string.IsNullOrWhiteSpace(direct)) byDirect[direct!] = idx;
+            if (!string.IsNullOrWhiteSpace(accept)) byAccept[accept!] = idx;
         }
 
         return result;
+    }
+
+    private static string? AcceptanceDir(SourceFact w)
+    {
+        foreach (var ev in w.Evidence)
+        {
+            var loc = (ev.Location ?? ev.SourceId ?? "").Replace('/', '\\');
+            var idx = loc.LastIndexOf("\\acceptance\\", StringComparison.OrdinalIgnoreCase);
+            if (idx < 0) continue;
+            return loc[..(idx + "\\acceptance".Length)];
+        }
+
+        return null;
     }
 
     private static SourceFact MergeFacts(SourceFact a, SourceFact b)
@@ -497,7 +515,8 @@ public sealed class StateProjector : IProjector
                      "authorized_current", "contribution_item", "counts_as_adopted_outcome",
                      "contribution_id", "registry_pointer_lag", "next_step", "current_handler",
                      "execution_blocker", "remaining_repair_dispatched", "pascal_decision_required",
-                     "actor_name", "task_name", "model", "effort", "blocker", "review_assigned"
+                     "actor_name", "task_name", "model", "effort", "blocker", "review_assigned",
+                     "lead_source_kind", "source_adopted", "lead_run_id"
                  }))
         {
             var av = values[key]?.GetValue<string>();
@@ -926,6 +945,8 @@ public sealed class StateProjector : IProjector
     private static string ActorKindFromRole(string role, bool historical)
     {
         if (historical) return "history";
+        if (role.Contains("generation", StringComparison.OrdinalIgnoreCase))
+            return "progress";
         if (role.Contains("review", StringComparison.OrdinalIgnoreCase)
             || role.Contains("审核", StringComparison.Ordinal))
             return "reviewer";
@@ -936,8 +957,7 @@ public sealed class StateProjector : IProjector
         if (role.Equals("lead", StringComparison.OrdinalIgnoreCase)
             || role.Contains("负责人", StringComparison.Ordinal))
             return "lead";
-        if (role.Contains("exec", StringComparison.OrdinalIgnoreCase)
-            || role.Contains("generation", StringComparison.OrdinalIgnoreCase))
+        if (role.Contains("exec", StringComparison.OrdinalIgnoreCase))
             return "executor";
         return "unknown";
     }
@@ -958,7 +978,6 @@ public sealed class StateProjector : IProjector
             return null;
         }
 
-        SourceFact? chosen = null;
         var currentSessions = new HashSet<string>(StringComparer.Ordinal);
         foreach (var w in currentWorks)
         {
@@ -966,25 +985,12 @@ public sealed class StateProjector : IProjector
                 currentSessions.Add(sid);
         }
 
-        foreach (var lead in pLeads)
-        {
-            lead.Links.TryGetValue("lead_session_id", out var sid);
-            if (!string.IsNullOrWhiteSpace(sid) && currentSessions.Contains(sid))
-            {
-                chosen = lead;
-                break;
-            }
-        }
-
-        if (chosen is null)
-        {
-            chosen = pLeads.FirstOrDefault(l =>
-                !IsMissing(Val(l, "lead_handling_state"))
-                || !IsMissing(Val(l, "acceptance_state")));
-        }
-
-        if (chosen is null && pLeads.Count == 1)
-            chosen = pLeads[0];
+        var ranked = pLeads
+            .Select(l => (Lead: l, Score: LeadIdentityScore(l, currentSessions)))
+            .OrderByDescending(x => x.Score)
+            .ToList();
+        var chosen = ranked.FirstOrDefault(x => x.Score > 0).Lead
+                     ?? ranked.FirstOrDefault().Lead;
 
         if (chosen is null)
         {
@@ -996,6 +1002,9 @@ public sealed class StateProjector : IProjector
                 var synthetic = CloneValues(handlingWork.Values);
                 synthetic["role"] = "lead";
                 synthetic["turn_state"] = "unknown";
+                synthetic.Remove("model");
+                synthetic.Remove("effort");
+                synthetic.Remove("actor_name");
                 chosen = new SourceFact(
                     "lead",
                     "lead:from-work:" + handlingWork.EntityId,
@@ -1011,6 +1020,24 @@ public sealed class StateProjector : IProjector
 
         var folded = CloneValues(chosen.Values);
         folded["role"] = "lead";
+        chosen.Links.TryGetValue("lead_session_id", out var chosenSession);
+        foreach (var lead in pLeads)
+        {
+            lead.Links.TryGetValue("lead_session_id", out var sid);
+            if (!string.IsNullOrWhiteSpace(chosenSession)
+                && !string.Equals(sid, chosenSession, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (IsMissing(ValFrom(folded, "model")) && !IsMissing(Val(lead, "model")))
+                folded["model"] = Val(lead, "model");
+            if (IsMissing(ValFrom(folded, "effort")) && !IsMissing(Val(lead, "effort")))
+                folded["effort"] = Val(lead, "effort");
+            if (IsMissing(ValFrom(folded, "actor_name")) && !IsMissing(Val(lead, "actor_name")))
+                folded["actor_name"] = Val(lead, "actor_name");
+        }
+
         foreach (var w in currentWorks)
         {
             if (IsMissing(ValFrom(folded, "lead_handling_state")) && !IsMissing(Val(w, "lead_handling_state")))
@@ -1035,10 +1062,6 @@ public sealed class StateProjector : IProjector
                 folded["acceptance_state"] = Val(c, "acceptance_state");
             if (IsMissing(ValFrom(folded, "lead_handling_state")) && !IsMissing(Val(c, "lead_handling_state")))
                 folded["lead_handling_state"] = Val(c, "lead_handling_state");
-            if (IsMissing(ValFrom(folded, "model")) && !IsMissing(Val(c, "model")))
-                folded["model"] = Val(c, "model");
-            if (IsMissing(ValFrom(folded, "effort")) && !IsMissing(Val(c, "effort")))
-                folded["effort"] = Val(c, "effort");
         }
 
         var fact = new SourceFact("lead", chosen.EntityId, projectId, chosen.Links, folded, chosen.Evidence);
@@ -1047,6 +1070,55 @@ public sealed class StateProjector : IProjector
 
     private static string? ValFrom(JsonObject values, string key) =>
         values[key]?.GetValue<string>();
+
+    private static int LeadIdentityScore(SourceFact lead, HashSet<string> currentSessions)
+    {
+        var score = 0;
+        lead.Links.TryGetValue("lead_session_id", out var sid);
+        if (!string.IsNullOrWhiteSpace(sid) && currentSessions.Contains(sid))
+            score += 8;
+        if (!IsMissing(Val(lead, "model")) || !IsMissing(Val(lead, "effort")))
+            score += 4;
+        var kind = Val(lead, "lead_source_kind");
+        if (string.Equals(kind, "lead_run", StringComparison.OrdinalIgnoreCase)
+            || lead.Evidence.Any(e => e.Kind.Equals("lead_run", StringComparison.OrdinalIgnoreCase)))
+            score += 4;
+        if (string.Equals(kind, "host_owner", StringComparison.OrdinalIgnoreCase)
+            || lead.Evidence.Any(e => e.Kind.Equals("lead_owner", StringComparison.OrdinalIgnoreCase)))
+            score -= 3;
+        return score;
+    }
+
+    private static void RelocateAdoptedFolderWorks(
+        List<SourceFact> current,
+        List<SourceFact> historical,
+        IEnumerable<SourceFact> markers)
+    {
+        var dirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var m in markers)
+        {
+            if (!string.Equals(Val(m, "source_adopted"), "true", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(Val(m, "counts_as_adopted_outcome"), "true", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(Val(m, "adoption_state"), "adopted", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var dir = AcceptanceDir(m);
+            if (!string.IsNullOrWhiteSpace(dir))
+                dirs.Add(dir!);
+        }
+
+        if (dirs.Count == 0) return;
+        for (var i = current.Count - 1; i >= 0; i--)
+        {
+            var dir = AcceptanceDir(current[i]);
+            if (string.IsNullOrWhiteSpace(dir) || !dirs.Contains(dir))
+                continue;
+            historical.Add(current[i]);
+            current.RemoveAt(i);
+        }
+    }
 
     private static IReadOnlyList<ArtifactView> BuildArtifacts(SourceFact f)
     {

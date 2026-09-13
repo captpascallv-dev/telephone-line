@@ -862,8 +862,8 @@
     },
     {
       "path": "src/cockpit/PascalCockpit.Collection/FileCollector.cs",
-      "bytes": 42338,
-      "sha256": "bbd3e58cebcf007d2bee2616fbac6010580e123cc719027aa94074b03341c193"
+      "bytes": 43084,
+      "sha256": "7eb12b26131ac062b1b4bdf76d3efa83ed78d7ff0f1b59fe17435c690399003a"
     },
     {
       "path": "src/cockpit/PascalCockpit.Collection/PascalCockpit.Collection.csproj",
@@ -882,8 +882,8 @@
     },
     {
       "path": "src/cockpit/PascalCockpit.Normalization/DocumentNormalizers.cs",
-      "bytes": 60119,
-      "sha256": "b567b37431200349f8c3e109c3dd3a07f3fd67b3c1431bf1d416ed5d916ee46e"
+      "bytes": 62290,
+      "sha256": "c898a4088b22f9f90da6083eb69e2550e35b98cfa69855551abd76cdd725edde"
     },
     {
       "path": "src/cockpit/PascalCockpit.Normalization/EvidenceNormalizer.cs",
@@ -927,13 +927,13 @@
     },
     {
       "path": "src/cockpit/PascalCockpit.Projection/StateProjector.cs",
-      "bytes": 68472,
-      "sha256": "1ec2b753eccfc15ed670fbd49f5c090e1f666d34c4740dc4ca6271b41fa28ee7"
+      "bytes": 71834,
+      "sha256": "79db5b9f5050ece52a117ea1fb7adc8e4dfd7a2c12068c0147d441702f0ef98f"
     },
     {
       "path": "src/cockpit/PascalCockpit.Views/ConsumerCopy.cs",
-      "bytes": 27961,
-      "sha256": "80cf667225719c8a765d749c60e591c9b2d57b609bfb3bcbad369803b5a18973"
+      "bytes": 28227,
+      "sha256": "3d771c6d1bd2f897d91b709a28c0e6cbda93ccc1957efe6e0117262c56de05e8"
     },
     {
       "path": "src/cockpit/PascalCockpit.Views/CurrentList.cs",
@@ -982,13 +982,13 @@
     },
     {
       "path": "src/cockpit/PascalCockpit.Views/RolePresentation.cs",
-      "bytes": 9169,
-      "sha256": "e6a5ec905819ca54489be27ba5ed24bf7abc4f7336ca978b370edd9b6ee786aa"
+      "bytes": 10325,
+      "sha256": "601c0eb3b7d31e8361b4a2cca537ed0698eb0aee34c110c8eef417d0934431eb"
     },
     {
       "path": "src/cockpit/PascalCockpit.Views/StatusLanguage.cs",
-      "bytes": 50617,
-      "sha256": "6b71cf77f48f56d0765c57574d4f323486892f944830f510aa6383ed06ade722"
+      "bytes": 51776,
+      "sha256": "5db5d1800793593e6c8fa558ad37febad8505653485c923116d02bf225c2ce8d"
     },
     {
       "path": "src/cockpit/README.md",
@@ -1083,12 +1083,12 @@
     {
       "path": "src/cockpit/runtime/win-x64/PascalCockpit.App.dll",
       "bytes": 55808,
-      "sha256": "aa9d944d6b723e78c8b733700ebcdd018556bd009aa3f2d2f51b18f16a156902"
+      "sha256": "71d03ef9d5d0a0a77f011e783219e70f46bd44e53f1d1be0fa20b67bf9bcd42f"
     },
     {
       "path": "src/cockpit/runtime/win-x64/PascalCockpit.App.exe",
       "bytes": 152064,
-      "sha256": "5515e46a0ca0f7bddcef2be9980860b36399e056239c053c591130719ad65ad5"
+      "sha256": "c142c382743646139e568c6cf7acaf5b54e1f3d7a200101a34d0c0f79146aeb7"
     },
     {
       "path": "src/cockpit/runtime/win-x64/PascalCockpit.App.runtimeconfig.json",
@@ -1097,28 +1097,28 @@
     },
     {
       "path": "src/cockpit/runtime/win-x64/PascalCockpit.Collection.dll",
-      "bytes": 40960,
-      "sha256": "92802627a3031bd2b8ff9746fa60977b4043e5cec8419e0deecd04a628a4145a"
+      "bytes": 41472,
+      "sha256": "656d5bb10db49c39e4aae6cb3d2db678d35cab0d1bb9260bea3a43eebd1ded1e"
     },
     {
       "path": "src/cockpit/runtime/win-x64/PascalCockpit.Contracts.dll",
       "bytes": 49152,
-      "sha256": "d5ec3de892785cf7fe5af1f3afeba5b84a6fe2ba4ac687d92b685fab6744eb67"
+      "sha256": "90a040686e0c94a950aebd7a3ab66c19328762e3663b9fa95d78e3bc69c19a06"
     },
     {
       "path": "src/cockpit/runtime/win-x64/PascalCockpit.Normalization.dll",
-      "bytes": 70656,
-      "sha256": "31872873d6f95002a1aa4b26a1d3be5a2de164edbb2386a6cdf7301b21cf5796"
+      "bytes": 71680,
+      "sha256": "28fa7e0e44858b1c8a9e2109c7e8e00c1c494ba574db96a57a1470a918ba8f31"
     },
     {
       "path": "src/cockpit/runtime/win-x64/PascalCockpit.Projection.dll",
-      "bytes": 43008,
-      "sha256": "54169907de68077b7c375f0986461d2870c5ae380ddf603a7ba93979349c0800"
+      "bytes": 45568,
+      "sha256": "5233ca78bd4e54ab8bf0da95de414e83276a52b4eec8e59c8fb9afb2dc9cb3e3"
     },
     {
       "path": "src/cockpit/runtime/win-x64/PascalCockpit.Views.dll",
-      "bytes": 146432,
-      "sha256": "0817fc00d246ea26a8f7ce4c54a7eacb279e65e29724e9f73d4a9e50264277ae"
+      "bytes": 147456,
+      "sha256": "c61672ea5ce65201294f8afef1d0cb7e072ae2e73fa599351bc0149fb7f62aa5"
     },
     {
       "path": "src/cockpit/runtime/win-x64/PenImc_cor3.dll",
@@ -3123,7 +3123,7 @@
   ],
   "counts": {
     "files": 618,
-    "bytes": 157393203
+    "bytes": 157407183
   },
   "excluded": [
     ".control/**",

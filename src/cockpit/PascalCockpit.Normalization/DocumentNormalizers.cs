@@ -141,7 +141,7 @@ internal static class DocumentNormalizers
         }
 
         ApplyCurrentHandler(values, doc.Data, state, humanNext);
-        StampIdentity(values, doc.Data);
+        StampExecutorIdentity(values, doc.Data);
 
         facts.Add(new SourceFact("work", entityId, projectId, links, values, new[] { NormUtil.Evidence(doc) }));
         HandlingLogic.EmitHistoricalFromSwitchFields(doc, projectId, facts);
@@ -231,23 +231,39 @@ internal static class DocumentNormalizers
     }
 
     /// <summary>
-    /// Copy current actor/task/model/effort from the same document. Nested lead
-    /// objects are read; CLI/owner documents are not rewritten as Lead.
+    /// Lead identity only. Nested launcher Model/ReasoningEffort and resume session
+    /// belong here. Executor fields are not copied onto Lead.
     /// </summary>
-    private static void StampIdentity(JsonObject values, JsonObject data)
+    private static void StampLeadIdentity(JsonObject values, JsonObject data)
     {
-        var leadObj = JsonField.Obj(data, "lead", "lead_binding", "binding");
+        PutIfMissing(values, "actor_name", JsonField.Str(data, "actor_name", "display_name", "lead_name"));
+        PutIfMissing(values, "task_name", JsonField.Str(data, "task_name", "task", "title"));
+        PutIfMissing(values, "model",
+            JsonField.Str(data, "model", "lead_model", "model_name")
+            ?? LauncherFlag(data, "-Model", "--model"));
+        PutIfMissing(values, "effort",
+            JsonField.Str(data, "reasoning", "reasoning_effort", "effort", "lead_reasoning")
+            ?? LauncherFlag(data, "-ReasoningEffort", "--reasoning-effort"));
+        var role = JsonField.Str(data, "role");
+        if (string.Equals(role, "host", StringComparison.OrdinalIgnoreCase))
+            values["lead_source_kind"] = "host_owner";
+        else
+            values["lead_source_kind"] = "lead_run";
+    }
+
+    /// <summary>
+    /// Executor identity from this document only. Nested lead.model/effort stays on Lead.
+    /// </summary>
+    private static void StampExecutorIdentity(JsonObject values, JsonObject data)
+    {
         PutIfMissing(values, "actor_name",
-            JsonField.Str(data, "actor_name", "display_name", "executor_name", "client", "client_name", "agent_name")
-            ?? JsonField.Str(leadObj, "display_name", "name"));
+            JsonField.Str(data, "actor_name", "display_name", "executor_name", "client", "client_name", "agent_name"));
         PutIfMissing(values, "task_name",
             JsonField.Str(data, "task_name", "task", "package_id", "current_package_id", "title", "stage"));
         PutIfMissing(values, "model",
-            JsonField.Str(data, "model", "lead_model", "model_name")
-            ?? JsonField.Str(leadObj, "model", "lead_model", "model_name"));
+            JsonField.Str(data, "executor_model", "model", "model_name", "model_id"));
         PutIfMissing(values, "effort",
-            JsonField.Str(data, "reasoning_effort", "effort", "lead_reasoning")
-            ?? JsonField.Str(leadObj, "reasoning_effort", "effort", "lead_reasoning"));
+            JsonField.Str(data, "executor_reasoning", "executor_reasoning_effort", "reasoning_effort", "effort"));
         PutIfMissing(values, "blocker",
             JsonField.Str(data, "blocker", "execution_blocker")
             ?? JsonField.Str(JsonField.Obj(data, "execution_blocker"), "code", "classification", "detail"));
@@ -265,6 +281,29 @@ internal static class DocumentNormalizers
         }
     }
 
+    private static string? LauncherFlag(JsonObject data, params string[] flags)
+    {
+        var launcher = JsonField.Obj(data, "launcher") ?? JsonField.Obj(JsonField.Obj(data, "lead", "lead_binding", "binding"), "launcher");
+        if (launcher is null) return null;
+        if (launcher["arguments"] is not JsonArray args) return null;
+        for (var i = 0; i < args.Count - 1; i++)
+        {
+            var token = args[i]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(token)) continue;
+            foreach (var flag in flags)
+            {
+                if (token.Equals(flag, StringComparison.OrdinalIgnoreCase))
+                {
+                    var next = args[i + 1]?.GetValue<string>();
+                    if (!string.IsNullOrWhiteSpace(next) && next[0] != '-')
+                        return next.Trim();
+                }
+            }
+        }
+
+        return null;
+    }
+
     private static void PutIfMissing(JsonObject values, string key, string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return;
@@ -276,13 +315,14 @@ internal static class DocumentNormalizers
     public static void NormalizeLead(RawDocument doc, List<SourceFact> facts, List<SourceIssue> issues, HashSet<string> knownProjects)
     {
         var projectId = NormUtil.ResolveProjectId(doc, knownProjects, issues);
-        var session = JsonField.Str(doc.Data, "session_id", "lead_session_id", "thread_id");
-        var runId = JsonField.Str(doc.Data, "run_id", "lead_run_id");
+        var session = JsonField.Str(doc.Data, "resume_session_id", "session_id", "lead_session_id", "thread_id");
+        var runId = JsonField.Str(doc.Data, "run_id", "lead_run_id", "requested_run_id");
         var entityId = "lead:" + (session ?? runId ?? doc.Id);
         var links = new Dictionary<string, string>(StringComparer.Ordinal);
         NormUtil.PutLink(links, "lead_session_id", session);
         NormUtil.PutLink(links, "source_object_id", doc.Id);
-        NormUtil.PutLink(links, "line_job_id", NormUtil.ExtractLineFromRunId(runId));
+        NormUtil.PutLink(links, "lead_run_id", runId);
+        NormUtil.PutLink(links, "line_job_id", JsonField.Str(doc.Data, "line_job_id", "current_line_job_id"));
 
         var turn = JsonField.Str(doc.Data, "turn_state", "turn_status");
         var lifecycle = JsonField.Str(doc.Data, "lifecycle_state", "state", "status");
@@ -305,7 +345,7 @@ internal static class DocumentNormalizers
         var ticks = JsonField.Long(doc.Data, "start_time_utc_ticks", "start_ticks");
         if (pid is not null) values["pid"] = pid.Value.ToString(CultureInfo.InvariantCulture);
         if (ticks is not null) values["start_time_utc_ticks"] = ticks.Value.ToString(CultureInfo.InvariantCulture);
-        StampIdentity(values, doc.Data);
+        StampLeadIdentity(values, doc.Data);
         facts.Add(new SourceFact("lead", entityId, projectId, links, values, new[] { NormUtil.Evidence(doc) }));
     }
 
@@ -387,6 +427,7 @@ internal static class DocumentNormalizers
         var values = NormUtil.BaseAxes("generation", JsonField.Str(doc.Data, "route"), "unknown", "unknown", "active", "unknown",
             "原执行者继续生成");
         values["execution_state"] = "active";
+        values["diagnostic_only"] = "true";
         values["delivery_state"] = "unknown";
         values["acceptance_state"] = "unknown";
         values["current_round_receipt_missing"] = "true";
@@ -528,7 +569,7 @@ internal static class DocumentNormalizers
         if (NormUtil.LooksCancelledArchived(doc.Data))
             NormUtil.MarkCancelledArchived(values);
 
-        StampIdentity(values, doc.Data);
+        StampExecutorIdentity(values, doc.Data);
         StampCollectedScope(doc, values);
         facts.Add(new SourceFact("work", entityId, projectId, links, values, new[] { NormUtil.Evidence(doc) }));
     }
@@ -621,7 +662,7 @@ internal static class DocumentNormalizers
         if (NormUtil.LooksCancelledArchived(doc.Data))
             NormUtil.MarkCancelledArchived(values);
 
-        StampIdentity(values, doc.Data);
+        StampExecutorIdentity(values, doc.Data);
         StampCollectedScope(doc, values);
         facts.Add(new SourceFact("work", entityId, projectId, links, values, new[] { NormUtil.Evidence(doc) }));
     }
@@ -812,6 +853,12 @@ internal static class DocumentNormalizers
             ["contribution_item"] = "false",
             ["counts_as_adopted_outcome"] = "false"
         };
+        if (JsonField.Bool(doc.Data, "source_adopted") == true
+            || JsonField.Arr(doc.Data, "original_ar_closed_now") is { Count: > 0 })
+        {
+            values["source_adopted"] = "true";
+            values["counts_as_adopted_outcome"] = "true";
+        }
         if (!string.IsNullOrWhiteSpace(attentionOwner))
         {
             values["attention_owner"] = attentionOwner;

@@ -72,7 +72,12 @@ public sealed class FileCollector : ICollector
     {
         "dashboard_active_work_path", "current_run_root", "current_line_job_root",
         "current_direct_job_root", "current_army_acceptance", "army_repair_request",
-        "binding", "lead_binding"
+        "binding", "lead_binding", "lead_run_root"
+    };
+
+    private static readonly HashSet<string> ShortEffortEnums = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "xhigh", "high", "medium", "low", "xlow", "max", "minimal", "min", "default"
     };
 
     private readonly IProcessProbe? _processProbe;
@@ -847,7 +852,8 @@ public sealed class FileCollector : ICollector
         {
             if (DeniedJsonKeys.Contains(kv.Key))
             {
-                continue;
+                if (!IsAllowedShortEffortScalar(kv.Key, kv.Value))
+                    continue;
             }
 
             copy[kv.Key] = kv.Value is null ? null : StripPayloadNode(kv.Value);
@@ -894,12 +900,22 @@ public sealed class FileCollector : ICollector
         if (k is "line_receipt" or "route_receipt" or "telephone_receipt" or "direct_receipt"
             or "actual_dispatch_receipt" or "native_identity_source" or "last_transport_receipt"
             or "last_direct_receipt" or "prepared_next_config" or "current_result"
-            or "current_config" or "expected_result")
+            or "current_config" or "expected_result" or "lead_run_root" or "current_run_root")
         {
             return true;
         }
 
         return k is "binding" or "lead_binding" or "dashboard_active_work_path";
+    }
+
+    private static bool IsAllowedShortEffortScalar(string key, JsonNode? value)
+    {
+        if (key is not "reasoning" and not "reasoning_effort" and not "effort")
+            return false;
+        if (value is not JsonValue v || !v.TryGetValue<string>(out var s) || string.IsNullOrWhiteSpace(s))
+            return false;
+        s = s.Trim();
+        return s.Length <= 16 && ShortEffortEnums.Contains(s);
     }
 
     internal static bool LooksHistoricalPointerKey(string key)

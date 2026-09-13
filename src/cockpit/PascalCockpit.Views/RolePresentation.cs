@@ -12,7 +12,7 @@ public static class RolePresentation
     {
         var current = project.WorkItems
             .Where(w => !StatusLanguage.IsHistoricalWork(w) && !StatusLanguage.IsDiagnosticNoise(w))
-            .Where(w => !IsFoldedLeadAcceptance(w))
+            .Where(w => !IsFoldedLeadAcceptance(w) && KindOf(w) != "progress")
             .ToList();
         return Numbered(current, historical: false, lang);
     }
@@ -40,7 +40,17 @@ public static class RolePresentation
             return ConsumerCopy.Localize(LeadStatus(w, siblings), lang);
         }
 
-        return ConsumerCopy.Localize(StatusLanguage.WorkStatusPhrase(w), lang);
+        if (KindOf(w) == "reviewer")
+        {
+            if (string.Equals(w.Axes.Execution, "failed", StringComparison.OrdinalIgnoreCase))
+                return ConsumerCopy.Localize("当前执行失败，待处理", lang);
+            return ConsumerCopy.Localize("已安排审核", lang);
+        }
+
+        var execPhrase = StatusLanguage.WorkStatusPhrase(w);
+        if (string.IsNullOrWhiteSpace(execPhrase) || StatusLanguage.LooksLikeTechnicalDump(execPhrase))
+            execPhrase = "未获取";
+        return ConsumerCopy.Localize(execPhrase, lang);
     }
 
     public static string LeadStatus(WorkView lead, IReadOnlyList<WorkView>? siblings = null)
@@ -54,22 +64,29 @@ public static class RolePresentation
         if (handling.Equals("lead_accepting", StringComparison.OrdinalIgnoreCase)
             || acceptance.Equals("acceptance_in_progress", StringComparison.OrdinalIgnoreCase))
             return "正在验收";
-        if (acceptance.StartsWith("handled", StringComparison.OrdinalIgnoreCase)
+        if (acceptance.Contains("fail_repair", StringComparison.OrdinalIgnoreCase)
             || handling.Contains("fail_repair", StringComparison.OrdinalIgnoreCase))
             return "验收发现问题，等待退修";
+        if (acceptance.Equals("handled_accepted", StringComparison.OrdinalIgnoreCase)
+            || (acceptance.Contains("accept", StringComparison.OrdinalIgnoreCase)
+                && !acceptance.Contains("fail", StringComparison.OrdinalIgnoreCase)))
+            return "已验收";
         var others = siblings ?? Array.Empty<WorkView>();
-        if (others.Any(o => KindOf(o) == "executor"
-                            && (o.Axes.Execution.Equals("returned", StringComparison.OrdinalIgnoreCase)
-                                || o.Axes.Execution.Equals("succeeded", StringComparison.OrdinalIgnoreCase))))
-            return "正在验收";
         if (others.Any(o => KindOf(o) == "executor"
                             && (o.Axes.Execution.Equals("active", StringComparison.OrdinalIgnoreCase)
                                 || o.Axes.Execution.Equals("running", StringComparison.OrdinalIgnoreCase))))
             return "等待执行者交回";
-        if (lead.Axes.Turn.Equals("completed", StringComparison.OrdinalIgnoreCase)
-            || lead.Axes.Turn.Equals("complete", StringComparison.OrdinalIgnoreCase))
-            return "等待执行者交回";
-        return "规划中";
+        if (others.Any(o => KindOf(o) == "executor"
+                            && (o.Axes.Execution.Equals("returned", StringComparison.OrdinalIgnoreCase)
+                                || o.Axes.Execution.Equals("succeeded", StringComparison.OrdinalIgnoreCase))))
+            return "等待负责人处理";
+        if (IsUnknown(handling) && IsUnknown(acceptance)
+            && IsUnknown(lead.Axes.Turn) && IsUnknown(lead.Axes.Execution))
+            return "未获取";
+        if (handling.Contains("plan", StringComparison.OrdinalIgnoreCase)
+            || (lead.TaskName ?? "").Contains("plan", StringComparison.OrdinalIgnoreCase))
+            return "规划中";
+        return "未获取";
     }
 
     public static string ActorDisplay(WorkView w, UiLang lang)
@@ -106,7 +123,9 @@ public static class RolePresentation
             kind,
             roleLabel,
             ActorDisplay(w, lang),
-            ConsumerCopy.T(lang, "work_label") + FieldOrMissing(w.TaskName, lang),
+            string.IsNullOrWhiteSpace(w.TaskName) || IsUnknown(w.TaskName)
+                ? string.Empty
+                : ConsumerCopy.T(lang, "work_label") + w.TaskName,
             ConsumerCopy.T(lang, "model_label") + FieldOrMissing(w.Model, lang),
             ConsumerCopy.T(lang, "effort_label") + FieldOrMissing(w.Effort, lang),
             status,
@@ -161,6 +180,8 @@ public static class RolePresentation
         if (!string.IsNullOrWhiteSpace(w.ActorKind) && w.ActorKind is not "unknown" and not "history")
             return w.ActorKind!;
         var role = w.Role ?? string.Empty;
+        if (role.Contains("generation", StringComparison.OrdinalIgnoreCase))
+            return "progress";
         if (role.Contains("review", StringComparison.OrdinalIgnoreCase) || role.Contains("审核", StringComparison.Ordinal))
             return "reviewer";
         if (role.Contains("army", StringComparison.OrdinalIgnoreCase)
