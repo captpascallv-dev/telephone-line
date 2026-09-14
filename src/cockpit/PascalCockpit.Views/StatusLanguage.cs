@@ -39,19 +39,37 @@ public static class StatusLanguage
             return (L("已暂停"), L("项目已暂停"));
         if (!project.IsActive)
             return (L("已完成"), L("项目已结束；结果可在历史中查看"));
-        if (project.Attention.Any(a => a.Owner == AttentionOwner.Pascal))
-            return (L("需要你处理"), L("当前有需要你决定的事项"));
 
-        var execs = current.Where(IsExecutionLike).ToList();
-        var failed = execs.Where(w =>
-            IsFailed(w.Axes.Execution)
-            && !HasLiveHandler(w)
-            && !IsConsumedHistoricalHandling(w.Axes.LeadHandling)).ToList();
+        var life = VisibleLifecycle.Describe(project);
+        var failed = UnhandledCurrentFailures(current);
         if (failed.Count > 0)
         {
             var phrase = WorkStatusPhrase(failed[0]);
-            return (L("故障/部分异常"), L(string.IsNullOrWhiteSpace(phrase) ? "当前执行失败，待处理" : phrase + "；由原负责人处理"));
+            if (string.IsNullOrWhiteSpace(phrase)) phrase = "当前执行失败，待处理";
+            var extra = SecondaryLiveFact(current, life);
+            var basis = string.IsNullOrWhiteSpace(extra) || phrase.Contains(extra, StringComparison.Ordinal)
+                ? phrase
+                : phrase + "；" + extra;
+            return (L("故障/部分异常"), L(basis));
         }
+
+        if (project.Attention.Any(a => a.Owner == AttentionOwner.Pascal))
+        {
+            if (life.Kind is "visual_pending")
+                return (L("需要你处理"), L(life.Basis));
+            if (life.Kind is "user_action")
+                return (L("需要你处理"), L(life.Basis));
+            return (L("需要你处理"), L(string.IsNullOrWhiteSpace(life.Basis) ? "当前有需要你决定的事项" : life.Basis));
+        }
+
+        if (life.Kind is "visual_pending")
+            return (L("正常推进"), L(life.Basis));
+        if (life.Kind is "correction_prepared")
+            return (L("正常推进"), L(life.Basis));
+        if (life.Kind is "lead_accepting")
+            return (L("等待验收"), L(life.Basis));
+
+        var execs = current.Where(IsExecutionLike).ToList();
 
         if (current.Any(w =>
                 (w.Axes.LeadHandling ?? "").Equals("lead_accepting", StringComparison.OrdinalIgnoreCase)
@@ -102,7 +120,8 @@ public static class StatusLanguage
                 IsFailed(w.Axes.Execution)
                 || ((w.Axes.Execution.Equals("returned", StringComparison.OrdinalIgnoreCase)
                      || w.Axes.Execution.Equals("succeeded", StringComparison.OrdinalIgnoreCase))
-                    && !IsExplicitAccepted(w.Axes.Acceptance))
+                    && !IsExplicitAccepted(w.Axes.Acceptance)
+                    && (w.Axes.LeadHandling ?? "") is not "visual_pending" and not "correction_prepared")
                 || (w.Axes.LeadHandling ?? "").Equals("lead_accepting", StringComparison.OrdinalIgnoreCase)
                 || (w.Axes.Acceptance ?? "").Equals("acceptance_in_progress", StringComparison.OrdinalIgnoreCase)
                 || IsOpenFailRepair(w)
@@ -189,15 +208,30 @@ public static class StatusLanguage
         var current = project.WorkItems.Where(w => !IsHistoricalWork(w) && !IsDiagnosticNoise(w)).ToList();
         var historical = project.WorkItems.Where(IsHistoricalWork).ToList();
 
+        var life = VisibleLifecycle.Describe(project);
+        var failures = UnhandledCurrentFailures(current);
+        if (life.Kind is "visual_pending" or "correction_prepared" or "lead_accepting" or "user_action")
+        {
+            if (failures.Count > 0)
+            {
+                var failPhrase = WorkStatusPhrase(failures[0]);
+                if (!string.IsNullOrWhiteSpace(failPhrase))
+                    parts.Add(failPhrase);
+            }
+
+            parts.Add(life.HudLine);
+        }
+
         var exec = current.Where(w => IsExecutionLike(w) && !IsGenerationInFlight(w)).ToList();
+        var allExec = exec;
         var awExec = exec.Where(IsActiveWorkBacked).ToList();
-        if (awExec.Count > 0) exec = awExec;
+        if (awExec.Count > 0) exec = KeepUnhandledFailures(awExec, allExec);
         var liveExec = exec.Where(HasLiveHandler).ToList();
-        if (liveExec.Count > 0) exec = liveExec;
+        if (liveExec.Count > 0) exec = KeepUnhandledFailures(liveExec, allExec);
         else
         {
             var inFlight = exec.Where(w => IsActive(w.Axes.Execution) && !IsComplete(w.Axes.Transport)).ToList();
-            if (inFlight.Count > 0) exec = inFlight;
+            if (inFlight.Count > 0) exec = KeepUnhandledFailures(inFlight, allExec);
         }
         var gen = current.Where(IsGenerationInFlight).ToList();
         var contrib = current.Where(w => IsContributionLike(w)).ToList();
@@ -209,13 +243,14 @@ public static class StatusLanguage
             && !w.Role.Contains("lead_acceptance", StringComparison.OrdinalIgnoreCase)
             && !(w.Role.Equals("cli", StringComparison.OrdinalIgnoreCase))).ToList();
         var generationNow = gen.Count > 0 || (project.Progress?.Basis?.Contains("世界", StringComparison.Ordinal) == true);
+        var lifecycleOwnsStatus = life.Kind is "visual_pending" or "correction_prepared" or "lead_accepting" or "user_action";
 
-        if (exec.Count > 0)
+        if (!lifecycleOwnsStatus && exec.Count > 0)
         {
             var phrase = ComposeWorkClusterPhrase(exec);
             if (!string.IsNullOrWhiteSpace(phrase)) parts.Add(phrase);
         }
-        else if (generationNow)
+        else if (!lifecycleOwnsStatus && generationNow)
         {
             parts.Add(GenerationPhrase(gen.FirstOrDefault() ?? current.FirstOrDefault()
                 ?? new WorkView("gen", "generation", null, "生成", new WorkAxes("unknown", "unknown", "active", "unknown", "unknown", "unknown", "unknown", "unknown", "unknown", "unknown"), Array.Empty<ArtifactView>(), Array.Empty<NavigationTarget>(), Array.Empty<EvidenceRef>(), DataQuality.Fresh),
@@ -242,7 +277,8 @@ public static class StatusLanguage
 
         var leadAtt = project.Attention.Count(a => a.Owner == AttentionOwner.Lead && IsPendingLeadAttention(a));
         var secAtt = project.Attention.Count(a => a.Owner == AttentionOwner.Secretary);
-        if (!generationNow
+        if (!lifecycleOwnsStatus
+            && !generationNow
             && leadAtt > 0
             && !parts.Any(p => p.Contains("退修", StringComparison.Ordinal) || p.Contains("待处理", StringComparison.Ordinal) || p.Contains("待验收", StringComparison.Ordinal) || p.Contains("待Lead", StringComparison.Ordinal)))
             parts.Add($"原Lead待处理/待验收 {leadAtt}");
@@ -668,16 +704,25 @@ public static class StatusLanguage
     private static string ComposeWorkClusterPhrase(IReadOnlyList<WorkView> works)
     {
         if (works.Count == 0) return string.Empty;
-        var blocker = works.Select(ComposeSingleWorkPhrase).FirstOrDefault(p => p.Contains("平台限制", StringComparison.Ordinal) && IsConsumerPhrase(p));
-        if (!string.IsNullOrWhiteSpace(blocker)) return blocker;
-        var accepting = works.Select(ComposeSingleWorkPhrase).FirstOrDefault(p => p.Contains("负责人正在验收", StringComparison.Ordinal) && IsConsumerPhrase(p));
-        if (!string.IsNullOrWhiteSpace(accepting)) return accepting;
-        var repair = works.Select(ComposeSingleWorkPhrase).FirstOrDefault(p => p.Contains("退修", StringComparison.Ordinal) && IsConsumerPhrase(p));
-        if (!string.IsNullOrWhiteSpace(repair)) return repair;
-        if (works.Count == 1) return ComposeSingleWorkPhrase(works[0]);
-
         var phrases = works.Select(ComposeSingleWorkPhrase).Where(IsConsumerPhrase).Distinct().ToList();
-        if (phrases.Count == 0) return $"{works.Count} 项并发工作";
+        if (phrases.Count == 0) return works.Count == 1 ? string.Empty : $"{works.Count} 项并发工作";
+
+        var failed = phrases.Where(p =>
+            p.Contains("当前执行失败", StringComparison.Ordinal)
+            || p.Contains("当前失败", StringComparison.Ordinal)).ToList();
+        if (failed.Count > 0)
+        {
+            var rest = phrases.Where(p => !failed.Contains(p)).ToList();
+            if (rest.Count == 0) return failed[0];
+            return failed[0] + "；" + rest[0];
+        }
+
+        var blocker = phrases.FirstOrDefault(p => p.Contains("平台限制", StringComparison.Ordinal));
+        if (!string.IsNullOrWhiteSpace(blocker)) return blocker;
+        var accepting = phrases.FirstOrDefault(p => p.Contains("负责人正在验收", StringComparison.Ordinal));
+        if (!string.IsNullOrWhiteSpace(accepting)) return accepting;
+        var repair = phrases.FirstOrDefault(p => p.Contains("退修", StringComparison.Ordinal));
+        if (!string.IsNullOrWhiteSpace(repair)) return repair;
         if (phrases.Count == 1) return phrases[0];
         return string.Join("；", phrases.Take(2)) + (phrases.Count > 2 ? "…" : string.Empty);
     }
@@ -752,6 +797,12 @@ public static class StatusLanguage
 
         if ((a.LeadHandling ?? "").Equals("dispatch_pending_native", StringComparison.OrdinalIgnoreCase))
             return "已派出，等待原生运行/本轮结果证据";
+
+        if ((a.LeadHandling ?? "").Equals("visual_pending", StringComparison.OrdinalIgnoreCase))
+            return "最后实窗核验待恢复电脑操作";
+        if ((a.LeadHandling ?? "").Equals("correction_prepared", StringComparison.OrdinalIgnoreCase)
+            && !IsActive(a.Execution))
+            return "原负责人正在准备当前修正，尚未实际派出";
 
         if ((a.LeadHandling ?? "").Equals("repair_prepared", StringComparison.OrdinalIgnoreCase)
             && !IsActive(a.Execution))
@@ -1063,11 +1114,57 @@ public static class StatusLanguage
         return false;
     }
 
+    public static List<WorkView> UnhandledCurrentFailures(IEnumerable<WorkView> current) =>
+        current.Where(w =>
+            IsExecutionLike(w)
+            && IsFailed(w.Axes.Execution)
+            && !HasLiveHandler(w)
+            && !IsOpenFailRepair(w)
+            && !IsConsumedHistoricalHandling(w.Axes.LeadHandling)).ToList();
+
+    public static string? SecondaryLiveFact(IReadOnlyList<WorkView> current, VisibleLifecycle life)
+    {
+        if (life.Kind == "lead_accepting") return "另有回件负责人正在验收";
+        if (life.Kind == "correction_prepared") return "另有当前修正尚未派出";
+        if (life.Kind == "visual_pending") return life.Stuck;
+        if (life.Kind == "user_action") return life.Stuck;
+        if (current.Any(w =>
+                (w.Axes.LeadHandling ?? "").Equals("lead_accepting", StringComparison.OrdinalIgnoreCase)
+                || (w.Axes.Acceptance ?? "").Equals("acceptance_in_progress", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "另有回件负责人正在验收";
+        }
+
+        if (current.Any(w =>
+                IsExecutionLike(w)
+                && IsActive(w.Axes.Execution)
+                && !IsFailed(w.Axes.Execution)))
+        {
+            return "另有执行仍在进行";
+        }
+
+        return null;
+    }
+
+    private static List<WorkView> KeepUnhandledFailures(List<WorkView> narrowed, List<WorkView> allExec)
+    {
+        var failed = UnhandledCurrentFailures(allExec);
+        if (failed.Count == 0) return narrowed;
+        var list = narrowed.ToList();
+        foreach (var f in failed)
+        {
+            if (list.All(x => x.Id != f.Id)) list.Add(f);
+        }
+
+        return list;
+    }
+
     public static bool HasLiveHandler(WorkView work)
     {
         var lead = work.Axes.LeadHandling ?? "";
         var acc = work.Axes.Acceptance ?? "";
         return lead is "blocked_after_acceptance" or "lead_accepting" or "repair_dispatched"
+               or "correction_prepared" or "visual_pending"
                || acc is "acceptance_in_progress";
     }
 
@@ -1258,5 +1355,152 @@ public static class StatusLanguage
             "lead" => "原Lead",
             _ => t.Replace('_', ' ')
         };
+    }
+}
+
+public sealed record VisibleLifecycle(
+    string Kind,
+    string Who,
+    string HowFar,
+    string Stuck,
+    string Next,
+    string Pascal,
+    string Basis,
+    string HudLine)
+{
+    public static VisibleLifecycle Describe(ProjectView project)
+    {
+        var facts = project.Lifecycle;
+        var current = project.WorkItems.Where(w => !StatusLanguage.IsHistoricalWork(w) && !StatusLanguage.IsDiagnosticNoise(w)).ToList();
+        var handling = current.Select(w => w.Axes.LeadHandling ?? "").ToList();
+        var kind = facts?.Kind;
+        if (string.IsNullOrWhiteSpace(kind) || kind == "none")
+        {
+            if (handling.Any(h => h.Equals("correction_prepared", StringComparison.OrdinalIgnoreCase)))
+                kind = "correction_prepared";
+            else if (handling.Any(h => h.Equals("lead_accepting", StringComparison.OrdinalIgnoreCase))
+                     || current.Any(w => (w.Axes.Acceptance ?? "").Equals("acceptance_in_progress", StringComparison.OrdinalIgnoreCase)))
+                kind = "lead_accepting";
+            else if (handling.Any(h => h.Equals("visual_pending", StringComparison.OrdinalIgnoreCase)))
+                kind = "visual_pending";
+            else
+                kind = "none";
+        }
+
+        var delivered = ProgressDelivered(facts);
+        if (kind == "correction_prepared")
+        {
+            var howFar = JoinDelivered(delivered, "当前修正尚未派出");
+            var pascal = facts?.NeedUserAction == true
+                ? "当前这项修正需要你操作"
+                : facts?.ComputerUseSuspended == true
+                    ? "当前这项修正不需要你操作；最后实窗核验仍等恢复电脑操作"
+                    : "当前这项修正不需要你操作";
+            return new VisibleLifecycle(
+                "correction_prepared",
+                "原负责人。正在准备当前可见状态修正，尚未实际派出",
+                howFar,
+                "当前卡在可见状态修正尚未派出",
+                "原负责人继续准备并派出这次修正",
+                pascal,
+                "原负责人正在准备当前修正，尚未实际派出" + DeliveryKeptSuffix(delivered),
+                "原负责人正在准备当前修正，尚未实际派出");
+        }
+
+        if (kind == "lead_accepting")
+        {
+            var howFar = JoinDelivered(delivered, "本轮修正已回件，尚未验收");
+            var pascal = facts?.NeedUserAction == true || facts?.PascalDecisionRequired == true
+                ? (string.IsNullOrWhiteSpace(facts.WaitingFor) ? "当前有需要你决定的事项" : "要你" + facts.WaitingFor)
+                : "现在不需要你处理";
+            return new VisibleLifecycle(
+                "lead_accepting",
+                "原负责人。结果已交回，负责人正在验收",
+                howFar,
+                "本轮回件尚未验收",
+                "原负责人验收本轮回件",
+                pascal,
+                "结果已交回，负责人正在验收",
+                "结果已交回，负责人正在验收");
+        }
+
+        if (kind == "user_action")
+        {
+            var wait = facts?.WaitingFor;
+            var handler = facts?.CurrentHandler;
+            var waitText = string.IsNullOrWhiteSpace(wait) ? "当前有需要你决定的事项" : wait!;
+            var who = string.IsNullOrWhiteSpace(handler)
+                ? "原负责人。等待你" + waitText
+                : handler.Contains("原负责人", StringComparison.Ordinal) ? handler
+                : "原负责人。" + handler;
+            return new VisibleLifecycle(
+                "user_action",
+                who,
+                string.IsNullOrWhiteSpace(wait) ? "尚未完成需要你确认的事项" : "等待" + wait,
+                "当前卡在需要你确认的事项",
+                string.IsNullOrWhiteSpace(project.NextStep) || StatusLanguage.LooksLikeTechnicalDump(project.NextStep)
+                    ? "请确认后再继续"
+                    : project.NextStep!,
+                "要你" + waitText,
+                waitText,
+                waitText);
+        }
+
+        if (kind == "visual_pending")
+        {
+            var howFar = JoinDelivered(delivered, "最后实窗核验未完成");
+            var claim = DeliveryClaim(delivered);
+            var who = string.IsNullOrEmpty(claim)
+                ? "原负责人。最后实窗核验待你恢复电脑操作"
+                : "原负责人。" + claim + "，最后实窗核验待你恢复电脑操作";
+            var basis = string.IsNullOrEmpty(claim)
+                ? "最后实窗核验待你恢复电脑操作"
+                : claim + "，最后实窗核验待你恢复电脑操作";
+            return new VisibleLifecycle(
+                "visual_pending",
+                who,
+                howFar,
+                "最后实窗核验待你恢复电脑操作",
+                "你恢复电脑操作后，由原负责人做最后实窗核验",
+                "要你恢复电脑操作后，原负责人才能做最后实窗核验",
+                basis,
+                JoinDelivered(delivered, "最后实窗核验待恢复电脑操作"));
+        }
+
+        return new VisibleLifecycle("none", "", "", "", "", "", "", "");
+    }
+
+    private static List<string> ProgressDelivered(VisibleLifecycleFacts? facts)
+    {
+        var parts = new List<string>();
+        if (facts?.LocalApplied == true) parts.Add("本机文件已更新");
+        if (facts?.PublicPublished == true) parts.Add("公开版本已发布");
+        return parts;
+    }
+
+    private static string DeliveryClaim(List<string> delivered)
+    {
+        var local = delivered.Contains("本机文件已更新");
+        var pub = delivered.Contains("公开版本已发布");
+        if (local && pub) return "本机和公开已交付";
+        if (local) return "本机文件已更新";
+        if (pub) return "公开版本已发布";
+        return "";
+    }
+
+    private static string DeliveryKeptSuffix(List<string> delivered)
+    {
+        var local = delivered.Contains("本机文件已更新");
+        var pub = delivered.Contains("公开版本已发布");
+        if (local && pub) return "。本机和公开交付仍保留";
+        if (local) return "。本机文件已更新仍保留";
+        if (pub) return "。公开版本已发布仍保留";
+        return "";
+    }
+
+    private static string JoinDelivered(List<string> delivered, string remainder)
+    {
+        if (delivered.Count == 0) return remainder;
+        return string.Join("，", delivered) + "；" + remainder;
     }
 }

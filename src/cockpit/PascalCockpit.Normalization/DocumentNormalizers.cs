@@ -209,6 +209,10 @@ internal static class DocumentNormalizers
 
         if (currentFacts.Count > 0)
         {
+            foreach (var fact in currentFacts)
+                StampPackageLifecycle(fact.Values, doc.Data, state);
+            OverlayLifecycleOnProject(facts, projectId, doc.Data, state);
+            EmitSupersededAcceptedHistory(doc, projectId, facts, lineId, directId);
             HandlingLogic.EmitHistoricalFromSwitchFields(doc, projectId, facts);
             return;
         }
@@ -216,12 +220,15 @@ internal static class DocumentNormalizers
         ApplyCurrentHandler(values, doc.Data, state, humanNext);
         StampExecutorIdentity(values, doc.Data);
         JobIdentity.ApplyJobAlignedNestedIdentity(values, doc.Data, lineId, directId);
-        ApplyPreparedNotDispatched(values, state);
+        ApplyPreparedNotDispatched(values, doc.Data, state);
         StampCurrentHandlerAndRemaining(values, doc.Data);
         StampCurrentAcceptanceFields(values, doc.Data);
+        StampPackageLifecycle(values, doc.Data, state);
         StampNestedRoundVerdicts(values, doc.Data);
 
         facts.Add(new SourceFact("work", entityId, projectId, links, values, new[] { NormUtil.Evidence(doc) }));
+        OverlayLifecycleOnProject(facts, projectId, doc.Data, state);
+        EmitSupersededAcceptedHistory(doc, projectId, facts, lineId, directId);
         HandlingLogic.EmitHistoricalFromSwitchFields(doc, projectId, facts);
     }
 
@@ -285,7 +292,7 @@ internal static class DocumentNormalizers
         ApplyLaneState(values, state);
         StampExecutorIdentity(values, lane);
         JobIdentity.ApplyJobAlignedNestedIdentity(values, doc.Data, lineId, directId);
-        ApplyPreparedNotDispatched(values, state);
+        ApplyPreparedNotDispatched(values, lane, state);
         if (IsMissingIdentity(values["actor_name"]?.GetValue<string>()) && !string.IsNullOrWhiteSpace(route)
             && !NormUtil.LooksPreparedNotDispatched(state))
             values["actor_name"] = route;
@@ -382,7 +389,7 @@ internal static class DocumentNormalizers
         if (IsMissingIdentity(handling) && IsMissingIdentity(execution))
             ApplyLaneState(target.Values, JsonField.Str(row, "state", "status"));
         StampExecutorIdentity(target.Values, row);
-        ApplyPreparedNotDispatched(target.Values, JsonField.Str(row, "state", "status"));
+        ApplyPreparedNotDispatched(target.Values, row, JsonField.Str(row, "state", "status"));
         if (target.Links is Dictionary<string, string> links)
         {
             PutLinkIfMissing(links, "line_job_id", JsonField.Str(row, "line_job_id"));
@@ -417,9 +424,7 @@ internal static class DocumentNormalizers
         var s = state ?? string.Empty;
         if (NormUtil.LooksPreparedNotDispatched(state))
         {
-            values["lead_handling_state"] = "repair_prepared";
-            values["acceptance_state"] = "handled_fail_repair";
-            values["execution_state"] = "unknown";
+            ApplyPreparedNotDispatched(values, new JsonObject(), state);
             return;
         }
 
@@ -628,9 +633,7 @@ internal static class DocumentNormalizers
 
         if (NormUtil.LooksPreparedNotDispatched(state))
         {
-            values["lead_handling_state"] = "repair_prepared";
-            values["acceptance_state"] = "handled_fail_repair";
-            values["execution_state"] = "unknown";
+            ApplyPreparedNotDispatched(values, data, state);
             return;
         }
 
@@ -645,14 +648,34 @@ internal static class DocumentNormalizers
     /// <summary>
     /// Preallocated IDs, leftover package/route/model, and native init are not
     /// a running executor. Actual line_dispatch / direct_request still win later.
+    /// Visible-state correction prepared is not fail-repair.
     /// </summary>
-    private static void ApplyPreparedNotDispatched(JsonObject values, string? state)
+    private static void ApplyPreparedNotDispatched(JsonObject values, JsonObject data, string? state)
     {
         if (!NormUtil.LooksPreparedNotDispatched(state))
             return;
-        values["lead_handling_state"] = "repair_prepared";
-        values["acceptance_state"] = "handled_fail_repair";
-        values["execution_state"] = "unknown";
+        if (LooksVisibleCorrectionPrepared(data, state))
+        {
+            values["lead_handling_state"] = "correction_prepared";
+            if (JsonField.Bool(data, "current_package_accepted") == true
+                || LooksLeadAcceptancePass(data))
+            {
+                values["acceptance_state"] = "handled_accepted";
+            }
+            else
+            {
+                values["acceptance_state"] = "unknown";
+            }
+
+            values["execution_state"] = "unknown";
+        }
+        else
+        {
+            values["lead_handling_state"] = "repair_prepared";
+            values["acceptance_state"] = "handled_fail_repair";
+            values["execution_state"] = "unknown";
+        }
+
         values["route"] = "unknown";
         values["package_id"] = "unknown";
         values["task_name"] = "unknown";
@@ -851,6 +874,278 @@ internal static class DocumentNormalizers
             values["project_judgment"] = "true";
         else if (judgment == false)
             values["transport_non_judgment"] = "true";
+    }
+
+    private static void OverlayLifecycleOnProject(List<SourceFact> facts, string? projectId, JsonObject data, string? state)
+    {
+        if (string.IsNullOrWhiteSpace(projectId)) return;
+        var project = facts.FirstOrDefault(f =>
+            f.Kind == "project" && string.Equals(f.ProjectId, projectId, StringComparison.Ordinal));
+        if (project is null) return;
+        StampPackageLifecycle(project.Values, data, state);
+        StampCurrentHandlerAndRemaining(project.Values, data);
+        var next = JsonField.Str(data, "next", "next_step");
+        if (!string.IsNullOrWhiteSpace(next))
+            project.Values["next_step"] = next;
+        var human = JsonField.Str(data, "current_summary", "human_summary", "summary");
+        if (!string.IsNullOrWhiteSpace(human)
+            && (IsMissingIdentity(project.Values["summary"]?.GetValue<string>())
+                || LooksLifecycleSummaryOverride(project.Values["summary"]?.GetValue<string>(), human)))
+        {
+            project.Values["summary"] = human;
+        }
+    }
+
+    private static bool LooksLifecycleSummaryOverride(string? existing, string incoming)
+    {
+        if (string.IsNullOrWhiteSpace(existing) || existing.Equals("unknown", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (incoming.Contains("本机", StringComparison.Ordinal) && incoming.Contains("实窗", StringComparison.Ordinal))
+            return true;
+        if (incoming.Contains("可见状态", StringComparison.Ordinal) && incoming.Contains("准备", StringComparison.Ordinal))
+            return true;
+        return false;
+    }
+
+    private static void StampPackageLifecycle(JsonObject values, JsonObject data, string? state)
+    {
+        StampExplicitBool(values, "local_applied", JsonField.Bool(data, "local_applied"));
+        StampExplicitBool(values, "public_published", JsonField.Bool(data, "public_published"));
+        var publication = JsonField.Bool(data, "publication_complete", "github_latest_updated");
+        if (publication is not null)
+            values["publication_complete"] = publication.Value ? "true" : "false";
+        var localRuntime = JsonField.Bool(data, "local_runtime_delivered", "local_source_delivered");
+        if (localRuntime == true && values["local_applied"] is null)
+            values["local_applied"] = "true";
+
+        var visual = JsonField.Str(data, "visual_acceptance");
+        if (!string.IsNullOrWhiteSpace(visual))
+            values["visual_acceptance"] = visual;
+        StampExplicitBool(values, "computer_use_suspended", JsonField.Bool(data, "computer_use_suspended"));
+        StampExplicitBool(values, "visual_acceptance_complete", JsonField.Bool(data, "visual_acceptance_complete"));
+        StampExplicitBool(values, "need_user_action", JsonField.Bool(data, "need_user_action"));
+        var waitingFor = JsonField.Str(data, "waiting_for");
+        if (!string.IsNullOrWhiteSpace(waitingFor))
+            values["waiting_for"] = waitingFor;
+        var leadAcceptance = JsonField.Str(data, "lead_acceptance", "acceptance_result");
+        if (!string.IsNullOrWhiteSpace(leadAcceptance))
+            values["lead_acceptance"] = leadAcceptance;
+        StampExplicitBool(values, "pascal_decision_required", JsonField.Bool(data, "pascal_decision_required"));
+
+        var declaredExec = JsonField.Str(data, "execution_state");
+        if (NormUtil.LooksReturnedAccepted(declaredExec) || NormUtil.LooksReturnedAccepted(state))
+        {
+            values["execution_state"] = "returned";
+        }
+
+        var currentAcceptedFlag = JsonField.Bool(data, "current_package_accepted");
+        var packageAccepted = currentAcceptedFlag == true
+                               || (currentAcceptedFlag != false
+                                   && LooksLeadAcceptancePass(data)
+                                   && !LooksVisibleCorrectionPrepared(data, state)
+                                   && !NormUtil.LooksPreparedNotDispatched(state)
+                                   && !NormUtil.LooksLeadAccepting(state));
+        if (packageAccepted)
+        {
+            values["current_package_accepted"] = "true";
+            values["acceptance_state"] = "handled_accepted";
+            values["lead_handling_state"] = values["lead_handling_state"]?.GetValue<string>() is "unknown" or null
+                ? "lead_handled"
+                : values["lead_handling_state"]!;
+            if (IsMissingIdentity(values["execution_state"]?.GetValue<string>())
+                || values["execution_state"]?.GetValue<string>() is "active" or "waiting")
+            {
+                values["execution_state"] = "returned";
+            }
+        }
+
+        var localApplied = string.Equals(values["local_applied"]?.GetValue<string>(), "true", StringComparison.OrdinalIgnoreCase)
+                           || JsonField.Bool(data, "local_applied") == true
+                           || JsonField.Bool(data, "local_runtime_delivered") == true;
+        var publicDone = string.Equals(values["public_published"]?.GetValue<string>(), "true", StringComparison.OrdinalIgnoreCase)
+                          || string.Equals(values["publication_complete"]?.GetValue<string>(), "true", StringComparison.OrdinalIgnoreCase)
+                          || JsonField.Bool(data, "public_published") == true
+                          || publication == true;
+        if (localApplied && publicDone)
+            values["delivery_state"] = "delivered";
+        else if (localApplied)
+            values["delivery_state"] = "local_applied";
+
+        if (LooksVisibleCorrectionPrepared(data, state))
+        {
+            values["lifecycle_kind"] = "independent_correction_prepared";
+            values["lead_handling_state"] = "correction_prepared";
+            return;
+        }
+
+        var liveNow = IsCurrentLiveResponsibility(values, state, currentAcceptedFlag);
+        if (!liveNow
+            && NormUtil.LooksVisualPendingComputerUse(visual)
+            && !NormUtil.LooksIndependentCorrectionVisual(visual))
+        {
+            values["lifecycle_kind"] = "visual_pending_computer_use";
+            if (!NormUtil.LooksPreparedNotDispatched(state))
+                values["lead_handling_state"] = "visual_pending";
+        }
+        else if (localApplied || publicDone)
+        {
+            values["lifecycle_kind"] = "local_public_applied";
+        }
+    }
+
+    private static bool IsCurrentLiveResponsibility(JsonObject values, string? state, bool? currentAccepted)
+    {
+        if (NormUtil.LooksLeadAccepting(state) || NormUtil.LooksLeadRepair(state))
+            return true;
+        if (NormUtil.LooksInFlightDispatch(state) && !NormUtil.LooksPreparedNotDispatched(state))
+            return true;
+        var handling = values["lead_handling_state"]?.GetValue<string>() ?? string.Empty;
+        if (handling is "lead_accepting" or "repair_dispatched" or "repair_prepared"
+            or "correction_prepared" or "dispatch_pending_native" or "blocked_after_acceptance"
+            or "lead_handled_fail_repair")
+        {
+            return true;
+        }
+
+        var acceptance = values["acceptance_state"]?.GetValue<string>() ?? string.Empty;
+        if (acceptance is "acceptance_in_progress" or "handled_fail_repair")
+            return true;
+        var exec = values["execution_state"]?.GetValue<string>() ?? string.Empty;
+        if (exec is "active" or "running") return true;
+        if (exec is "returned" && currentAccepted != true
+            && handling is not "visual_pending" && handling is not "lead_handled")
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool LooksLeadAcceptancePass(JsonObject data)
+    {
+        var raw = JsonField.Str(data, "lead_acceptance", "acceptance_result", "verdict", "result");
+        return NormUtil.LooksExplicitAcceptancePass(raw);
+    }
+
+    private static bool LooksVisibleCorrectionPrepared(JsonObject data, string? state)
+    {
+        if (!NormUtil.LooksPreparedNotDispatched(state) && !NormUtil.LooksPreparedNotDispatched(JsonField.Str(data, "stage", "current_stage")))
+            return false;
+        if (NormUtil.LooksLeadRepair(state) || NormUtil.LooksLeadRepair(JsonField.Str(data, "stage", "current_stage")))
+            return false;
+        var visual = JsonField.Str(data, "visual_acceptance");
+        if (NormUtil.LooksIndependentCorrectionVisual(visual))
+            return true;
+        if (NormUtil.LooksVisibleStateCorrection(state)
+            || NormUtil.LooksVisibleStateCorrection(JsonField.Str(data, "stage", "current_stage")))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static void EmitSupersededAcceptedHistory(
+        RawDocument doc,
+        string? projectId,
+        List<SourceFact> facts,
+        string? currentLine,
+        string? currentDirect)
+    {
+        var history = JsonField.Arr(doc.Data, "history");
+        if (history is null) return;
+        foreach (var node in history)
+        {
+            if (node is not JsonObject row) continue;
+            var line = JsonField.Str(row, "line_job_id");
+            var direct = JsonField.Str(row, "direct_job_id");
+            if (string.IsNullOrWhiteSpace(line) && string.IsNullOrWhiteSpace(direct))
+                continue;
+            if ((!string.IsNullOrWhiteSpace(line) && string.Equals(line, currentLine, StringComparison.OrdinalIgnoreCase))
+                || (!string.IsNullOrWhiteSpace(direct) && string.Equals(direct, currentDirect, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            if (!LooksAcceptedHistoryRow(row))
+                continue;
+
+            var marked = false;
+            for (var i = 0; i < facts.Count; i++)
+            {
+                var f = facts[i];
+                if (f.Kind != "work") continue;
+                if (!string.IsNullOrWhiteSpace(projectId)
+                    && !string.Equals(f.ProjectId, projectId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var match = (!string.IsNullOrWhiteSpace(line)
+                             && ((f.Links.TryGetValue("line_job_id", out var l) && string.Equals(l, line, StringComparison.OrdinalIgnoreCase))
+                                 || f.EntityId.Contains(line, StringComparison.Ordinal)))
+                            || (!string.IsNullOrWhiteSpace(direct)
+                                && ((f.Links.TryGetValue("direct_job_id", out var d) && string.Equals(d, direct, StringComparison.OrdinalIgnoreCase))
+                                    || f.EntityId.Contains(direct, StringComparison.Ordinal)));
+                if (!match) continue;
+                var values = NormUtil.CloneValues(f.Values);
+                values["historical"] = "true";
+                values["current_active_fault"] = "false";
+                values["current_package_accepted"] = "true";
+                values["acceptance_state"] = "handled_accepted";
+                if (IsMissingIdentity(values["execution_state"]?.GetValue<string>())
+                    || values["execution_state"]?.GetValue<string>() is "active" or "waiting")
+                {
+                    values["execution_state"] = "returned";
+                }
+
+                facts[i] = new SourceFact(f.Kind, f.EntityId, f.ProjectId ?? projectId, f.Links, values, f.Evidence);
+                marked = true;
+            }
+
+            if (marked) continue;
+            var links = new Dictionary<string, string>(StringComparer.Ordinal);
+            NormUtil.PutLink(links, "line_job_id", line);
+            NormUtil.PutLink(links, "direct_job_id", direct);
+            NormUtil.PutLink(links, "source_object_id", doc.Id);
+            var emitted = NormUtil.BaseAxes("execution", null, "complete", "delivered", "returned", "idle",
+                "已验收的执行包已收起");
+            emitted["historical"] = "true";
+            emitted["current_active_fault"] = "false";
+            emitted["current_package_accepted"] = "true";
+            emitted["acceptance_state"] = "handled_accepted";
+            emitted["lead_handling_state"] = "lead_handled";
+            emitted["package_id"] = JsonField.AxisOrUnknown(JsonField.Str(row, "package_id"));
+            facts.Add(new SourceFact(
+                "work",
+                !string.IsNullOrWhiteSpace(line) ? "work:line:" + line : "work:direct:" + direct,
+                projectId,
+                links,
+                emitted,
+                new[] { NormUtil.Evidence(doc) }));
+        }
+    }
+
+    private static bool LooksAcceptedHistoryRow(JsonObject row)
+    {
+        if (NormUtil.LooksFailed(JsonField.Str(row, "state", "status"))
+            || NormUtil.LooksExplicitNotAccepted(JsonField.Str(row, "state", "status", "verdict", "result", "lead_acceptance")))
+        {
+            return false;
+        }
+
+        if (JsonField.Bool(row, "current_package_accepted") == false)
+            return false;
+        if (JsonField.Bool(row, "current_package_accepted") == true)
+            return true;
+        if (LooksLeadAcceptancePass(row))
+            return true;
+        var state = JsonField.Str(row, "state", "status");
+        if (string.IsNullOrWhiteSpace(state)) return false;
+        return state.Equals("ACCEPTED", StringComparison.OrdinalIgnoreCase)
+               || state.Equals("RETURNED_ACCEPTED", StringComparison.OrdinalIgnoreCase)
+               || state.Equals("ACCEPTANCE_PASS", StringComparison.OrdinalIgnoreCase)
+               || state.Equals("LEAD_PACKAGE_PASS", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string? FlattenRemaining(JsonObject data)
@@ -1455,9 +1750,12 @@ internal static class DocumentNormalizers
 
         var targetLine = JsonField.Str(doc.Data, "line_job_id", "current_line_job_id", "preserved_execution_line")
                          ?? (IsCapacityResume(doc.Data) ? LineIdFromReceiptPath(JsonField.Str(doc.Data, "previous_402_receipt")) : null)
-                         ?? LineIdFromReceiptPath(JobIdentity.NestedReceiptPath(doc.Data, "line_receipt", "telephone_receipt"));
+                         ?? LineIdFromReceiptPath(JobIdentity.NestedReceiptPath(doc.Data, "line_receipt", "telephone_receipt"))
+                         ?? LineIdFromReceiptPath(JsonField.Str(doc.Data, "return_evidence"));
         var targetDirect = JsonField.Str(doc.Data, "direct_job_id", "current_direct_job_id")
                            ?? LineIdFromReceiptPath(JobIdentity.NestedReceiptPath(doc.Data, "route_receipt", "direct_receipt"));
+        if (string.IsNullOrWhiteSpace(targetLine) && string.IsNullOrWhiteSpace(targetDirect))
+            FindAcceptanceTargetsByPackage(facts, projectId, doc.Data, out targetLine, out targetDirect);
         var result = JsonField.Str(doc.Data, "result", "state", "verdict");
         if (!IsCapacityResume(doc.Data) && (!string.IsNullOrWhiteSpace(targetLine) || !string.IsNullOrWhiteSpace(targetDirect)))
         {
@@ -1634,6 +1932,65 @@ internal static class DocumentNormalizers
         }
     }
 
+    private static void FindAcceptanceTargetsByPackage(
+        List<SourceFact> facts,
+        string? projectId,
+        JsonObject data,
+        out string? targetLine,
+        out string? targetDirect)
+    {
+        targetLine = null;
+        targetDirect = null;
+        var package = JsonField.Str(data, "transport_package_id", "package_id");
+        if (string.IsNullOrWhiteSpace(package)) return;
+        string? foundLine = null;
+        string? foundDirect = null;
+        var matches = 0;
+        foreach (var f in facts)
+        {
+            if (f.Kind != "work") continue;
+            if (!string.IsNullOrWhiteSpace(projectId)
+                && !string.Equals(f.ProjectId, projectId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var workPackage = f.Values["package_id"]?.GetValue<string>();
+            var workTransport = f.Values["transport_package_id"]?.GetValue<string>();
+            if (!PackageIdentityEquals(package, workPackage) && !PackageIdentityEquals(package, workTransport))
+                continue;
+            f.Links.TryGetValue("line_job_id", out var line);
+            f.Links.TryGetValue("direct_job_id", out var direct);
+            if (string.IsNullOrWhiteSpace(line) && string.IsNullOrWhiteSpace(direct))
+                continue;
+            matches++;
+            if (matches > 1
+                && ((!string.IsNullOrWhiteSpace(foundLine) && !string.Equals(foundLine, line, StringComparison.OrdinalIgnoreCase))
+                    || (!string.IsNullOrWhiteSpace(foundDirect) && !string.Equals(foundDirect, direct, StringComparison.OrdinalIgnoreCase))))
+            {
+                targetLine = null;
+                targetDirect = null;
+                return;
+            }
+
+            foundLine = line;
+            foundDirect = direct;
+        }
+
+        if (matches == 1)
+        {
+            targetLine = foundLine;
+            targetDirect = foundDirect;
+        }
+    }
+
+    private static bool PackageIdentityEquals(string? left, string? right) =>
+        !string.IsNullOrWhiteSpace(left)
+        && !string.IsNullOrWhiteSpace(right)
+        && !left.Equals("unknown", StringComparison.OrdinalIgnoreCase)
+        && !right.Equals("unknown", StringComparison.OrdinalIgnoreCase)
+        && string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+
     internal static void AttachOrdinaryLeadAcceptance(
         List<SourceFact> facts,
         RawDocument doc,
@@ -1722,8 +2079,7 @@ internal static class DocumentNormalizers
             return ("handled_partial_adopted", "lead_handled_partial_adopted", raw);
         }
 
-        if (NormUtil.LooksAdopted(result) || result.Contains("PASS", StringComparison.OrdinalIgnoreCase)
-            || result.Contains("ACCEPT", StringComparison.OrdinalIgnoreCase))
+        if (NormUtil.LooksAdopted(result) || NormUtil.LooksExplicitAcceptancePass(result))
         {
             return ("handled_accepted", "lead_handled", raw);
         }

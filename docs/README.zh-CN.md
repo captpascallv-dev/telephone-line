@@ -245,6 +245,17 @@ v0.1 目前仅验证 Windows 生产环境。macOS 用户不要强行运行 Windo
 建议先让自己的 Agent 阅读现有使用说明与协议，检查本机可用的命令行工具、脚本和仍需处理的 Windows 专用部分。适配关注程序路径、权限、进程控制、后台监督和原会话回叫。这里不要求制作桌面应用、图形界面或应用包；除非用户明确提出，不要把环境适配理解成开发一款应用。
 
 也可以继续在 Windows 主机运行 Telephone Line。如果选择做原生 macOS 兼容改动，应在隔离目录中处理，保留现有运输与会话契约，并明确区分已验证、尚未支持和未测试的行为。欢迎通过可审查的 Pull Request 贡献兼容性修复；当前 README 不宣称已支持原生 macOS。
+
+## 当前版本
+
+当前产品版本是 **0.1.8**。原 Lead 将本增量发布为 GitHub Latest / 标签 `v0.1.8` 后，下载地址：
+
+- Windows ZIP：https://github.com/captpascallv-dev/telephone-line/releases/download/v0.1.8/telephone-line-0.1.8-windows.zip
+- 源码 ZIP：https://github.com/captpascallv-dev/telephone-line/releases/download/v0.1.8/telephone-line-0.1.8-source.zip
+- Latest 页（该标签发布后）：https://github.com/captpascallv-dev/telephone-line/releases/latest
+
+v0.1.7 及更早版本资产保留，本增量不覆盖。
+
 ## 欢迎怎样的贡献
 
 社区可以贡献新的 Harness adapter、其他平台移植、兼容性更新、文档与安装器改进。
@@ -258,6 +269,7 @@ v0.1 目前仅验证 Windows 生产环境。macOS 用户不要强行运行 Windo
 - [v0.1.5 发行说明](releases/v0.1.5.md)
 - [v0.1.6 发行说明](releases/v0.1.6.md)
 - [v0.1.7 发行说明](releases/v0.1.7.md)
+- [v0.1.8 发行说明](releases/v0.1.8.md)
 - [仪表盘](dashboard.md)
 - [连续推进控制面](control-plane.md)
 - [架构](architecture.md)

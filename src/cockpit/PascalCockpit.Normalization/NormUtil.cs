@@ -140,6 +140,69 @@ internal static class NormUtil
         !string.IsNullOrWhiteSpace(s)
         && s.Contains("ACCEPTANCE_IN_PROGRESS", StringComparison.OrdinalIgnoreCase);
 
+    public static bool LooksVisualDeliveredRemainder(string? s) =>
+        !string.IsNullOrWhiteSpace(s)
+        && s.Contains("DELIVERED", StringComparison.OrdinalIgnoreCase)
+        && (s.Contains("VISUAL", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("PUBLIC", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("LOCAL", StringComparison.OrdinalIgnoreCase));
+
+    public static bool LooksReturnedAccepted(string? s) =>
+        !string.IsNullOrWhiteSpace(s)
+        && s.Contains("RETURNED_ACCEPTED", StringComparison.OrdinalIgnoreCase);
+
+    public static bool LooksVisibleStateCorrection(string? s) =>
+        !string.IsNullOrWhiteSpace(s)
+        && s.Contains("VISIBLE", StringComparison.OrdinalIgnoreCase)
+        && (s.Contains("STATE", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("CONSUMER", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("CORRECTION", StringComparison.OrdinalIgnoreCase));
+
+    public static bool LooksIndependentCorrectionVisual(string? visual) =>
+        !string.IsNullOrWhiteSpace(visual)
+        && visual.Contains("INDEPENDENT_CORRECTION", StringComparison.OrdinalIgnoreCase);
+
+    public static bool LooksVisualPendingComputerUse(string? visual) =>
+        !string.IsNullOrWhiteSpace(visual)
+        && !LooksIndependentCorrectionVisual(visual)
+        && (visual.Contains("PENDING_USER_RESUME_COMPUTER_USE", StringComparison.OrdinalIgnoreCase)
+            || visual.Contains("PENDING_COMPUTER_USE", StringComparison.OrdinalIgnoreCase)
+            || visual.Contains("RESUME_COMPUTER_USE", StringComparison.OrdinalIgnoreCase));
+
+    public static bool LooksExplicitNotAccepted(string? s) =>
+        !string.IsNullOrWhiteSpace(s)
+        && (s.Contains("NOT_ACCEPTED", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("UNACCEPTED", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("NOT ACCEPTED", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("CONTENT_NOT_ACCEPTED", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("not_accept", StringComparison.OrdinalIgnoreCase));
+
+    public static bool LooksExplicitAcceptancePass(string? s)
+    {
+        if (string.IsNullOrWhiteSpace(s) || LooksFailed(s) || LooksExplicitNotAccepted(s))
+            return false;
+        if (s.Contains("PENDING", StringComparison.OrdinalIgnoreCase))
+            return false;
+        foreach (var part in s.Split(new[] { ' ', '_', '-', '/', '|', ',', ';' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (part.Equals("UNACCEPTED", StringComparison.OrdinalIgnoreCase)
+                || part.Equals("NOT_ACCEPTED", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (part.Equals("PASS", StringComparison.OrdinalIgnoreCase)
+                || part.Equals("ACCEPTED", StringComparison.OrdinalIgnoreCase)
+                || part.Equals("ACCEPTED_PASS", StringComparison.OrdinalIgnoreCase)
+                || part.Equals("ACCEPTANCE_PASS", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public static bool IsLiveHandlerState(string? handling, string? acceptance)
     {
         var h = handling ?? string.Empty;
@@ -147,6 +210,8 @@ internal static class NormUtil
         return h.Equals("blocked_after_acceptance", StringComparison.OrdinalIgnoreCase)
                || h.Equals("lead_accepting", StringComparison.OrdinalIgnoreCase)
                || h.Equals("repair_dispatched", StringComparison.OrdinalIgnoreCase)
+               || h.Equals("correction_prepared", StringComparison.OrdinalIgnoreCase)
+               || h.Equals("visual_pending", StringComparison.OrdinalIgnoreCase)
                || a.Equals("acceptance_in_progress", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -178,10 +243,11 @@ internal static class NormUtil
         if (LooksLeadRepair(state)) return "returned";
         if (LooksPlatformBlock(state) || LooksLeadAccepting(state)) return "returned";
         if (LooksPreparedNotDispatched(state)) return "unknown";
+        if (LooksReturnedAccepted(state) || LooksVisualDeliveredRemainder(state)) return "returned";
         if (LooksInFlightDispatch(state)) return "active";
         if (LooksFailed(state) && !LooksPlatformBlock(state)) return "failed";
         if (LooksWaitingNotInFlight(state)) return "waiting";
-        if (LooksCompleted(state)) return "succeeded";
+        if (LooksCompleted(state) || LooksVisualDeliveredRemainder(state)) return "succeeded";
         return "active";
     }
 

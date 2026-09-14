@@ -35,7 +35,18 @@ public sealed record WorkView(
     string? Blocker = null,
     string? ActorKind = null,
     string? ReviewAssigned = null);
-public sealed record ProjectView(string Id, string Name, string Summary, string Phase, string? Goal, string? NextStep, bool IsActive, bool IsPaused, ProgressView? Progress, IReadOnlyList<WorkView> WorkItems, IReadOnlyList<AttentionItem> Attention, IReadOnlyList<NavigationTarget> Targets, DataQuality Quality, DateTimeOffset? LastFactAt);
+public sealed record VisibleLifecycleFacts(
+    string Kind,
+    bool? LocalApplied = null,
+    bool? PublicPublished = null,
+    bool? NeedUserAction = null,
+    bool? PascalDecisionRequired = null,
+    bool? ComputerUseSuspended = null,
+    string? WaitingFor = null,
+    string? VisualAcceptance = null,
+    bool? CurrentPackageAccepted = null,
+    string? CurrentHandler = null);
+public sealed record ProjectView(string Id, string Name, string Summary, string Phase, string? Goal, string? NextStep, bool IsActive, bool IsPaused, ProgressView? Progress, IReadOnlyList<WorkView> WorkItems, IReadOnlyList<AttentionItem> Attention, IReadOnlyList<NavigationTarget> Targets, DataQuality Quality, DateTimeOffset? LastFactAt, VisibleLifecycleFacts? Lifecycle = null);
 public sealed record RouteCoverage(string RouteId, string Level, string? Gap, IReadOnlyList<EvidenceRef> Evidence);
 public sealed record CockpitSnapshot(DateTimeOffset CollectedAt, IReadOnlyList<ProjectView> Projects, IReadOnlyList<SourceIssue> Issues, IReadOnlyList<RouteCoverage> Routes, DataQuality Quality);
 public interface IProjector { CockpitSnapshot Project(FactBatch batch, CockpitSnapshot? previous = null); }

@@ -13,6 +13,7 @@ public static class RolePresentation
         var current = project.WorkItems
             .Where(w => !StatusLanguage.IsHistoricalWork(w) && !StatusLanguage.IsDiagnosticNoise(w))
             .Where(w => !IsFoldedLeadAcceptance(w) && KindOf(w) != "progress")
+            .Where(w => !IsPreparedPlaceholderExecutor(w))
             .ToList();
         return Numbered(current, historical: false, lang);
     }
@@ -60,6 +61,13 @@ public static class RolePresentation
             return "等待回叫";
         if (handling.Equals("repair_dispatched", StringComparison.OrdinalIgnoreCase))
             return "已派出退修";
+        if (handling.Equals("correction_prepared", StringComparison.OrdinalIgnoreCase)
+            && !others.Any(o => KindOf(o) == "executor"
+                                && (o.Axes.Execution.Equals("active", StringComparison.OrdinalIgnoreCase)
+                                    || o.Axes.Execution.Equals("running", StringComparison.OrdinalIgnoreCase))))
+            return "正在准备当前修正，待实际派出";
+        if (handling.Equals("visual_pending", StringComparison.OrdinalIgnoreCase))
+            return "等待恢复电脑操作后做最后实窗核验";
         if (handling.Equals("repair_prepared", StringComparison.OrdinalIgnoreCase)
             && !others.Any(o => KindOf(o) == "executor"
                                 && (o.Axes.Execution.Equals("active", StringComparison.OrdinalIgnoreCase)
@@ -73,9 +81,6 @@ public static class RolePresentation
             return "验收发现问题，等待退修";
         if (acceptance.Equals("content_not_accepted", StringComparison.OrdinalIgnoreCase))
             return "内容未验收";
-        if (acceptance.Equals("handled_accepted", StringComparison.OrdinalIgnoreCase)
-            || StatusLanguage.IsExplicitAccepted(acceptance))
-            return "已验收";
         if (others.Any(o => KindOf(o) == "executor"
                             && (o.Axes.LeadHandling.Equals("lead_accepting", StringComparison.OrdinalIgnoreCase)
                                 || o.Axes.Acceptance.Equals("acceptance_in_progress", StringComparison.OrdinalIgnoreCase))))
@@ -83,6 +88,11 @@ public static class RolePresentation
         if (others.Any(o => KindOf(o) == "executor"
                             && o.Axes.LeadHandling.Equals("repair_dispatched", StringComparison.OrdinalIgnoreCase)))
             return "已派出退修";
+        if (others.Any(o => KindOf(o) == "executor"
+                            && o.Axes.LeadHandling.Equals("correction_prepared", StringComparison.OrdinalIgnoreCase)
+                            && !o.Axes.Execution.Equals("active", StringComparison.OrdinalIgnoreCase)
+                            && !o.Axes.Execution.Equals("running", StringComparison.OrdinalIgnoreCase)))
+            return "正在准备当前修正，待实际派出";
         if (others.Any(o => KindOf(o) == "executor"
                             && o.Axes.LeadHandling.Equals("repair_prepared", StringComparison.OrdinalIgnoreCase)
                             && !o.Axes.Execution.Equals("active", StringComparison.OrdinalIgnoreCase)
@@ -102,6 +112,9 @@ public static class RolePresentation
             return "等待负责人处理";
         if (StatusLanguage.IsConsumerPhrase(lead.Summary))
             return lead.Summary.Trim();
+        if (acceptance.Equals("handled_accepted", StringComparison.OrdinalIgnoreCase)
+            || StatusLanguage.IsExplicitAccepted(acceptance))
+            return "已验收";
         if (IsUnknown(handling) && IsUnknown(acceptance)
             && IsUnknown(lead.Axes.Turn) && IsUnknown(lead.Axes.Execution))
             return "未获取";
@@ -248,6 +261,26 @@ public static class RolePresentation
     {
         var role = w.Role ?? string.Empty;
         return role.Contains("lead_acceptance", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static bool IsPreparedPlaceholderExecutor(WorkView w)
+    {
+        if (KindOf(w) != "executor") return false;
+        var handling = w.Axes.LeadHandling ?? "";
+        if (!handling.Equals("repair_prepared", StringComparison.OrdinalIgnoreCase)
+            && !handling.Equals("correction_prepared", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (w.Axes.Execution.Equals("active", StringComparison.OrdinalIgnoreCase)
+            || w.Axes.Execution.Equals("running", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return string.IsNullOrWhiteSpace(w.Route)
+               || w.Route.Equals("unknown", StringComparison.OrdinalIgnoreCase);
     }
 
     static bool IsUnknown(string? s) =>

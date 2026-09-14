@@ -207,6 +207,17 @@ v0.1 supports Windows as its only production target. macOS users should not forc
 Ask your own Agent to read the existing usage and protocol documentation first, then assess which command-line tools and scripts can run locally and which Windows-specific pieces need compatibility work. This concerns executable paths, permissions, process control, background supervision, and exact-session callback wiring. A desktop application, graphical interface, or application bundle is not a setup requirement; do not create one unless the user explicitly requests it.
 
 Using a Windows host for Telephone Line remains an available option. If native macOS compatibility work is chosen, keep it in an isolated checkout, preserve the existing transport and session contracts, and distinguish verified local behavior from unsupported or untested behavior. Community compatibility fixes are welcome through a reviewable Pull Request; this README does not claim native macOS support.
+
+## Current version
+
+Current product version is **0.1.8**. After original Lead publishes this increment as GitHub Latest / tag `v0.1.8`, download:
+
+- Windows ZIP: https://github.com/captpascallv-dev/telephone-line/releases/download/v0.1.8/telephone-line-0.1.8-windows.zip
+- Source ZIP: https://github.com/captpascallv-dev/telephone-line/releases/download/v0.1.8/telephone-line-0.1.8-source.zip
+- Latest page (after that tag): https://github.com/captpascallv-dev/telephone-line/releases/latest
+
+v0.1.7 and earlier version assets remain. This increment does not overwrite them.
+
 ## Docs
 
 - [Quick start](docs/quick-start.md)
@@ -214,6 +225,7 @@ Using a Windows host for Telephone Line remains an available option. If native m
 - [v0.1.5 notes](docs/releases/v0.1.5.md)
 - [v0.1.6 notes](docs/releases/v0.1.6.md)
 - [v0.1.7 notes](docs/releases/v0.1.7.md)
+- [v0.1.8 notes](docs/releases/v0.1.8.md)
 - [Dashboard](docs/dashboard.md)
 - [Continuity control plane](docs/control-plane.md)
 - [Architecture](docs/architecture.md)

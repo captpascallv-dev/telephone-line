@@ -10,31 +10,510 @@ internal static class Program
 
     public static int Main(string[] args)
     {
-        _ = args;
+        var only = args.Length > 0 && string.Equals(args[0], "st1-c6", StringComparison.OrdinalIgnoreCase);
         CurrentJobUsesDispatchNotStaleActiveWork();
-        CurrentJobUsesNestedNativeModelWhenDispatchOmitsModel();
-        GrokModelIsNotGrokCliRoute();
-        HandledNestedAcceptanceGoesHistorical();
+        if (!only)
+        {
+            CurrentJobUsesNestedNativeModelWhenDispatchOmitsModel();
+            GrokModelIsNotGrokCliRoute();
+            HandledNestedAcceptanceGoesHistorical();
+        }
+
         UnhandledOldReceiptAndParallelLanesStayCurrent();
-        AcceptedDeliveryFoldsInstallRemaining();
-        StatusDisplayReworkStaysCurrent();
+        if (!only)
+        {
+            AcceptedDeliveryFoldsInstallRemaining();
+            StatusDisplayReworkStaysCurrent();
+        }
+
         PriorDeliveryDoesNotHideCurrentUnacceptedReturn();
-        CurrentRoundAcceptanceFoldsAfterUnacceptedReturn();
+        if (!only)
+            CurrentRoundAcceptanceFoldsAfterUnacceptedReturn();
         AcceptedPackageOwnerContinuesUnfinishedProject();
         FailedRoundHandledIsNotNormalProgress();
-        PreparedCorrectionIsNotRunningStaleRoute();
-        PreparedForDispatchIsNotRunningStaleRoute();
-        PreparedThenActualDispatchUsesRequestIdentity();
+        if (!only)
+        {
+            PreparedCorrectionIsNotRunningStaleRoute();
+            PreparedForDispatchIsNotRunningStaleRoute();
+            PreparedThenActualDispatchUsesRequestIdentity();
+        }
+
         PreparedForDispatchThenActualDispatchUsesRequestIdentity();
-        PreserveGenerationIsNotContinueGenerating();
-        LocalOnlyDeliveryIsNotComplete();
-        AcceptedStatusFixHistoryIsComplete();
-        PublicationStepKeepsGithub();
-        PendingCallbackWithoutReceiptIsNotReturned();
-        UndispatchedRemainingStillShows();
+        CurrentReturnedAcceptanceIsNotComputerResumeWait();
+        ExplicitBudgetWaitIsNotComputerResume();
+        DeliveryHistoryIsNotContentAcceptance();
+        PackagePrefixDoesNotAcceptCurrentReturn();
+        ExactTransportPackageAcceptanceStillFolds();
+        LocalOnlyVisualDoesNotClaimPublicPublished();
+        AcceptingDoesNotHideParallelUnhandledFailure();
+        if (!only)
+        {
+            PreserveGenerationIsNotContinueGenerating();
+            LocalOnlyDeliveryIsNotComplete();
+            AcceptedStatusFixHistoryIsComplete();
+            PublicationStepKeepsGithub();
+            PendingCallbackWithoutReceiptIsNotReturned();
+            UndispatchedRemainingStillShows();
+        }
 
         Console.WriteLine(_failed == 0 ? "ALL_OK" : "FAILED=" + _failed);
         return _failed == 0 ? 0 : 1;
+    }
+
+    static void CurrentReturnedAcceptanceIsNotComputerResumeWait()
+    {
+        var project = "proj-cb-" + Guid.NewGuid().ToString("N")[..8];
+        var line = Guid.NewGuid().ToString();
+        var direct = Guid.NewGuid().ToString();
+        var now = DateTimeOffset.Parse("2026-09-14T22:16:00+08:00");
+        var snap = Project(new[]
+        {
+            Registry(project, "ACTIVE", now, remaining: "本轮回件尚未验收"),
+            Doc("active_work", "ACTIVE_WORK.json", now, new JsonObject
+            {
+                ["project_id"] = project,
+                ["line_job_id"] = line,
+                ["direct_job_id"] = direct,
+                ["state"] = "LEAD_ACCEPTANCE_IN_PROGRESS",
+                ["execution_state"] = "RETURNED",
+                ["current_package_accepted"] = false,
+                ["need_user_action"] = false,
+                ["pascal_decision_required"] = false,
+                ["visual_acceptance"] = "LIVE_UI_SUSPENDED_INDEPENDENT_CORRECTION_ACTIVE",
+                ["computer_use_suspended"] = true,
+                ["visual_acceptance_complete"] = false,
+                ["local_applied"] = true,
+                ["public_published"] = true,
+                ["product_pass"] = false,
+                ["current_handler"] = "原负责人正在核对本轮回件",
+                ["next"] = "原负责人按冻结卡核验。最后实窗核验仍遵守电脑操作暂停。",
+                ["summary"] = "本机和公开已交付；本轮可见状态修正已回件，原负责人正在验收，修正尚未更新到本机或公开。"
+            }, project),
+            Doc("line_dispatch", "jobs/" + line + "/dispatch.json", now, new JsonObject
+            {
+                ["project_id"] = project,
+                ["line_job_id"] = line,
+                ["direct_job_id"] = direct,
+                ["route"] = "direct-cursor"
+            }, project),
+            Doc("line_receipt", "jobs/" + line + "/receipt.json", now, new JsonObject
+            {
+                ["project_id"] = project,
+                ["line_job_id"] = line,
+                ["direct_job_id"] = direct,
+                ["route"] = "direct-cursor",
+                ["transport_complete"] = true,
+                ["command_exit_code"] = 0,
+                ["project_judgment"] = false
+            }, project)
+        }, now);
+        var p = snap.Projects.Single(x => x.Id == project);
+        var details = DetailsPresentation.Build(snap, p.Id, UiLang.Zh);
+        var en = DetailsPresentation.Build(snap, p.Id, UiLang.En);
+        var hud = StatusLanguage.ProjectOneLinerFull(p, UiLang.Zh);
+        var current = RolePresentation.CurrentRows(p, UiLang.Zh);
+        Expect("f1.overall_accepting", details.OverallJudgment.Contains("等待验收", StringComparison.Ordinal));
+        Expect("f1.overall_not_pascal_wait", !details.OverallJudgment.Contains("需要你处理", StringComparison.Ordinal));
+        Expect("f1.who_accepting", details.WhoDoingWhat.Contains("验收", StringComparison.Ordinal));
+        Expect("f1.howfar_keeps_delivery", details.HowFar.Contains("本机", StringComparison.Ordinal)
+                                            && details.HowFar.Contains("尚未验收", StringComparison.Ordinal));
+        Expect("f1.stuck_not_computer", !details.StuckAt.Contains("恢复电脑", StringComparison.Ordinal)
+                                        && !details.StuckAt.Contains("缺来源", StringComparison.Ordinal));
+        Expect("f1.next_lead", details.NextOwner.Contains("验收", StringComparison.Ordinal));
+        Expect("f1.pascal_not_computer", !details.NeedsPascal.Contains("恢复电脑", StringComparison.Ordinal));
+        Expect("f1.hud_not_computer_only", !hud.Contains("恢复电脑操作", StringComparison.Ordinal)
+                                          && hud.Contains("验收", StringComparison.Ordinal));
+        Expect("f1.role_current_return", current.Any(r => r.RoleKind == "executor" && !r.IsHistorical
+                                                         && (r.StatusText.Contains("验收", StringComparison.Ordinal)
+                                                             || r.StatusText.Contains("交回", StringComparison.Ordinal))));
+        Expect("f1.en_same", en.OverallJudgment.Contains("acceptance", StringComparison.OrdinalIgnoreCase)
+                             && !en.NeedsPascal.Contains("computer", StringComparison.OrdinalIgnoreCase));
+    }
+
+    static void ExplicitBudgetWaitIsNotComputerResume()
+    {
+        var project = "c6-private-explicit-user-action";
+        var now = DateTimeOffset.Parse("2026-09-14T14:13:16Z");
+        var snap = Project(new[]
+        {
+            Doc("project_registry", "registry.json", now, new JsonObject
+            {
+                ["projects"] = new JsonArray(new JsonObject
+                {
+                    ["project_id"] = project,
+                    ["display_name"] = "私有状态边界对照",
+                    ["status"] = "ACTIVE",
+                    ["product_pass"] = false
+                })
+            }, project),
+            Doc("active_work", "ACTIVE_WORK.json", now, new JsonObject
+            {
+                ["project_id"] = project,
+                ["state"] = "WAITING_USER_DECISION",
+                ["need_user_action"] = true,
+                ["pascal_decision_required"] = true,
+                ["waiting_for"] = "确认预算",
+                ["current_handler"] = "原负责人等待预算确认",
+                ["next"] = "请确认预算后继续",
+                ["remaining"] = new JsonArray("预算确认"),
+                ["local_applied"] = false,
+                ["public_published"] = false,
+                ["publication_complete"] = false,
+                ["product_pass"] = false,
+                ["current_package_accepted"] = false
+            }, project)
+        }, now);
+        var p = snap.Projects.Single(x => x.Id == project);
+        var details = DetailsPresentation.Build(snap, p.Id, UiLang.Zh);
+        var en = DetailsPresentation.Build(snap, p.Id, UiLang.En);
+        var hud = StatusLanguage.ProjectOneLinerFull(p, UiLang.Zh);
+        Expect("f2.pascal_budget", details.NeedsPascal.Contains("预算", StringComparison.Ordinal)
+                                     || details.WhoDoingWhat.Contains("预算", StringComparison.Ordinal));
+        Expect("f2.not_computer", !details.NeedsPascal.Contains("恢复电脑", StringComparison.Ordinal)
+                                   && !details.HowFar.Contains("恢复电脑", StringComparison.Ordinal)
+                                   && !hud.Contains("恢复电脑", StringComparison.Ordinal));
+        Expect("f2.not_published", !details.HowFar.Contains("公开版本已发布", StringComparison.Ordinal)
+                                   && !details.WhoDoingWhat.Contains("本机和公开已交付", StringComparison.Ordinal)
+                                   && !hud.Contains("公开版本已发布", StringComparison.Ordinal));
+        Expect("f2.en_budget", en.NeedsPascal.Contains("budget", StringComparison.OrdinalIgnoreCase)
+                               || en.WhoDoingWhat.Contains("budget", StringComparison.OrdinalIgnoreCase)
+                               || en.OverallBasis.Contains("budget", StringComparison.OrdinalIgnoreCase)
+                               || en.StuckAt.Contains("budget", StringComparison.OrdinalIgnoreCase));
+    }
+
+    static void DeliveryHistoryIsNotContentAcceptance()
+    {
+        var project = "c6-private-delivery-is-not-acceptance";
+        var currentLine = "47743e3f-54c4-450e-9d41-edf4801f587e";
+        var oldLine = "d18ef983-884c-458b-ab47-afddf95c83d8";
+        var now = DateTimeOffset.Parse("2026-09-14T14:13:16Z");
+        var snap = Project(new[]
+        {
+            Doc("project_registry", "registry.json", now, new JsonObject
+            {
+                ["projects"] = new JsonArray(new JsonObject
+                {
+                    ["project_id"] = project,
+                    ["display_name"] = "私有状态边界对照",
+                    ["status"] = "ACTIVE",
+                    ["product_pass"] = false
+                })
+            }, project),
+            Doc("active_work", "ACTIVE_WORK.json", now, new JsonObject
+            {
+                ["project_id"] = project,
+                ["line_job_id"] = currentLine,
+                ["state"] = "RUNNING",
+                ["current_package_accepted"] = false,
+                ["product_pass"] = false,
+                ["history"] = new JsonArray(new JsonObject
+                {
+                    ["line_job_id"] = oldLine,
+                    ["state"] = "DELIVERED",
+                    ["local_applied"] = true
+                })
+            }, project),
+            Doc("line_dispatch", "jobs/" + currentLine + "/dispatch.json", now, new JsonObject
+            {
+                ["project_id"] = project,
+                ["line_job_id"] = currentLine,
+                ["route"] = "direct-cursor"
+            }, project),
+            Doc("line_receipt", "jobs/" + oldLine + "/receipt.json", now, new JsonObject
+            {
+                ["project_id"] = project,
+                ["line_job_id"] = oldLine,
+                ["route"] = "direct-grok-cli",
+                ["transport_complete"] = true,
+                ["command_exit_code"] = 0,
+                ["project_judgment"] = false
+            }, project)
+        }, now);
+        var p = snap.Projects.Single(x => x.Id == project);
+        var current = RolePresentation.CurrentRows(p, UiLang.Zh);
+        var hist = RolePresentation.HistoricalRows(p, UiLang.Zh);
+        Expect("f3.deliv.old_not_accepted", !hist.Any(r => r.Id.Contains(oldLine, StringComparison.Ordinal)
+                                                           && r.StatusText.Contains("已验收", StringComparison.Ordinal))
+                                            && !current.Any(r => r.Id.Contains(oldLine, StringComparison.Ordinal)
+                                                                  && r.StatusText.Contains("已验收", StringComparison.Ordinal)));
+        Expect("f3.deliv.current_running", current.Any(r => r.Id.Contains(currentLine, StringComparison.Ordinal)
+                                                           && !r.IsHistorical));
+    }
+
+    static void PackagePrefixDoesNotAcceptCurrentReturn()
+    {
+        var project = "c6-private-package-prefix";
+        var line = "05db805c-5719-442f-a2cd-2f5b0274ee8a";
+        var now = DateTimeOffset.Parse("2026-09-14T14:13:16Z");
+        var snap = Project(new[]
+        {
+            Doc("project_registry", "registry.json", now, new JsonObject
+            {
+                ["projects"] = new JsonArray(new JsonObject
+                {
+                    ["project_id"] = project,
+                    ["display_name"] = "私有状态边界对照",
+                    ["status"] = "ACTIVE",
+                    ["product_pass"] = false
+                })
+            }, project),
+            Doc("active_work", "ACTIVE_WORK.json", now, new JsonObject
+            {
+                ["project_id"] = project,
+                ["line_job_id"] = line,
+                ["state"] = "RETURNED",
+                ["execution_state"] = "returned",
+                ["package_id"] = "PKG-C1-R1",
+                ["current_package_accepted"] = false,
+                ["product_pass"] = false
+            }, project),
+            Doc("line_dispatch", "jobs/" + line + "/dispatch.json", now, new JsonObject
+            {
+                ["project_id"] = project,
+                ["line_job_id"] = line,
+                ["route"] = "direct-cursor",
+                ["package_id"] = "PKG-C1-R1"
+            }, project),
+            Doc("line_receipt", "jobs/" + line + "/receipt.json", now, new JsonObject
+            {
+                ["project_id"] = project,
+                ["line_job_id"] = line,
+                ["route"] = "direct-cursor",
+                ["transport_complete"] = true,
+                ["command_exit_code"] = 0,
+                ["project_judgment"] = false
+            }, project),
+            Doc("bot_acceptance", "OLD_ACCEPTANCE.json", now, new JsonObject
+            {
+                ["project_id"] = project,
+                ["package_id"] = "PKG-C1",
+                ["verdict"] = "PASS",
+                ["product_pass"] = false
+            }, project)
+        }, now);
+        var p = snap.Projects.Single(x => x.Id == project);
+        var current = RolePresentation.CurrentRows(p, UiLang.Zh);
+        var hist = RolePresentation.HistoricalRows(p, UiLang.Zh);
+        Expect("f3.prefix.current", current.Any(r => r.Id.Contains(line, StringComparison.Ordinal) && !r.IsHistorical));
+        Expect("f3.prefix.not_folded", !hist.Any(r => r.Id.Contains(line, StringComparison.Ordinal)));
+        Expect("f3.prefix.not_accepted", current.Any(r => r.Id.Contains(line, StringComparison.Ordinal)
+                                                            && !r.StatusText.Contains("已验收", StringComparison.Ordinal)));
+    }
+
+    static void ExactTransportPackageAcceptanceStillFolds()
+    {
+        var project = "proj-exact-pkg-" + Guid.NewGuid().ToString("N")[..8];
+        var line = Guid.NewGuid().ToString();
+        var direct = Guid.NewGuid().ToString();
+        var now = DateTimeOffset.Parse("2026-09-14T16:12:00+08:00");
+        var snap = Project(new[]
+        {
+            Registry(project, "ACTIVE", now, remaining: "完整产品尚未完成", summary: "上一包已验收；整体未完成"),
+            Doc("active_work", "ACTIVE_WORK.json", now, new JsonObject
+            {
+                ["project_id"] = project,
+                ["line_job_id"] = line,
+                ["direct_job_id"] = direct,
+                ["state"] = "RETURNED",
+                ["package_id"] = "ST2-C1-R1",
+                ["current_package_accepted"] = true,
+                ["product_pass"] = false,
+                ["current_handler"] = "原负责人继续后续工作"
+            }, project),
+            Doc("line_dispatch", "jobs/" + line + "/dispatch.json", now, new JsonObject
+            {
+                ["project_id"] = project,
+                ["line_job_id"] = line,
+                ["direct_job_id"] = direct,
+                ["route"] = "direct-cursor",
+                ["package_id"] = "ST2-C1-R1"
+            }, project),
+            Doc("line_receipt", "jobs/" + line + "/receipt.json", now, new JsonObject
+            {
+                ["project_id"] = project,
+                ["line_job_id"] = line,
+                ["direct_job_id"] = direct,
+                ["route"] = "direct-cursor",
+                ["transport_complete"] = true,
+                ["command_exit_code"] = 0,
+                ["project_judgment"] = false
+            }, project),
+            Doc("bot_acceptance", "LEAD_ACCEPTANCE.json", now, new JsonObject
+            {
+                ["project_id"] = project,
+                ["package_id"] = "ST2-C1",
+                ["transport_package_id"] = "ST2-C1-R1",
+                ["verdict"] = "PASS",
+                ["product_pass"] = false,
+                ["current_package_accepted"] = true
+            }, project)
+        }, now);
+        var p = snap.Projects.Single(x => x.Id == project);
+        var current = RolePresentation.CurrentRows(p, UiLang.Zh);
+        var hist = RolePresentation.HistoricalRows(p, UiLang.Zh);
+        Expect("f3.exact.folded", hist.Any(r => r.Id.Contains(line, StringComparison.Ordinal)
+                                                 && r.StatusText.Contains("已验收", StringComparison.Ordinal)));
+        Expect("f3.exact.not_current", current.All(r => !r.Id.Contains(line, StringComparison.Ordinal)));
+    }
+
+    static void LocalOnlyVisualDoesNotClaimPublicPublished()
+    {
+        var project = "c6-private-local-only-visual";
+        var now = DateTimeOffset.Parse("2026-09-14T14:13:16Z");
+        var snap = Project(new[]
+        {
+            Doc("project_registry", "registry.json", now, new JsonObject
+            {
+                ["projects"] = new JsonArray(new JsonObject
+                {
+                    ["project_id"] = project,
+                    ["display_name"] = "私有状态边界对照",
+                    ["status"] = "ACTIVE",
+                    ["product_pass"] = false
+                })
+            }, project),
+            Doc("active_work", "ACTIVE_WORK.json", now, new JsonObject
+            {
+                ["project_id"] = project,
+                ["state"] = "LOCAL_DELIVERED_VISUAL_SUSPENDED",
+                ["need_user_action"] = true,
+                ["pascal_decision_required"] = true,
+                ["waiting_for"] = "恢复电脑操作",
+                ["current_handler"] = "原负责人等待实窗核验",
+                ["next"] = "恢复电脑操作后由原负责人核验",
+                ["remaining"] = new JsonArray("最后实窗核验", "公开发布"),
+                ["local_applied"] = true,
+                ["public_published"] = false,
+                ["publication_complete"] = false,
+                ["product_pass"] = false,
+                ["current_package_accepted"] = true,
+                ["execution_state"] = "RETURNED_ACCEPTED",
+                ["lead_acceptance"] = "PASS",
+                ["visual_acceptance"] = "PENDING_USER_RESUME_COMPUTER_USE",
+                ["computer_use_suspended"] = true,
+                ["visual_acceptance_complete"] = false
+            }, project)
+        }, now);
+        var p = snap.Projects.Single(x => x.Id == project);
+        var details = DetailsPresentation.Build(snap, p.Id, UiLang.Zh);
+        var en = DetailsPresentation.Build(snap, p.Id, UiLang.En);
+        var hud = StatusLanguage.ProjectOneLinerFull(p, UiLang.Zh);
+        var overall = StatusLanguage.OverallJudgment(p, UiLang.Zh);
+        Expect("f2p.howfar_local", details.HowFar.Contains("本机", StringComparison.Ordinal)
+                                      && details.HowFar.Contains("实窗", StringComparison.Ordinal));
+        Expect("f2p.keeps_computer", details.StuckAt.Contains("恢复电脑", StringComparison.Ordinal)
+                                       && hud.Contains("恢复电脑", StringComparison.Ordinal));
+        Expect("f2p.no_public_claim", !details.HowFar.Contains("公开版本已发布", StringComparison.Ordinal)
+                                      && !details.WhoDoingWhat.Contains("公开版本已发布", StringComparison.Ordinal)
+                                      && !details.WhoDoingWhat.Contains("本机和公开已交付", StringComparison.Ordinal)
+                                      && !details.OverallBasis.Contains("公开版本已发布", StringComparison.Ordinal)
+                                      && !details.OverallBasis.Contains("本机和公开已交付", StringComparison.Ordinal)
+                                      && !hud.Contains("公开版本已发布", StringComparison.Ordinal)
+                                      && !hud.Contains("本机和公开已交付", StringComparison.Ordinal)
+                                      && !overall.Basis.Contains("公开版本已发布", StringComparison.Ordinal)
+                                      && !overall.Basis.Contains("本机和公开已交付", StringComparison.Ordinal));
+        Expect("f2p.keeps_local_progress", details.HowFar.Contains("本机文件已更新", StringComparison.Ordinal)
+                                           && (details.WhoDoingWhat.Contains("本机文件已更新", StringComparison.Ordinal)
+                                               || details.OverallBasis.Contains("本机文件已更新", StringComparison.Ordinal)
+                                               || hud.Contains("本机文件已更新", StringComparison.Ordinal)));
+        Expect("f2p.en_same", !en.WhoDoingWhat.Contains("public release", StringComparison.OrdinalIgnoreCase)
+                               && !en.OverallBasis.Contains("public", StringComparison.OrdinalIgnoreCase)
+                               && (en.HowFar.Contains("Local files", StringComparison.OrdinalIgnoreCase)
+                                   || en.HowFar.Contains("local", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    static void AcceptingDoesNotHideParallelUnhandledFailure()
+    {
+        var project = "proj-cb-fail-" + Guid.NewGuid().ToString("N")[..8];
+        var line = Guid.NewGuid().ToString();
+        var direct = Guid.NewGuid().ToString();
+        var failLine = Guid.NewGuid().ToString();
+        var failDirect = Guid.NewGuid().ToString();
+        var now = DateTimeOffset.Parse("2026-09-14T22:16:00+08:00");
+        var snap = Project(new[]
+        {
+            Registry(project, "ACTIVE", now, remaining: "本轮回件尚未验收"),
+            Doc("active_work", "ACTIVE_WORK.json", now, new JsonObject
+            {
+                ["project_id"] = project,
+                ["line_job_id"] = line,
+                ["direct_job_id"] = direct,
+                ["state"] = "LEAD_ACCEPTANCE_IN_PROGRESS",
+                ["execution_state"] = "RETURNED",
+                ["current_package_accepted"] = false,
+                ["need_user_action"] = false,
+                ["pascal_decision_required"] = false,
+                ["visual_acceptance"] = "LIVE_UI_SUSPENDED_INDEPENDENT_CORRECTION_ACTIVE",
+                ["computer_use_suspended"] = true,
+                ["visual_acceptance_complete"] = false,
+                ["local_applied"] = true,
+                ["public_published"] = true,
+                ["product_pass"] = false,
+                ["current_handler"] = "原负责人正在核对本轮回件",
+                ["next"] = "原负责人按冻结卡核验。最后实窗核验仍遵守电脑操作暂停。",
+                ["summary"] = "本机和公开已交付；本轮可见状态修正已回件，原负责人正在验收，修正尚未更新到本机或公开。"
+            }, project),
+            Doc("line_dispatch", "jobs/" + line + "/dispatch.json", now, new JsonObject
+            {
+                ["project_id"] = project,
+                ["line_job_id"] = line,
+                ["direct_job_id"] = direct,
+                ["route"] = "direct-cursor"
+            }, project),
+            Doc("line_receipt", "jobs/" + line + "/receipt.json", now, new JsonObject
+            {
+                ["project_id"] = project,
+                ["line_job_id"] = line,
+                ["direct_job_id"] = direct,
+                ["route"] = "direct-cursor",
+                ["transport_complete"] = true,
+                ["command_exit_code"] = 0,
+                ["project_judgment"] = false
+            }, project),
+            Doc("line_receipt", "jobs/" + failLine + "/receipt.json", now, new JsonObject
+            {
+                ["project_id"] = project,
+                ["line_job_id"] = failLine,
+                ["direct_job_id"] = failDirect,
+                ["route"] = "direct-cursor",
+                ["transport_complete"] = true,
+                ["success"] = false,
+                ["command_exit_code"] = 1,
+                ["project_judgment"] = false
+            }, project)
+        }, now);
+        var p = snap.Projects.Single(x => x.Id == project);
+        var details = DetailsPresentation.Build(snap, p.Id, UiLang.Zh);
+        var en = DetailsPresentation.Build(snap, p.Id, UiLang.En);
+        var hud = StatusLanguage.ProjectOneLinerFull(p, UiLang.Zh);
+        var current = RolePresentation.CurrentRows(p, UiLang.Zh);
+        Expect("f1p.overall_fault", details.OverallJudgment.Contains("故障", StringComparison.Ordinal));
+        Expect("f1p.overall_not_only_accept", !details.OverallJudgment.Contains("等待验收", StringComparison.Ordinal));
+        Expect("f1p.visible_failure", details.WhoDoingWhat.Contains("失败", StringComparison.Ordinal)
+                                         && details.StuckAt.Contains("失败", StringComparison.Ordinal)
+                                         && hud.Contains("失败", StringComparison.Ordinal)
+                                         && details.OverallBasis.Contains("失败", StringComparison.Ordinal));
+        Expect("f1p.keeps_accepting", details.WhoDoingWhat.Contains("验收", StringComparison.Ordinal)
+                                        && hud.Contains("验收", StringComparison.Ordinal)
+                                        && details.NextOwner.Contains("验收", StringComparison.Ordinal));
+        Expect("f1p.not_pascal_only", !details.OverallJudgment.Contains("需要你处理", StringComparison.Ordinal)
+                                        && !details.NeedsPascal.Contains("恢复电脑", StringComparison.Ordinal));
+        Expect("f1p.role_lead_accepting", current.Any(r => r.RoleKind == "lead" && !r.IsHistorical
+                                                          && r.StatusText.Contains("验收", StringComparison.Ordinal)));
+        Expect("f1p.role_returned_accepting", current.Any(r => r.RoleKind == "executor" && !r.IsHistorical
+                                                                && r.Id.Contains(line, StringComparison.Ordinal)
+                                                                && (r.StatusText.Contains("验收", StringComparison.Ordinal)
+                                                                    || r.StatusText.Contains("交回", StringComparison.Ordinal))));
+        Expect("f1p.role_failed_current", current.Any(r => r.RoleKind == "executor" && !r.IsHistorical
+                                                          && r.Id.Contains(failLine, StringComparison.Ordinal)
+                                                          && r.StatusText.Contains("失败", StringComparison.Ordinal)));
+        Expect("f1p.en_same", (en.OverallJudgment.Contains("Fault", StringComparison.OrdinalIgnoreCase)
+                               || en.OverallJudgment.Contains("fault", StringComparison.OrdinalIgnoreCase)
+                               || en.OverallJudgment.Contains("exception", StringComparison.OrdinalIgnoreCase))
+                              && (en.WhoDoingWhat.Contains("fail", StringComparison.OrdinalIgnoreCase)
+                                  || en.StuckAt.Contains("fail", StringComparison.OrdinalIgnoreCase))
+                              && (en.WhoDoingWhat.Contains("accept", StringComparison.OrdinalIgnoreCase)
+                                  || en.NextOwner.Contains("accept", StringComparison.OrdinalIgnoreCase)));
     }
 
     static void CurrentJobUsesDispatchNotStaleActiveWork()

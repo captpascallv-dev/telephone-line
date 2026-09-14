@@ -91,6 +91,7 @@ public sealed class StateProjector : IProjector
             var pWorksCurrent = currentWorks.Where(w => string.Equals(w.ProjectId, pid, StringComparison.Ordinal)).ToList();
             var pWorksHist = historicalWorks.Where(w => string.Equals(w.ProjectId, pid, StringComparison.Ordinal)).ToList();
             RelocateAdoptedFolderWorks(pWorksCurrent, pWorksHist, contributionFacts.Concat(facts.Where(f => f.Kind == "acceptance")));
+            RelocateAcceptedReturnedExecutors(pWorksCurrent, pWorksHist, contributionFacts, pf);
             var pAttFacts = attentionFacts.Where(a => string.Equals(a.ProjectId, pid, StringComparison.Ordinal)).ToList();
             var pContrib = contributionFacts.Where(c => string.Equals(c.ProjectId, pid, StringComparison.Ordinal)).ToList();
             var pLeads = leadFacts.Where(l => string.Equals(l.ProjectId, pid, StringComparison.Ordinal)).ToList();
@@ -140,7 +141,7 @@ public sealed class StateProjector : IProjector
             }
 
             // Truth-case derived attentions from work axes (general rules).
-            EmitDerivedAttentions(pid, pWorksCurrent, pWorksHist, pContrib, pLeads, attentions, issues, batch.CollectedAt);
+            EmitDerivedAttentions(pid, pf, pWorksCurrent, pWorksHist, pContrib, pLeads, attentions, issues, batch.CollectedAt);
 
             var name = Val(pf, "name") ?? pid;
             var registryStatus = Val(pf, "registry_status") ?? string.Empty;
@@ -226,7 +227,8 @@ public sealed class StateProjector : IProjector
                 attentions,
                 targets,
                 quality,
-                lastFactAt));
+                lastFactAt,
+                BuildLifecycleFacts(pf, pWorksCurrent)));
         }
 
         // Unassociated synthetic bucket only as issues/attention — do NOT invent a project.
@@ -549,7 +551,11 @@ public sealed class StateProjector : IProjector
                      "actor_name", "task_name", "model", "effort", "blocker", "review_assigned",
                      "lead_source_kind", "source_adopted", "lead_run_id", "remaining",
                      "local_delivered", "publication_complete", "product_pass",
-                     "current_package_accepted", "project_judgment"
+                     "current_package_accepted", "project_judgment",
+                     "local_applied", "public_published", "visual_acceptance",
+                     "computer_use_suspended", "visual_acceptance_complete",
+                     "need_user_action", "waiting_for", "lifecycle_kind",
+                     "lead_acceptance"
                  }))
         {
             var av = values[key]?.GetValue<string>();
@@ -678,6 +684,7 @@ public sealed class StateProjector : IProjector
 
     private static void EmitDerivedAttentions(
         string projectId,
+        SourceFact? project,
         List<SourceFact> currentWorks,
         List<SourceFact> historicalWorks,
         List<SourceFact> contrib,
@@ -810,6 +817,8 @@ public sealed class StateProjector : IProjector
             var liveHandler = string.Equals(handling, "blocked_after_acceptance", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(handling, "lead_accepting", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(handling, "repair_dispatched", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(handling, "correction_prepared", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(handling, "visual_pending", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(acceptance, "acceptance_in_progress", StringComparison.OrdinalIgnoreCase);
             var alreadyHandled = !IsMissing(acceptance)
                 && (acceptance!.StartsWith("handled", StringComparison.OrdinalIgnoreCase)
@@ -830,9 +839,11 @@ public sealed class StateProjector : IProjector
                 && (IsMissing(acceptance) || acceptance is "unknown" or "pending");
             var noProductPass = IsMissing(goal) || goal is "unknown" or "not_complete";
             // Army/contribution AR adopt is not Lead acceptance of this execution receipt.
-            var thisWorkAccepted = alreadyHandled || handlingDone || (!IsMissing(acceptance)
-                && (acceptance!.Contains("accept", StringComparison.OrdinalIgnoreCase)
-                    || acceptance.Contains("已验收", StringComparison.Ordinal)));
+            var thisWorkAccepted = alreadyHandled || handlingDone
+                || IsExplicitTrue(w, "current_package_accepted")
+                || (!IsMissing(acceptance)
+                    && (acceptance!.Contains("accept", StringComparison.OrdinalIgnoreCase)
+                        || acceptance.Contains("已验收", StringComparison.Ordinal)));
             var linkedLeadAcceptance = contrib.Any(c =>
                 SameWorkBinding(c, w)
                 && (string.Equals(Val(c, "acceptance_state"), "accepted_partial_or_full", StringComparison.OrdinalIgnoreCase)
@@ -906,7 +917,107 @@ public sealed class StateProjector : IProjector
                     c.Evidence));
             }
         }
+
+        EmitLifecycleUserAction(projectId, project, currentWorks, historicalWorks, attentions, existingIds);
+        _ = leads;
+        _ = collectedAt;
     }
+
+    private static void EmitLifecycleUserAction(
+        string projectId,
+        SourceFact? project,
+        List<SourceFact> currentWorks,
+        List<SourceFact> historicalWorks,
+        List<AttentionItem> attentions,
+        HashSet<string> existingIds)
+    {
+        _ = historicalWorks;
+        var currentSources = currentWorks.Append(project).Where(x => x is not null).Cast<SourceFact>().ToList();
+        if (currentSources.Any(s =>
+                string.Equals(Val(s, "lifecycle_kind"), "independent_correction_prepared", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(Val(s, "lead_handling_state"), "correction_prepared", StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        var currentNeed = currentSources.Any(s => IsExplicitTrue(s, "need_user_action") || IsExplicitTrue(s, "pascal_decision_required"));
+        var waitingFor = currentSources.Select(s => Val(s, "waiting_for")).FirstOrDefault(v => !IsMissing(v));
+        var visualCurrent = !CurrentResponsibilityBlocksVisualRemainder(currentWorks, project)
+                            && currentSources.Any(s =>
+                                string.Equals(Val(s, "lifecycle_kind"), "visual_pending_computer_use", StringComparison.OrdinalIgnoreCase)
+                                || string.Equals(Val(s, "lead_handling_state"), "visual_pending", StringComparison.OrdinalIgnoreCase)
+                                || LooksCurrentVisualPending(Val(s, "visual_acceptance")));
+        if (visualCurrent && (currentNeed || currentSources.Any(s =>
+                string.Equals(Val(s, "lead_handling_state"), "visual_pending", StringComparison.OrdinalIgnoreCase))))
+        {
+            var id = "attention:pascal:visual_computer_use:" + projectId;
+            if (!existingIds.Add(id)) return;
+            attentions.Add(new AttentionItem(
+                id,
+                AttentionOwner.Pascal,
+                "要你恢复电脑操作后，原负责人才能做最后实窗核验",
+                "visual_acceptance_pending_computer_use",
+                new[] { new NavigationTarget("project", projectId, projectId, projectId) },
+                currentSources.SelectMany(s => s.Evidence).Take(4).ToList()));
+            return;
+        }
+
+        if (!currentNeed) return;
+        var idExplicit = "attention:pascal:explicit:" + projectId;
+        if (!existingIds.Add(idExplicit)) return;
+        var description = waitingFor
+                           ?? currentSources.Select(s => Val(s, "next_step")).FirstOrDefault(v => !IsMissing(v))
+                           ?? currentSources.Select(s => Val(s, "current_handler")).FirstOrDefault(v => !IsMissing(v))
+                           ?? "当前有需要你决定的事项";
+        attentions.Add(new AttentionItem(
+            idExplicit,
+            AttentionOwner.Pascal,
+            description,
+            "need_user_action",
+            new[] { new NavigationTarget("project", projectId, projectId, projectId) },
+            currentSources.SelectMany(s => s.Evidence).Take(4).ToList()));
+    }
+
+    private static bool CurrentResponsibilityBlocksVisualRemainder(List<SourceFact> currentWorks, SourceFact? project)
+    {
+        foreach (var w in currentWorks.Append(project).Where(x => x is not null).Cast<SourceFact>())
+        {
+            var handling = Val(w, "lead_handling_state") ?? string.Empty;
+            var acceptance = Val(w, "acceptance_state") ?? string.Empty;
+            var exec = Val(w, "execution_state") ?? string.Empty;
+            if (handling is "lead_accepting" or "repair_dispatched" or "repair_prepared"
+                or "correction_prepared" or "dispatch_pending_native" or "blocked_after_acceptance"
+                or "lead_handled_fail_repair")
+            {
+                return true;
+            }
+
+            if (acceptance is "acceptance_in_progress" or "handled_fail_repair")
+                return true;
+            if (exec is "active" or "running") return true;
+            if (exec.Equals("failed", StringComparison.OrdinalIgnoreCase)
+                && handling is not "visual_pending")
+            {
+                return true;
+            }
+
+            if (exec.Equals("returned", StringComparison.OrdinalIgnoreCase)
+                && !IsExplicitTrue(w, "current_package_accepted")
+                && handling is not "visual_pending" and not "lead_handled")
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool LooksCurrentVisualPending(string? visual) =>
+        !string.IsNullOrWhiteSpace(visual)
+        && visual.Contains("INDEPENDENT_CORRECTION", StringComparison.OrdinalIgnoreCase) == false
+        && (visual.Contains("PENDING_USER_RESUME_COMPUTER_USE", StringComparison.OrdinalIgnoreCase)
+            || visual.Contains("PENDING_COMPUTER_USE", StringComparison.OrdinalIgnoreCase)
+            || visual.Contains("RESUME_COMPUTER_USE", StringComparison.OrdinalIgnoreCase));
 
     private static bool IsWorkClearlyHandled(
         SourceFact w,
@@ -1092,7 +1203,7 @@ public sealed class StateProjector : IProjector
         if (chosen is null)
         {
             var handlingWork = currentWorks.FirstOrDefault(w =>
-                Val(w, "lead_handling_state") is "lead_accepting" or "repair_dispatched" or "blocked_after_acceptance" or "callback_wait"
+                Val(w, "lead_handling_state") is "lead_accepting" or "repair_dispatched" or "blocked_after_acceptance" or "callback_wait" or "correction_prepared" or "visual_pending"
                 || Val(w, "acceptance_state") is "acceptance_in_progress" or "handled_fail_repair");
             if (handlingWork is not null)
             {
@@ -1220,10 +1331,52 @@ public sealed class StateProjector : IProjector
         if (IsMissing(ValFrom(folded, "remaining")) && !IsMissing(Val(project, "remaining")))
             folded["remaining"] = Val(project, "remaining");
 
+        foreach (var key in new[]
+                 {
+                     "lead_handling_state", "acceptance_state", "delivery_state",
+                     "local_applied", "public_published", "publication_complete",
+                     "visual_acceptance", "computer_use_suspended", "visual_acceptance_complete",
+                     "need_user_action", "waiting_for", "lifecycle_kind", "current_package_accepted",
+                     "pascal_decision_required"
+                 })
+        {
+            if (!IsMissing(ValFrom(folded, key))) continue;
+            var chosenValue = Val(project, key);
+            if (IsMissing(chosenValue))
+            {
+                foreach (var src in currentWorks.Concat(historicalWorks))
+                {
+                    var v = Val(src, key);
+                    if (IsMissing(v)) continue;
+                    if (key is "lead_handling_state" or "lifecycle_kind"
+                        && v is "repair_dispatched" or "lead_accepting" or "blocked_after_acceptance")
+                    {
+                        continue;
+                    }
+
+                    chosenValue = v;
+                    break;
+                }
+            }
+
+            if (IsMissing(chosenValue)) continue;
+            if (key == "acceptance_state"
+                && IsFoldedAccepted(chosenValue)
+                && !IsMissing(handler))
+            {
+                continue;
+            }
+
+            folded[key] = chosenValue;
+        }
+
         var summaryNow = ValFrom(folded, "summary");
         var ownerText = ValFrom(folded, "current_handler") ?? handler;
-        if (IsMissing(summaryNow) && !IsMissing(ownerText))
+        if (!IsMissing(ownerText)
+            && (IsMissing(summaryNow) || LooksLikeTechnicalToken(summaryNow)))
+        {
             folded["summary"] = ownerText;
+        }
 
         chosen.Links.TryGetValue("lead_session_id", out var chosenSession);
         var lifecycleOpen = historicalWorks.Concat(currentWorks).Any(w =>
@@ -1277,6 +1430,8 @@ public sealed class StateProjector : IProjector
                || h.Equals("lead_accepting", StringComparison.OrdinalIgnoreCase)
                || h.Equals("repair_dispatched", StringComparison.OrdinalIgnoreCase)
                || h.Equals("callback_wait", StringComparison.OrdinalIgnoreCase)
+               || h.Equals("correction_prepared", StringComparison.OrdinalIgnoreCase)
+               || h.Equals("visual_pending", StringComparison.OrdinalIgnoreCase)
                || a.Equals("acceptance_in_progress", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -1352,6 +1507,67 @@ public sealed class StateProjector : IProjector
             historical.Add(current[i]);
             current.RemoveAt(i);
         }
+    }
+
+    private static void RelocateAcceptedReturnedExecutors(
+        List<SourceFact> current,
+        List<SourceFact> historical,
+        List<SourceFact> contrib,
+        SourceFact? project)
+    {
+        for (var i = current.Count - 1; i >= 0; i--)
+        {
+            var w = current[i];
+            if (!IsExecutionRole(w)) continue;
+            var exec = Val(w, "execution_state") ?? string.Empty;
+            if (exec.Equals("active", StringComparison.OrdinalIgnoreCase)
+                || exec.Equals("running", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var handling = Val(w, "lead_handling_state") ?? string.Empty;
+            if (handling.Equals("correction_prepared", StringComparison.OrdinalIgnoreCase)
+                || handling.Equals("repair_prepared", StringComparison.OrdinalIgnoreCase)
+                || handling.Equals("repair_dispatched", StringComparison.OrdinalIgnoreCase)
+                || handling.Equals("dispatch_pending_native", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (!PackageAlreadyAccepted(w, contrib, project))
+                continue;
+
+            historical.Add(w);
+            current.RemoveAt(i);
+        }
+    }
+
+    private static bool PackageAlreadyAccepted(SourceFact w, List<SourceFact> contrib, SourceFact? project)
+    {
+        if (IsExplicitTrue(w, "current_package_accepted") || IsFoldedAccepted(Val(w, "acceptance_state")))
+            return true;
+        if (IsExplicitTrue(project, "current_package_accepted")
+            && MatchesWorkId(w, LinkOrNull(project, "line_job_id"), LinkOrNull(project, "direct_job_id")))
+        {
+            return true;
+        }
+
+        foreach (var c in contrib)
+        {
+            if (!SameWorkBinding(c, w)) continue;
+            var acc = Val(c, "acceptance_state") ?? string.Empty;
+            if (IsFoldedAccepted(acc) || acc.Contains("handled_accepted", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static string? LinkOrNull(SourceFact? fact, string key)
+    {
+        if (fact is null) return null;
+        return fact.Links.TryGetValue(key, out var v) ? v : null;
     }
 
     private static IReadOnlyList<ArtifactView> BuildArtifacts(SourceFact f)
@@ -1588,6 +1804,13 @@ public sealed class StateProjector : IProjector
 
         var handling = Val(w, "lead_handling_state") ?? string.Empty;
         var acceptance = Val(w, "acceptance_state") ?? string.Empty;
+        if (handling.Equals("visual_pending", StringComparison.OrdinalIgnoreCase)
+            || handling.Equals("correction_prepared", StringComparison.OrdinalIgnoreCase)
+            || IsFoldedAccepted(acceptance))
+        {
+            return false;
+        }
+
         if (handling.Equals("lead_accepting", StringComparison.OrdinalIgnoreCase)
             || handling.Equals("awaiting_lead_acceptance", StringComparison.OrdinalIgnoreCase)
             || acceptance.Equals("acceptance_in_progress", StringComparison.OrdinalIgnoreCase))
@@ -1699,6 +1922,27 @@ public sealed class StateProjector : IProjector
 
     private static string ResolveCurrentPhase(SourceFact? project, List<SourceFact> current, List<SourceFact> contrib)
     {
+        if (current.Any(w => string.Equals(Val(w, "lead_handling_state"), "correction_prepared", StringComparison.OrdinalIgnoreCase))
+            || string.Equals(Val(project, "lifecycle_kind"), "independent_correction_prepared", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(Val(project, "lead_handling_state"), "correction_prepared", StringComparison.OrdinalIgnoreCase))
+        {
+            return "原负责人正在准备当前修正，待实际派出";
+        }
+
+        if (current.Any(w =>
+                string.Equals(Val(w, "lead_handling_state"), "lead_accepting", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(Val(w, "acceptance_state"), "acceptance_in_progress", StringComparison.OrdinalIgnoreCase))
+            || string.Equals(Val(project, "lead_handling_state"), "lead_accepting", StringComparison.OrdinalIgnoreCase))
+        {
+            return "结果已交回，负责人正在验收";
+        }
+
+        if (current.Any(w => string.Equals(Val(w, "lead_handling_state"), "visual_pending", StringComparison.OrdinalIgnoreCase))
+            || string.Equals(Val(project, "lead_handling_state"), "visual_pending", StringComparison.OrdinalIgnoreCase))
+        {
+            return "本机和公开已交付，最后实窗核验待恢复电脑操作";
+        }
+
         var fromCurrent = FirstCurrentSourceStage(current);
         if (!IsMissing(fromCurrent))
             return fromCurrent!;
@@ -1715,6 +1959,47 @@ public sealed class StateProjector : IProjector
             return registryStage!;
 
         return "进行中";
+    }
+
+    private static VisibleLifecycleFacts BuildLifecycleFacts(SourceFact? project, List<SourceFact> current)
+    {
+        var sources = current.Append(project).Where(x => x is not null).Cast<SourceFact>().ToList();
+        string kind;
+        if (sources.Any(s => string.Equals(Val(s, "lead_handling_state"), "correction_prepared", StringComparison.OrdinalIgnoreCase)))
+            kind = "correction_prepared";
+        else if (sources.Any(s =>
+                     string.Equals(Val(s, "lead_handling_state"), "lead_accepting", StringComparison.OrdinalIgnoreCase)
+                     || string.Equals(Val(s, "acceptance_state"), "acceptance_in_progress", StringComparison.OrdinalIgnoreCase)))
+            kind = "lead_accepting";
+        else if (sources.Any(s => string.Equals(Val(s, "lead_handling_state"), "visual_pending", StringComparison.OrdinalIgnoreCase)))
+            kind = "visual_pending";
+        else if (sources.Any(s => IsExplicitTrue(s, "need_user_action") || IsExplicitTrue(s, "pascal_decision_required")))
+            kind = "user_action";
+        else
+            kind = "none";
+
+        return new VisibleLifecycleFacts(
+            kind,
+            FirstExplicitBool(sources, "local_applied"),
+            FirstExplicitBool(sources, "public_published"),
+            FirstExplicitBool(sources, "need_user_action"),
+            FirstExplicitBool(sources, "pascal_decision_required"),
+            FirstExplicitBool(sources, "computer_use_suspended"),
+            sources.Select(s => Val(s, "waiting_for")).FirstOrDefault(v => !IsMissing(v)),
+            sources.Select(s => Val(s, "visual_acceptance")).FirstOrDefault(v => !IsMissing(v)),
+            FirstExplicitBool(sources, "current_package_accepted"),
+            sources.Select(s => Val(s, "current_handler")).FirstOrDefault(v => !IsMissing(v)));
+    }
+
+    private static bool? FirstExplicitBool(IEnumerable<SourceFact> sources, string key)
+    {
+        foreach (var s in sources)
+        {
+            if (IsExplicitTrue(s, key)) return true;
+            if (IsExplicitFalse(s, key)) return false;
+        }
+
+        return null;
     }
 
     private static string? HumanizeSourceStage(string? stage)

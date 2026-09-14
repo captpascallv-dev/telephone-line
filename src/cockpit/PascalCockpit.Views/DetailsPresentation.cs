@@ -223,8 +223,48 @@ public static class DetailsPresentation
 
     private static (string Who, string HowFar, string Stuck, string Next, string Pascal, string Phase, string Goal, string Summary) Situation(ProjectView project, UiLang lang)
     {
-        var lineZh = StatusLanguage.ProjectOneLinerFull(project, UiLang.Zh);
+        var life = VisibleLifecycle.Describe(project);
         var current = project.WorkItems.Where(w => !StatusLanguage.IsHistoricalWork(w) && !StatusLanguage.IsDiagnosticNoise(w)).ToList();
+        var unhandled = StatusLanguage.UnhandledCurrentFailures(current);
+        if (life.Kind is "visual_pending" or "correction_prepared" or "lead_accepting" or "user_action")
+        {
+            var phaseLife = LooksRaw(project.Phase) ? life.HudLine : project.Phase;
+            var goalLife = LooksRaw(project.Goal) ? "未用一句话写明目标" : StatusLanguage.OrUndeclared(project.Goal);
+            var summaryLife = LooksRaw(project.Summary) ? life.HudLine : StateProjectorStrip(project.Summary);
+            if (unhandled.Count > 0)
+            {
+                const string failPhrase = "当前执行失败，待处理";
+                var extra = StatusLanguage.SecondaryLiveFact(current, life);
+                var whoZh = "原负责人。" + failPhrase;
+                if (!string.IsNullOrWhiteSpace(extra) && !whoZh.Contains(extra, StringComparison.Ordinal))
+                    whoZh = whoZh + "；" + extra;
+                var overlayStuck = RolePresentation.FailedItemsStuck(current, lang);
+                var overlayNext = life.Kind == "lead_accepting"
+                    ? "原负责人处理当前失败，并验收另一份回件"
+                    : "原负责人处理当前失败";
+                return (
+                    ConsumerCopy.Localize(whoZh, lang),
+                    ConsumerCopy.Localize(life.HowFar, lang),
+                    string.IsNullOrWhiteSpace(overlayStuck) ? ConsumerCopy.Localize(failPhrase, lang) : overlayStuck,
+                    ConsumerCopy.Localize(overlayNext, lang),
+                    ConsumerCopy.Localize(life.Pascal, lang),
+                    ConsumerCopy.Localize(phaseLife, lang),
+                    ConsumerCopy.Localize(goalLife, lang),
+                    ConsumerCopy.Localize(summaryLife, lang));
+            }
+
+            return (
+                ConsumerCopy.Localize(life.Who, lang),
+                ConsumerCopy.Localize(life.HowFar, lang),
+                ConsumerCopy.Localize(life.Stuck, lang),
+                ConsumerCopy.Localize(life.Next, lang),
+                ConsumerCopy.Localize(life.Pascal, lang),
+                ConsumerCopy.Localize(phaseLife, lang),
+                ConsumerCopy.Localize(goalLife, lang),
+                ConsumerCopy.Localize(summaryLife, lang));
+        }
+
+        var lineZh = StatusLanguage.ProjectOneLinerFull(project, UiLang.Zh);
         var blocked = current.Any(w => (w.Axes.LeadHandling ?? "").Equals("blocked_after_acceptance", StringComparison.OrdinalIgnoreCase));
         var accepting = current.Any(w =>
             (w.Axes.LeadHandling ?? "").Equals("lead_accepting", StringComparison.OrdinalIgnoreCase)
@@ -299,6 +339,8 @@ public static class DetailsPresentation
         var nextZh = !string.IsNullOrWhiteSpace(sourceNext)
             ? sourceNext
             : (blocked || lineZh.Contains("平台限制", StringComparison.Ordinal) ? "按当前源处理平台反馈后接原负责人"
+            : failed && accepting ? "原负责人处理当前失败，并验收另一份回件"
+            : failed ? "原负责人处理当前失败"
             : accepting || lineZh.Contains("负责人正在验收", StringComparison.Ordinal) ? "原负责人继续验收"
             : lineZh.Contains("继续生成", StringComparison.Ordinal) ? "原执行者继续生成，完成后负责人验收"
             : repairPrepared && !inFlight ? "原负责人准备退修，待实际派出"

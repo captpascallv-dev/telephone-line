@@ -309,7 +309,8 @@ try {
         'src/cockpit/runtime/win-x64/PascalCockpit.App.exe',
         'docs/releases/v0.1.5.md',
         'docs/releases/v0.1.6.md',
-        'docs/releases/v0.1.7.md'
+        'docs/releases/v0.1.7.md',
+        'docs/releases/v0.1.8.md'
     )) {
         Assert-PackagingTest ($realSourceNames -contains $required) "Source archive omitted $required"
         Assert-PackagingTest ($realReleaseNames -contains $required) "Release ZIP omitted $required"
@@ -449,6 +450,7 @@ try {
         'docs/releases/v0.1.5.md',
         'docs/releases/v0.1.6.md',
         'docs/releases/v0.1.7.md',
+        'docs/releases/v0.1.8.md',
         'src/cockpit/licenses/DOTNET-LICENSE.txt'
     )
     $usersWin = 'C:' + [char]92 + 'Users' + [char]92
