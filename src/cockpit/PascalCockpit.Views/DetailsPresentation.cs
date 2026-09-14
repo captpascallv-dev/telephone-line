@@ -230,6 +230,11 @@ public static class DetailsPresentation
             (w.Axes.LeadHandling ?? "").Equals("lead_accepting", StringComparison.OrdinalIgnoreCase)
             || (w.Axes.Acceptance ?? "").Equals("acceptance_in_progress", StringComparison.OrdinalIgnoreCase));
         var repairOut = current.Any(w => (w.Axes.LeadHandling ?? "").Equals("repair_dispatched", StringComparison.OrdinalIgnoreCase));
+        var repairPrepared = current.Any(w =>
+            (w.Axes.LeadHandling ?? "").Equals("repair_prepared", StringComparison.OrdinalIgnoreCase)
+            && !w.Axes.Execution.Equals("active", StringComparison.OrdinalIgnoreCase)
+            && !w.Axes.Execution.Equals("running", StringComparison.OrdinalIgnoreCase));
+        var failRepair = current.Any(StatusLanguage.IsOpenFailRepair);
         var inFlight = current.Any(w =>
             !StatusLanguage.HasLiveHandler(w)
             && (w.Axes.Execution.Equals("active", StringComparison.OrdinalIgnoreCase)
@@ -238,10 +243,12 @@ public static class DetailsPresentation
             !StatusLanguage.HasLiveHandler(w)
             && w.Axes.Execution.Equals("failed", StringComparison.OrdinalIgnoreCase));
         var failedStuck = RolePresentation.FailedItemsStuck(current, lang);
+        var ownerContinuing = !string.IsNullOrWhiteSpace(StatusLanguage.OwnerContinuingText(project));
         var pascal = project.Attention.Any(a => a.Owner == AttentionOwner.Pascal);
-        var who = blocked || accepting
+        var who = blocked || accepting || repairPrepared || failRepair
             ? "原负责人"
             : inFlight || repairOut ? "原执行者"
+            : ownerContinuing ? "原负责人"
             : "当前负责人按最新回执处理";
         var comparisonOpen = current.Any(w =>
             (w.Axes.Goal ?? "").Equals("not_complete", StringComparison.OrdinalIgnoreCase));
@@ -257,18 +264,25 @@ public static class DetailsPresentation
                 ? "结果已经交回，负责人已判退修"
                 : accepting ? "结果已经交回，负责人正在验收"
                 : comparisonOpen && allExecAccepted ? "执行已验收，整体尚未通过"
+                : repairPrepared && !inFlight ? "准备退修，待实际派出"
+                : failRepair && !inFlight ? "本轮未通过，原负责人已接手"
                 : repairOut && !inFlight ? "退修已派出，等待本轮结果"
                 : inFlight || repairOut ? "本轮还在做，还没交回"
+                : ownerContinuing ? (StatusLanguage.OwnerContinuingText(project) ?? "原负责人正在继续")
                 : "目前没有更细的进度数字";
         var stuckZh = blocked || lineZh.Contains("平台限制", StringComparison.Ordinal)
             ? "后续处理被平台限制中断，退修尚未派出"
+            : repairPrepared && !inFlight
+                ? "退修尚未实际派出"
+            : failRepair
+                ? "本轮未通过，故障影响仍在；原负责人已接手，不需你操作"
             : lineZh.Contains("验收发现问题", StringComparison.Ordinal)
                 ? "卡在验收发现的问题上，需要原执行者退修"
             : !string.IsNullOrWhiteSpace(failedStuck)
                 ? null
             : failed && !accepting
                 ? "当前执行失败，待处理"
-            : accepting || inFlight || repairOut || lineZh.Contains("还没交回", StringComparison.Ordinal)
+            : accepting || inFlight || repairOut || ownerContinuing || lineZh.Contains("还没交回", StringComparison.Ordinal)
                 || lineZh.Contains("正在验收", StringComparison.Ordinal)
                 ? "目前没有已知阻点"
             : "无法判断卡点的具体部分：缺少足够来源";
@@ -287,7 +301,10 @@ public static class DetailsPresentation
             : (blocked || lineZh.Contains("平台限制", StringComparison.Ordinal) ? "按当前源处理平台反馈后接原负责人"
             : accepting || lineZh.Contains("负责人正在验收", StringComparison.Ordinal) ? "原负责人继续验收"
             : lineZh.Contains("继续生成", StringComparison.Ordinal) ? "原执行者继续生成，完成后负责人验收"
+            : repairPrepared && !inFlight ? "原负责人准备退修，待实际派出"
+            : failRepair && !inFlight ? "原负责人继续核对失败并准备退修"
             : inFlight || lineZh.Contains("还没交回", StringComparison.Ordinal) ? "原执行者继续做，完成后负责人验收"
+            : ownerContinuing ? (StatusLanguage.OwnerContinuingText(project) ?? "原负责人继续当前工作")
             : repairOut && !inFlight ? "等待本轮结果交回后负责人处理"
             : repairOut ? "原执行者正在按退修继续做"
             : lineZh.Contains("验收发现问题", StringComparison.Ordinal) ? "原执行者退修"

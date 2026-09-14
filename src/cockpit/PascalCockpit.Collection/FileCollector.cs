@@ -434,12 +434,7 @@ public sealed class FileCollector : ICollector
                 path = nested;
             if (string.IsNullOrWhiteSpace(path) || !LooksLikePath(path) || !LooksLikeJsonMetadata(path))
                 continue;
-            var nestedScope = LooksHistoricalPointerKey(kv.Key)
-                || (document.Kind == KindActiveWork
-                    && string.IsNullOrWhiteSpace(contextPrefix)
-                    && IsStalePackageAcceptancePointer(document, kv.Key, path))
-                ? "historical"
-                : "current";
+            var nestedScope = ResolveFollowedScope(document, kv.Key, path, contextPrefix);
             var context = string.IsNullOrWhiteSpace(contextPrefix) ? kv.Key : contextPrefix + ":" + kv.Key;
             await CollectExplicitAsync(path, document.ProjectHint, context, documents, issues, seen, budget, observedAt, cancellationToken, scope: nestedScope).ConfigureAwait(false);
         }
@@ -512,6 +507,13 @@ public sealed class FileCollector : ICollector
         if (!string.IsNullOrWhiteSpace(dirRoot) && !string.IsNullOrWhiteSpace(directId))
         {
             var directDir = Path.Combine(dirRoot, "jobs", directId);
+            if (!Directory.Exists(directDir))
+            {
+                var sibling = FindSiblingAdapterJobDir(dirRoot, directId);
+                if (!string.IsNullOrWhiteSpace(sibling))
+                    directDir = sibling;
+            }
+
             await CollectExplicitAsync(directDir, hint, "active_work_direct_job_root", documents, issues, seen, budget, observedAt, cancellationToken, scope: "current").ConfigureAwait(false);
         }
 
@@ -589,6 +591,76 @@ public sealed class FileCollector : ICollector
                 }
             }
         }
+    }
+
+    static string ResolveFollowedScope(RawDocument document, string key, string path, string? contextPrefix)
+    {
+        if (LooksHistoricalPointerKey(key))
+            return "historical";
+        if (document.Kind == KindActiveWork
+            && string.IsNullOrWhiteSpace(contextPrefix)
+            && IsStalePackageAcceptancePointer(document, key, path))
+        {
+            return "historical";
+        }
+
+        if (document.Kind == KindBotAcceptance && LooksHandledAcceptance(document.Data))
+        {
+            var pathJob = JobIdFromPath(path);
+            if (!string.IsNullOrWhiteSpace(pathJob))
+                return "historical";
+        }
+
+        if (string.Equals(document.Scope, "historical", StringComparison.OrdinalIgnoreCase)
+            && IsReceiptPointerKey(key))
+        {
+            return "historical";
+        }
+
+        return "current";
+    }
+
+    static bool LooksHandledAcceptance(JsonObject data)
+    {
+        var token = Str(data, "verdict", "result", "state", "acceptance_status") ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(token)) return false;
+        if (token.Contains("FAIL", StringComparison.OrdinalIgnoreCase)
+            && !token.Contains("PASS", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return token.Contains("PASS", StringComparison.OrdinalIgnoreCase)
+               || token.Contains("ACCEPT", StringComparison.OrdinalIgnoreCase)
+               || token.Contains("ADOPT", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static bool IsReceiptPointerKey(string key)
+    {
+        var k = key.ToLowerInvariant();
+        return k is "line_receipt" or "route_receipt" or "telephone_receipt" or "direct_receipt"
+            or "actual_dispatch_receipt" or "last_transport_receipt" or "last_direct_receipt";
+    }
+
+    static string? FindSiblingAdapterJobDir(string adapterStateRoot, string jobId)
+    {
+        try
+        {
+            var stateParent = Directory.GetParent(adapterStateRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            if (stateParent is null || !stateParent.Exists) return null;
+            foreach (var adapter in stateParent.GetDirectories())
+            {
+                var candidate = Path.Combine(adapter.FullName, "jobs", jobId);
+                if (Directory.Exists(candidate))
+                    return candidate;
+            }
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+
+        return null;
     }
 
     internal static bool IsStalePackageAcceptancePointer(RawDocument activeWork, string key, string path)
@@ -1058,7 +1130,8 @@ public sealed class FileCollector : ICollector
 
     private static bool IsAllowedShortEffortScalar(string key, JsonNode? value)
     {
-        if (key is not "reasoning" and not "reasoning_effort" and not "effort")
+        if (key is not "reasoning" and not "reasoning_effort" and not "effort"
+            and not "executor_effort" and not "executor_reasoning" and not "executor_reasoning_effort")
             return false;
         if (value is not JsonValue v || !v.TryGetValue<string>(out var s) || string.IsNullOrWhiteSpace(s))
             return false;

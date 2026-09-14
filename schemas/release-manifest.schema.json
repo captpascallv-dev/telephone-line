@@ -28,7 +28,7 @@
     },
     "version": {
       "type": "string",
-      "const": "0.1.6"
+      "const": "0.1.7"
     },
     "license": {
       "type": "string",

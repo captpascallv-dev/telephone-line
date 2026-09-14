@@ -66,20 +66,69 @@ public static class StatusLanguage
 
         if (execs.Any(w => (w.Axes.LeadHandling ?? "").Equals("repair_dispatched", StringComparison.OrdinalIgnoreCase)))
             return (L("等待结果"), L("退修已派出，等待本轮结果"));
-        if (execs.Any(w => (w.Axes.LeadHandling ?? "").Equals("repair_prepared", StringComparison.OrdinalIgnoreCase)))
-            return (L("等待结果"), L("准备退修续接"));
+        if (execs.Any(w => (w.Axes.LeadHandling ?? "").Equals("repair_prepared", StringComparison.OrdinalIgnoreCase)
+                            && !IsActive(w.Axes.Execution)))
+            return (L("等待结果"), L("准备退修，待实际派出"));
+        if (current.Any(IsOpenFailRepair))
+            return (L("故障/部分异常"), L("本轮未通过，需要修复；原负责人已接手并准备退修，不需你操作"));
         if (execs.Any(w => (w.Axes.LeadHandling ?? "").Equals("dispatch_pending_native", StringComparison.OrdinalIgnoreCase))
             || current.Any(w => (w.Axes.LeadHandling ?? "").Equals("callback_wait", StringComparison.OrdinalIgnoreCase)))
             return (L("等待结果"), L("已派出，等待本轮结果证据"));
 
         if (execs.Any(w =>
-                w.Axes.Execution.Equals("returned", StringComparison.OrdinalIgnoreCase)
-                || w.Axes.Execution.Equals("succeeded", StringComparison.OrdinalIgnoreCase)))
+                (w.Axes.Execution.Equals("returned", StringComparison.OrdinalIgnoreCase)
+                 || w.Axes.Execution.Equals("succeeded", StringComparison.OrdinalIgnoreCase))
+                && !IsExplicitAccepted(w.Axes.Acceptance)
+                && !HasLiveHandler(w)))
         {
             return (L("等待验收"), L("结果已交回，等待负责人处理"));
         }
 
+        var continuing = OwnerContinuingText(project);
+        if (!string.IsNullOrWhiteSpace(continuing))
+            return (L("正常推进"), L(continuing));
+
         return (L("状态待核实"), L("缺少足够来源"));
+    }
+
+    public static string? OwnerContinuingText(ProjectView project)
+    {
+        if (!project.IsActive || project.IsPaused)
+            return null;
+
+        var current = project.WorkItems.Where(w => !IsHistoricalWork(w) && !IsDiagnosticNoise(w)).ToList();
+        var execs = current.Where(IsExecutionLike).ToList();
+        if (execs.Any(w =>
+                IsFailed(w.Axes.Execution)
+                || ((w.Axes.Execution.Equals("returned", StringComparison.OrdinalIgnoreCase)
+                     || w.Axes.Execution.Equals("succeeded", StringComparison.OrdinalIgnoreCase))
+                    && !IsExplicitAccepted(w.Axes.Acceptance))
+                || (w.Axes.LeadHandling ?? "").Equals("lead_accepting", StringComparison.OrdinalIgnoreCase)
+                || (w.Axes.Acceptance ?? "").Equals("acceptance_in_progress", StringComparison.OrdinalIgnoreCase)
+                || IsOpenFailRepair(w)
+                || ((w.Axes.LeadHandling ?? "").Equals("repair_prepared", StringComparison.OrdinalIgnoreCase)
+                    && !IsActive(w.Axes.Execution))))
+        {
+            return null;
+        }
+
+        var lead = current.FirstOrDefault(w =>
+            string.Equals(w.ActorKind, "lead", StringComparison.OrdinalIgnoreCase)
+            || w.Role.Equals("lead", StringComparison.OrdinalIgnoreCase));
+        if (lead is not null && IsConsumerPhrase(lead.Summary))
+            return lead.Summary.Trim();
+
+        var next = project.NextStep?.Trim();
+        if (IsConsumerPhrase(next) && !LooksLikeHandledNext(next))
+            return next;
+
+        return null;
+    }
+
+    private static bool LooksLikeHandledNext(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        return text.StartsWith("已处理", StringComparison.Ordinal);
     }
 
     public static string AttentionOwnerLabel(AttentionOwner owner, UiLang lang = UiLang.Zh) =>
@@ -161,16 +210,16 @@ public static class StatusLanguage
             && !(w.Role.Equals("cli", StringComparison.OrdinalIgnoreCase))).ToList();
         var generationNow = gen.Count > 0 || (project.Progress?.Basis?.Contains("世界", StringComparison.Ordinal) == true);
 
-        if (generationNow)
-        {
-            parts.Add(GenerationPhrase(gen.FirstOrDefault() ?? exec.FirstOrDefault() ?? current.FirstOrDefault()
-                ?? new WorkView("gen", "generation", null, "生成", new WorkAxes("unknown", "unknown", "active", "unknown", "unknown", "unknown", "unknown", "unknown", "unknown", "unknown"), Array.Empty<ArtifactView>(), Array.Empty<NavigationTarget>(), Array.Empty<EvidenceRef>(), DataQuality.Fresh),
-                project.Progress));
-        }
-        else if (exec.Count > 0)
+        if (exec.Count > 0)
         {
             var phrase = ComposeWorkClusterPhrase(exec);
             if (!string.IsNullOrWhiteSpace(phrase)) parts.Add(phrase);
+        }
+        else if (generationNow)
+        {
+            parts.Add(GenerationPhrase(gen.FirstOrDefault() ?? current.FirstOrDefault()
+                ?? new WorkView("gen", "generation", null, "生成", new WorkAxes("unknown", "unknown", "active", "unknown", "unknown", "unknown", "unknown", "unknown", "unknown", "unknown"), Array.Empty<ArtifactView>(), Array.Empty<NavigationTarget>(), Array.Empty<EvidenceRef>(), DataQuality.Fresh),
+                project.Progress));
         }
 
         if (contrib.Count > 0)
@@ -704,8 +753,9 @@ public static class StatusLanguage
         if ((a.LeadHandling ?? "").Equals("dispatch_pending_native", StringComparison.OrdinalIgnoreCase))
             return "已派出，等待原生运行/本轮结果证据";
 
-        if ((a.LeadHandling ?? "").Equals("repair_prepared", StringComparison.OrdinalIgnoreCase))
-            return "准备退修续接";
+        if ((a.LeadHandling ?? "").Equals("repair_prepared", StringComparison.OrdinalIgnoreCase)
+            && !IsActive(a.Execution))
+            return "准备退修，待实际派出";
 
         if ((a.LeadHandling ?? "").Equals("repair_dispatched", StringComparison.OrdinalIgnoreCase))
         {
@@ -901,8 +951,11 @@ public static class StatusLanguage
             return "按当前源处理平台反馈后接原负责人";
         }
 
-        var generation = ContainsAny(lower, "generation", "generate")
-                         && ContainsAny(lower, "resume", "continue", "generation", "generate");
+        var generation = !ContainsAny(lower, "preserve completed", "processed-prefix", "processed prefix")
+                         && (ContainsAny(lower, "continue generating", "resume generation", "continue generation")
+                             || (ContainsAny(lower, "resume", "continue")
+                                 && ContainsAny(lower, "generat")
+                                 && !ContainsAny(lower, "preserve")));
         if (generation && inFlight)
         {
             var g = "原执行者继续生成，交回后负责人验收";
@@ -1047,6 +1100,20 @@ public static class StatusLanguage
             && string.IsNullOrWhiteSpace(work.Model))
             return true;
         return false;
+    }
+
+    public static bool IsOpenFailRepair(WorkView work)
+    {
+        var handling = work.Axes.LeadHandling ?? "";
+        var acceptance = work.Axes.Acceptance ?? "";
+        if (handling.Equals("repair_prepared", StringComparison.OrdinalIgnoreCase)
+            && !IsActive(work.Axes.Execution))
+        {
+            return false;
+        }
+
+        return handling.Contains("fail_repair", StringComparison.OrdinalIgnoreCase)
+               || acceptance.Contains("fail_repair", StringComparison.OrdinalIgnoreCase);
     }
 
     public static bool IsGenerationInFlight(WorkView work)

@@ -51,6 +51,9 @@ internal static class DocumentNormalizers
             NormUtil.PutLink(links, "source_object_id", id);
 
             var pass = JsonField.Bool(p, "product_pass");
+            var localDelivered = JsonField.Bool(p, "local_delivered", "local_runtime_delivered");
+            var publicationComplete = JsonField.Bool(p, "publication_complete");
+            var currentAccepted = JsonField.Bool(p, "current_package_accepted");
             var humanSummary = JsonField.Str(p, "current_summary", "summary");
             var values = new JsonObject
             {
@@ -60,9 +63,16 @@ internal static class DocumentNormalizers
                 ["stage"] = JsonField.AxisOrUnknown(JsonField.Str(p, "current_state", "current_stage", "stage")),
                 ["goal"] = JsonField.AxisOrUnknown(JsonField.Str(p, "goal")),
                 ["goal_state"] = pass == true ? "complete" : pass == false ? "not_complete" : "unknown",
+                ["product_pass"] = pass == true ? "true" : pass == false ? "false" : "unknown",
                 ["summary"] = JsonField.AxisOrUnknown(humanSummary),
-                ["next_step"] = JsonField.AxisOrUnknown(JsonField.Str(p, "next", "next_step"))
+                ["next_step"] = JsonField.AxisOrUnknown(JsonField.Str(p, "next", "next_step")),
+                ["current_handler"] = JsonField.AxisOrUnknown(JsonField.Str(p, "current_handler")),
+                ["local_delivered"] = localDelivered == true ? "true" : localDelivered == false ? "false" : "unknown",
+                ["publication_complete"] = publicationComplete == true ? "true" : publicationComplete == false ? "false" : "unknown",
+                ["previous_accepted_terminal"] = JsonField.AxisOrUnknown(JsonField.Str(p, "previous_accepted_terminal"))
             };
+            StampExplicitBool(values, "current_package_accepted", currentAccepted);
+            StampCurrentHandlerAndRemaining(values, p);
 
             facts.Add(new SourceFact("project", id, id, links, values, new[] { NormUtil.Evidence(doc) }));
         }
@@ -126,6 +136,8 @@ internal static class DocumentNormalizers
             ["next_step"] = JsonField.AxisOrUnknown(humanNext)
         };
         StampCollectedScope(doc, values);
+        StampExplicitBool(values, "product_pass", productPass);
+        StampExplicitBool(values, "current_package_accepted", currentAccepted);
         if (currentAccepted == true)
             values["prior_package_accepted"] = "true";
         if (stalePending == true)
@@ -203,6 +215,10 @@ internal static class DocumentNormalizers
 
         ApplyCurrentHandler(values, doc.Data, state, humanNext);
         StampExecutorIdentity(values, doc.Data);
+        JobIdentity.ApplyJobAlignedNestedIdentity(values, doc.Data, lineId, directId);
+        ApplyPreparedNotDispatched(values, state);
+        StampCurrentHandlerAndRemaining(values, doc.Data);
+        StampCurrentAcceptanceFields(values, doc.Data);
         StampNestedRoundVerdicts(values, doc.Data);
 
         facts.Add(new SourceFact("work", entityId, projectId, links, values, new[] { NormUtil.Evidence(doc) }));
@@ -268,7 +284,10 @@ internal static class DocumentNormalizers
         StampCollectedScope(doc, values);
         ApplyLaneState(values, state);
         StampExecutorIdentity(values, lane);
-        if (IsMissingIdentity(values["actor_name"]?.GetValue<string>()) && !string.IsNullOrWhiteSpace(route))
+        JobIdentity.ApplyJobAlignedNestedIdentity(values, doc.Data, lineId, directId);
+        ApplyPreparedNotDispatched(values, state);
+        if (IsMissingIdentity(values["actor_name"]?.GetValue<string>()) && !string.IsNullOrWhiteSpace(route)
+            && !NormUtil.LooksPreparedNotDispatched(state))
             values["actor_name"] = route;
         var fact = new SourceFact("work", entityId, projectId, links, values, new[] { NormUtil.Evidence(doc) });
         facts.Add(fact);
@@ -363,6 +382,7 @@ internal static class DocumentNormalizers
         if (IsMissingIdentity(handling) && IsMissingIdentity(execution))
             ApplyLaneState(target.Values, JsonField.Str(row, "state", "status"));
         StampExecutorIdentity(target.Values, row);
+        ApplyPreparedNotDispatched(target.Values, JsonField.Str(row, "state", "status"));
         if (target.Links is Dictionary<string, string> links)
         {
             PutLinkIfMissing(links, "line_job_id", JsonField.Str(row, "line_job_id"));
@@ -395,12 +415,11 @@ internal static class DocumentNormalizers
     private static void ApplyLaneState(JsonObject values, string? state)
     {
         var s = state ?? string.Empty;
-        if (s.Contains("PREPARED", StringComparison.OrdinalIgnoreCase)
-            && !s.Contains("DISPATCH", StringComparison.OrdinalIgnoreCase))
+        if (NormUtil.LooksPreparedNotDispatched(state))
         {
             values["lead_handling_state"] = "repair_prepared";
             values["acceptance_state"] = "handled_fail_repair";
-            values["execution_state"] = "returned";
+            values["execution_state"] = "unknown";
             return;
         }
 
@@ -474,7 +493,10 @@ internal static class DocumentNormalizers
         {
             if (kv.Value is not JsonObject nested) continue;
             var verdict = JsonField.Str(nested, "verdict", "result");
-            var integrated = JsonField.Bool(nested, "integrated");
+            var integrated = JsonField.Bool(nested, "integrated", "accepted");
+            if (string.IsNullOrWhiteSpace(verdict) && integrated != true) continue;
+            if (string.IsNullOrWhiteSpace(verdict) && integrated == true)
+                verdict = "PASS";
             if (string.IsNullOrWhiteSpace(verdict)) continue;
             var jobs = NestedJobIds(nested);
             var packages = NestedPackageTokens(kv.Key, nested);
@@ -495,6 +517,8 @@ internal static class DocumentNormalizers
 
         if (failJobs.Count > 0) values["prior_fail_repair_jobs"] = string.Join(",", failJobs);
         if (failPackages.Count > 0) values["prior_fail_repair_packages"] = string.Join(",", failPackages);
+        if (consumedJobs.Count > 0) values["handled_package_jobs"] = string.Join(",", consumedJobs);
+        if (consumedPackages.Count > 0) values["handled_package_tokens"] = string.Join(",", consumedPackages);
         if (failJobs.Count > 0 && consumedJobs.Count > 0)
             values["prior_fail_consumed_jobs"] = string.Join(",", failJobs.Intersect(consumedJobs, StringComparer.OrdinalIgnoreCase));
         if (failPackages.Count > 0 && consumedPackages.Count > 0)
@@ -593,11 +617,20 @@ internal static class DocumentNormalizers
             return;
         }
 
-        if (NormUtil.LooksLeadAccepting(state) || (handler is not null && handler.Contains("验收", StringComparison.Ordinal)))
+        if (NormUtil.LooksLeadAccepting(state)
+            || (HandlerIsPresentTenseAccepting(handler) && HasStructuredReturnEvidence(values, data)))
         {
             values["lead_handling_state"] = "lead_accepting";
             values["acceptance_state"] = "acceptance_in_progress";
             values["execution_state"] = "returned";
+            return;
+        }
+
+        if (NormUtil.LooksPreparedNotDispatched(state))
+        {
+            values["lead_handling_state"] = "repair_prepared";
+            values["acceptance_state"] = "handled_fail_repair";
+            values["execution_state"] = "unknown";
             return;
         }
 
@@ -607,6 +640,84 @@ internal static class DocumentNormalizers
             values["acceptance_state"] = "handled_fail_repair";
             values["execution_state"] = "returned";
         }
+    }
+
+    /// <summary>
+    /// Preallocated IDs, leftover package/route/model, and native init are not
+    /// a running executor. Actual line_dispatch / direct_request still win later.
+    /// </summary>
+    private static void ApplyPreparedNotDispatched(JsonObject values, string? state)
+    {
+        if (!NormUtil.LooksPreparedNotDispatched(state))
+            return;
+        values["lead_handling_state"] = "repair_prepared";
+        values["acceptance_state"] = "handled_fail_repair";
+        values["execution_state"] = "unknown";
+        values["route"] = "unknown";
+        values["package_id"] = "unknown";
+        values["task_name"] = "unknown";
+        values.Remove("model");
+        values.Remove("effort");
+        values.Remove("actor_name");
+    }
+
+    static bool HandlerIsPresentTenseAccepting(string? handler)
+    {
+        if (string.IsNullOrWhiteSpace(handler)) return false;
+        if (LooksFutureAcceptancePlan(handler)) return false;
+        return handler.Contains("正在验收", StringComparison.Ordinal)
+               || handler.Contains("验收中", StringComparison.Ordinal)
+               || handler.Contains("acceptance in progress", StringComparison.OrdinalIgnoreCase)
+               || handler.Contains("currently accepting", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static bool LooksFutureAcceptancePlan(string handler)
+    {
+        if (handler.Contains("交回后", StringComparison.Ordinal)
+            || handler.Contains("返回后", StringComparison.Ordinal)
+            || handler.Contains("派出后", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (handler.Contains("完成后", StringComparison.Ordinal) && handler.Contains("验收", StringComparison.Ordinal))
+            return true;
+        if (handler.Contains("待验收", StringComparison.Ordinal) && !handler.Contains("正在", StringComparison.Ordinal))
+            return true;
+        if (handler.Contains("after return", StringComparison.OrdinalIgnoreCase)
+            || handler.Contains("after the executor returns", StringComparison.OrdinalIgnoreCase)
+            || handler.Contains("pending acceptance", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    static bool HasStructuredReturnEvidence(JsonObject values, JsonObject data)
+    {
+        if (JsonField.Bool(data, "pending_callback") == true)
+            return false;
+        if (JsonField.Bool(data, "acceptance_pending") == true
+            && JsonField.Bool(data, "current_package_accepted") != true)
+        {
+            return false;
+        }
+
+        var exec = values["execution_state"]?.GetValue<string>();
+        if (exec is "returned" or "succeeded" or "complete" or "completed")
+            return true;
+        var transport = values["transport_state"]?.GetValue<string>();
+        if (transport is "complete" or "completed")
+            return true;
+        var delivery = values["delivery_state"]?.GetValue<string>();
+        if (delivery is "complete" or "completed" or "returned" or "delivered")
+            return true;
+        if (JsonField.Bool(data, "transport_complete") == true)
+            return true;
+        if (JsonField.Bool(data, "receipt_complete") == true)
+            return true;
+        return false;
     }
 
     public static void NormalizeCurrentResult(
@@ -677,9 +788,9 @@ internal static class DocumentNormalizers
         PutIfMissing(values, "task_name",
             JsonField.Str(data, "task_name", "task", "package_id", "current_package_id", "title", "stage"));
         PutIfMissing(values, "model",
-            JsonField.Str(data, "executor_model", "model", "model_name", "model_id"));
+            JsonField.Str(data, "native_model", "executor_model", "model", "model_name", "model_id"));
         PutIfMissing(values, "effort",
-            JsonField.Str(data, "executor_reasoning", "executor_reasoning_effort", "reasoning_effort", "effort"));
+            JsonField.Str(data, "executor_effort", "executor_reasoning", "executor_reasoning_effort", "reasoning_effort", "effort"));
         PutIfMissing(values, "blocker",
             JsonField.Str(data, "blocker", "execution_blocker")
             ?? JsonField.Str(JsonField.Obj(data, "execution_blocker"), "code", "classification", "detail"));
@@ -695,6 +806,85 @@ internal static class DocumentNormalizers
             if (!string.IsNullOrWhiteSpace(rawRole))
                 values["role"] = rawRole;
         }
+
+        var model = values["model"]?.GetValue<string>();
+        var inferredRoute = JobIdentity.RouteFromModel(model);
+        if (IsMissingIdentity(values["route"]?.GetValue<string>()) && !string.IsNullOrWhiteSpace(inferredRoute))
+            values["route"] = inferredRoute;
+        if (IsMissingIdentity(values["actor_name"]?.GetValue<string>())
+            && !IsMissingIdentity(values["route"]?.GetValue<string>()))
+        {
+            values["actor_name"] = values["route"]!.GetValue<string>();
+        }
+    }
+
+    private static void StampCurrentHandlerAndRemaining(JsonObject values, JsonObject data)
+    {
+        var handler = JsonField.Str(data, "current_handler");
+        if (!string.IsNullOrWhiteSpace(handler))
+            values["current_handler"] = handler;
+
+        var remaining = FlattenRemaining(data);
+        if (!string.IsNullOrWhiteSpace(remaining))
+            values["remaining"] = remaining;
+
+        var localDelivered = JsonField.Bool(data, "local_delivered", "local_runtime_delivered");
+        if (localDelivered is not null)
+            values["local_delivered"] = localDelivered.Value ? "true" : "false";
+        var publicationComplete = JsonField.Bool(data, "publication_complete", "github_latest_updated");
+        if (publicationComplete is not null)
+            values["publication_complete"] = publicationComplete.Value ? "true" : "false";
+    }
+
+    private static void StampExplicitBool(JsonObject values, string key, bool? value)
+    {
+        if (value == true) values[key] = "true";
+        else if (value == false) values[key] = "false";
+    }
+
+    private static void StampCurrentAcceptanceFields(JsonObject values, JsonObject data)
+    {
+        StampExplicitBool(values, "product_pass", JsonField.Bool(data, "product_pass"));
+        StampExplicitBool(values, "current_package_accepted", JsonField.Bool(data, "current_package_accepted"));
+        var judgment = JsonField.Bool(data, "project_judgment");
+        if (judgment == true)
+            values["project_judgment"] = "true";
+        else if (judgment == false)
+            values["transport_non_judgment"] = "true";
+    }
+
+    private static string? FlattenRemaining(JsonObject data)
+    {
+        var parts = new List<string>();
+        void Add(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return;
+            var t = raw.Trim();
+            if (t.Length == 0 || t.Equals("unknown", StringComparison.OrdinalIgnoreCase)) return;
+            if (!parts.Contains(t, StringComparer.Ordinal))
+                parts.Add(t);
+        }
+
+        Add(JsonField.Str(data, "remaining", "remaining_work", "remaining_text"));
+        foreach (var key in new[] { "remaining", "remaining_work", "remaining_items" })
+        {
+            var arr = JsonField.Arr(data, key);
+            if (arr is null) continue;
+            foreach (var node in arr)
+            {
+                if (node is JsonValue jv)
+                {
+                    if (jv.TryGetValue<string>(out var s)) Add(s);
+                    else Add(node.ToJsonString());
+                }
+                else if (node is JsonObject obj)
+                {
+                    Add(JsonField.Str(obj, "text", "item", "item_id", "summary", "description", "id"));
+                }
+            }
+        }
+
+        return parts.Count == 0 ? null : string.Join("\n", parts);
     }
 
     private static string? LauncherFlag(JsonObject data, params string[] flags)
@@ -776,11 +966,14 @@ internal static class DocumentNormalizers
         var turnCompleted = JsonField.Bool(doc.Data, "turn_completed")
             ?? (NormUtil.LooksCompleted(JsonField.Str(doc.Data, "turn_state", "state")) ? true : null);
         var nativeTurnComplete = JsonField.Bool(doc.Data, "native_turn_complete");
+        var processExited = JsonField.Bool(doc.Data, "process_exited");
         var exitCode = JsonField.Str(doc.Data, "exit_code");
         var values = NormUtil.BaseAxes("cli", null, "unknown", "unknown", "unknown", "unknown",
             JsonField.Str(doc.Data, "summary", "state"));
         values["turn_state"] = JsonField.BoolAxis(turnCompleted, "completed", "open");
         values["process_state"] = JsonField.AxisOrUnknown(JsonField.Str(doc.Data, "process_state"));
+        StampExplicitBool(values, "native_turn_complete", nativeTurnComplete);
+        StampExplicitBool(values, "process_exited", processExited);
         if (nativeTurnComplete == false
             || (exitCode is "1" && nativeTurnComplete != true))
         {
@@ -1012,6 +1205,7 @@ internal static class DocumentNormalizers
             NormUtil.MarkCancelledArchived(values);
 
         StampExecutorIdentity(values, doc.Data);
+        StampCurrentAcceptanceFields(values, doc.Data);
         StampCollectedScope(doc, values);
         var loc = doc.Location ?? string.Empty;
         if (loc.Contains("DISPATCH_RECEIPT", StringComparison.OrdinalIgnoreCase)
@@ -1131,6 +1325,7 @@ internal static class DocumentNormalizers
             NormUtil.MarkCancelledArchived(values);
 
         StampExecutorIdentity(values, doc.Data);
+        StampCurrentAcceptanceFields(values, doc.Data);
         StampCollectedScope(doc, values);
         facts.Add(new SourceFact("work", entityId, projectId, links, values, new[] { NormUtil.Evidence(doc) }));
     }
@@ -1259,9 +1454,11 @@ internal static class DocumentNormalizers
         }
 
         var targetLine = JsonField.Str(doc.Data, "line_job_id", "current_line_job_id", "preserved_execution_line")
-                         ?? (IsCapacityResume(doc.Data) ? LineIdFromReceiptPath(JsonField.Str(doc.Data, "previous_402_receipt")) : null);
-        var targetDirect = JsonField.Str(doc.Data, "direct_job_id", "current_direct_job_id");
-        var result = JsonField.Str(doc.Data, "result", "state");
+                         ?? (IsCapacityResume(doc.Data) ? LineIdFromReceiptPath(JsonField.Str(doc.Data, "previous_402_receipt")) : null)
+                         ?? LineIdFromReceiptPath(JobIdentity.NestedReceiptPath(doc.Data, "line_receipt", "telephone_receipt"));
+        var targetDirect = JsonField.Str(doc.Data, "direct_job_id", "current_direct_job_id")
+                           ?? LineIdFromReceiptPath(JobIdentity.NestedReceiptPath(doc.Data, "route_receipt", "direct_receipt"));
+        var result = JsonField.Str(doc.Data, "result", "state", "verdict");
         if (!IsCapacityResume(doc.Data) && (!string.IsNullOrWhiteSpace(targetLine) || !string.IsNullOrWhiteSpace(targetDirect)))
         {
             AttachOrdinaryLeadAcceptance(facts, doc, projectId, targetLine, targetDirect, result);

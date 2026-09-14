@@ -120,17 +120,22 @@ public sealed class EvidenceNormalizer : INormalizer
                 continue;
             }
 
-            var line = JsonField.Str(doc.Data, "line_job_id", "current_line_job_id", "preserved_execution_line");
-            var direct = JsonField.Str(doc.Data, "direct_job_id", "current_direct_job_id");
+            var line = JsonField.Str(doc.Data, "line_job_id", "current_line_job_id", "preserved_execution_line")
+                       ?? DocumentNormalizers.LineIdFromReceiptPath(
+                           JobIdentity.NestedReceiptPath(doc.Data, "line_receipt", "telephone_receipt"));
+            var direct = JsonField.Str(doc.Data, "direct_job_id", "current_direct_job_id")
+                         ?? DocumentNormalizers.LineIdFromReceiptPath(
+                             JobIdentity.NestedReceiptPath(doc.Data, "route_receipt", "direct_receipt"));
             if (string.IsNullOrWhiteSpace(line) && string.IsNullOrWhiteSpace(direct))
                 continue;
             DocumentNormalizers.AttachOrdinaryLeadAcceptance(
                 facts, doc, pid, line, direct,
-                JsonField.Str(doc.Data, "result", "state"));
+                JsonField.Str(doc.Data, "result", "state", "verdict"));
         }
 
         ApplyExplicitBindingPairs(facts, docs);
         HandlingLogic.ApplyHandlingAndConflicts(facts, issues, handlingRecords, processObs, batch.CollectedAt);
+        ReconcileJobScopedIdentity(facts);
         MarkPendingAcceptanceWhereTransportOnly(facts);
 
         EmitAssociationAttentions(facts, handlingRecords);
@@ -227,12 +232,156 @@ public sealed class EvidenceNormalizer : INormalizer
                                   || f.EntityId.Contains(pair.Direct, StringComparison.Ordinal);
                 if (!matchLine && !matchDirect) continue;
                 var links = new Dictionary<string, string>(f.Links, StringComparer.Ordinal);
-                NormUtil.PutLink(links, "line_job_id", pair.Line);
-                NormUtil.PutLink(links, "direct_job_id", pair.Direct);
+                if (!links.ContainsKey("line_job_id"))
+                    NormUtil.PutLink(links, "line_job_id", pair.Line);
+                if (!links.ContainsKey("direct_job_id"))
+                    NormUtil.PutLink(links, "direct_job_id", pair.Direct);
                 facts[i] = new SourceFact(f.Kind, f.EntityId, f.ProjectId, links, f.Values, f.Evidence);
             }
         }
     }
+
+    /// <summary>
+    /// Same job: dispatch/request/owner beat ACTIVE_WORK/registry templates.
+    /// Model text never becomes a grok-cli route.
+    /// </summary>
+    private static void ReconcileJobScopedIdentity(List<SourceFact> facts)
+    {
+        var processed = new HashSet<int>();
+        for (var start = 0; start < facts.Count; start++)
+        {
+            if (facts[start].Kind != "work" || !processed.Add(start))
+                continue;
+
+            var cluster = new List<int> { start };
+            var grow = true;
+            while (grow)
+            {
+                grow = false;
+                for (var j = 0; j < facts.Count; j++)
+                {
+                    if (facts[j].Kind != "work" || cluster.Contains(j)) continue;
+                    if (!cluster.Any(i => SameJobIdentity(facts[i], facts[j]))) continue;
+                    cluster.Add(j);
+                    processed.Add(j);
+                    grow = true;
+                }
+            }
+
+            string? bestRoute = null;
+            string? bestModel = null;
+            string? bestEffort = null;
+            var bestRouteRank = -1;
+            var bestModelRank = -1;
+            var bestEffortRank = -1;
+            foreach (var i in cluster)
+            {
+                var f = facts[i];
+                var rank = JobIdentity.EvidenceRank(f);
+                var route = f.Values["route"]?.GetValue<string>();
+                var model = f.Values["model"]?.GetValue<string>();
+                var inferred = JobIdentity.RouteFromModel(model);
+                if (!IsMissingIdentityValue(route) && rank >= bestRouteRank)
+                {
+                    bestRoute = route;
+                    bestRouteRank = rank;
+                }
+                else if (!string.IsNullOrWhiteSpace(inferred) && rank >= bestRouteRank)
+                {
+                    bestRoute = inferred;
+                    bestRouteRank = rank;
+                }
+            }
+
+            foreach (var i in cluster)
+            {
+                var f = facts[i];
+                var rank = JobIdentity.EvidenceRank(f);
+                var model = f.Values["model"]?.GetValue<string>();
+                var effort = f.Values["effort"]?.GetValue<string>();
+                if (!IsMissingIdentityValue(model)
+                    && JobIdentity.ModelFitsRoute(bestRoute, model)
+                    && rank >= bestModelRank)
+                {
+                    bestModel = model;
+                    bestModelRank = rank;
+                }
+
+                if (!IsMissingIdentityValue(effort) && rank >= bestEffortRank)
+                {
+                    bestEffort = effort;
+                    bestEffortRank = rank;
+                }
+            }
+
+            if (bestRoute is null && !string.IsNullOrWhiteSpace(bestModel))
+                bestRoute = JobIdentity.RouteFromModel(bestModel);
+
+            foreach (var i in cluster)
+            {
+                var f = facts[i];
+                var rank = JobIdentity.EvidenceRank(f);
+                var values = NormUtil.CloneValues(f.Values);
+                var changed = false;
+                if (!IsMissingIdentityValue(bestRoute)
+                    && (rank < bestRouteRank || IsMissingIdentityValue(values["route"]?.GetValue<string>())))
+                {
+                    values["route"] = bestRoute;
+                    changed = true;
+                }
+
+                var currentModel = values["model"]?.GetValue<string>();
+                if (!IsMissingIdentityValue(bestModel)
+                    && (rank < bestModelRank || IsMissingIdentityValue(currentModel) || !JobIdentity.ModelFitsRoute(bestRoute, currentModel)))
+                {
+                    values["model"] = bestModel;
+                    changed = true;
+                }
+                else if (!IsMissingIdentityValue(currentModel)
+                         && !JobIdentity.ModelFitsRoute(values["route"]?.GetValue<string>() ?? bestRoute, currentModel))
+                {
+                    values.Remove("model");
+                    changed = true;
+                }
+
+                if (!IsMissingIdentityValue(bestEffort)
+                    && (rank < bestEffortRank || IsMissingIdentityValue(values["effort"]?.GetValue<string>())))
+                {
+                    values["effort"] = bestEffort;
+                    changed = true;
+                }
+
+                var actor = values["actor_name"]?.GetValue<string>();
+                var routeNow = values["route"]?.GetValue<string>() ?? bestRoute;
+                if (!IsMissingIdentityValue(routeNow)
+                    && (IsMissingIdentityValue(actor) || JobIdentity.LooksLikeRouteId(actor))
+                    && !string.Equals(actor, routeNow, StringComparison.Ordinal))
+                {
+                    values["actor_name"] = routeNow;
+                    changed = true;
+                }
+
+                if (changed)
+                    facts[i] = new SourceFact(f.Kind, f.EntityId, f.ProjectId, f.Links, values, f.Evidence);
+            }
+        }
+    }
+
+    private static bool SameJobIdentity(SourceFact a, SourceFact b)
+    {
+        if (!string.Equals(a.ProjectId, b.ProjectId, StringComparison.Ordinal))
+            return false;
+        a.Links.TryGetValue("line_job_id", out var al);
+        b.Links.TryGetValue("line_job_id", out var bl);
+        if (!string.IsNullOrWhiteSpace(al) && string.Equals(al, bl, StringComparison.OrdinalIgnoreCase))
+            return true;
+        a.Links.TryGetValue("direct_job_id", out var ad);
+        b.Links.TryGetValue("direct_job_id", out var bd);
+        return !string.IsNullOrWhiteSpace(ad) && string.Equals(ad, bd, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsMissingIdentityValue(string? value) =>
+        string.IsNullOrWhiteSpace(value) || value.Equals("unknown", StringComparison.OrdinalIgnoreCase);
 
     private static void EmitAssociationAttentions(List<SourceFact> facts, List<HandlingRecord> handlingRecords)
     {

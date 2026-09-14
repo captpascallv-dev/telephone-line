@@ -264,7 +264,17 @@ public static class ConsumerCopy
     // Source table; Fragments is longest-first so nested phrases win.
     static readonly (string Zh, string En)[] RawFragments =
     {
-        ("原执行者继续生成与退修，已到第", "Original executor continues generation and repair, reached day "),
+        ("正在修正状态显示", "Fixing status display"),
+        ("本机与公开交付已接受", "Local and public delivery already accepted"),
+        ("当前执行仍在进行", "Current execution is still in progress"),
+        ("直达游标", "Direct Cursor"),
+        ("直达格格", "Direct Grok"),
+        ("直达 Claude Code", "Direct Claude Code"),
+        ("直达 Codex", "Direct Codex"),
+        ("直达 Pi", "Direct Pi"),
+        ("深海 Codex", "DeepSea Codex"),
+        ("深海格格", "DeepSea Grok"),
+        ("深海 v4", "DeepSea v4"),
         ("天，完成后负责人验收", "; owner accepts when it is done"),
         ("原负责人继续验收", "The original owner continues acceptance"),
         ("负责人继续验收", "the owner continues acceptance"),

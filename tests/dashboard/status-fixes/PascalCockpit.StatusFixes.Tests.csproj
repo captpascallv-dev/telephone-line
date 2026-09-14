@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>PascalCockpit.StatusFixes.Tests</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\cockpit\PascalCockpit.Contracts\PascalCockpit.Contracts.csproj" />
+    <ProjectReference Include="..\..\..\src\cockpit\PascalCockpit.Normalization\PascalCockpit.Normalization.csproj" />
+    <ProjectReference Include="..\..\..\src\cockpit\PascalCockpit.Projection\PascalCockpit.Projection.csproj" />
+    <Compile Include="..\..\..\src\cockpit\PascalCockpit.Views\ConsumerCopy.cs" Link="ConsumerCopy.cs" />
+    <Compile Include="..\..\..\src\cockpit\PascalCockpit.Views\CurrentList.cs" Link="CurrentList.cs" />
+    <Compile Include="..\..\..\src\cockpit\PascalCockpit.Views\StatusLanguage.cs" Link="StatusLanguage.cs" />
+    <Compile Include="..\..\..\src\cockpit\PascalCockpit.Views\HudPresentation.cs" Link="HudPresentation.cs" />
+    <Compile Include="..\..\..\src\cockpit\PascalCockpit.Views\DetailsPresentation.cs" Link="DetailsPresentation.cs" />
+    <Compile Include="..\..\..\src\cockpit\PascalCockpit.Views\RolePresentation.cs" Link="RolePresentation.cs" />
+    <Compile Include="..\..\..\src\cockpit\PascalCockpit.Views\HelpSummaryText.cs" Link="HelpSummaryText.cs" />
+  </ItemGroup>
+</Project>

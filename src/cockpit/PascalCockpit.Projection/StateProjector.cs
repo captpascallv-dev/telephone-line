@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json.Nodes;
 using PascalCockpit.Contracts;
+using PascalCockpit.Normalization;
 
 namespace PascalCockpit.Projection;
 
@@ -128,7 +129,7 @@ public sealed class StateProjector : IProjector
                 workViews.Add(ToWorkView(c, hist ? DataQuality.LastKnown : DataQuality.Fresh, historical: hist));
             }
 
-            var leadView = BuildCurrentLeadView(pid, pLeads, pWorksCurrent, pContrib, workViews);
+            var leadView = BuildCurrentLeadView(pid, pf, pLeads, pWorksCurrent, pWorksHist, pContrib, workViews);
             if (leadView is not null)
                 workViews.Insert(0, leadView);
 
@@ -142,13 +143,29 @@ public sealed class StateProjector : IProjector
             EmitDerivedAttentions(pid, pWorksCurrent, pWorksHist, pContrib, pLeads, attentions, issues, batch.CollectedAt);
 
             var name = Val(pf, "name") ?? pid;
-            var summary = BuildProjectSummary(pf, pWorksCurrent, pWorksHist, attentions, pContrib);
-            var phase = ResolveCurrentPhase(pf, pWorksCurrent, pContrib);
-            var goal = NullIfUnknown(Val(pf, "goal"));
-            var nextStep = NullIfUnknown(Val(pf, "next_step"))
-                ?? pWorksCurrent.Select(w => Val(w, "next_step")).FirstOrDefault(s => !IsMissing(s))
-                ?? InferNextStep(attentions, pWorksCurrent, pContrib);
             var registryStatus = Val(pf, "registry_status") ?? string.Empty;
+            var hasActiveExecution = pWorksCurrent.Any(w =>
+                IsExecutionRole(w)
+                && (string.Equals(Val(w, "execution_state"), "active", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(Val(w, "execution_state"), "running", StringComparison.OrdinalIgnoreCase)));
+            var inFlight = hasActiveExecution;
+            var blockingCurrent = HasBlockingCurrentIncomplete(pf, pWorksCurrent);
+            var foldComplete = CurrentRoundAccepted(pf, registryStatus) && !blockingCurrent;
+
+            var summary = foldComplete
+                ? FoldedCompleteSummary(pf)
+                : BuildProjectSummary(pf, pWorksCurrent, pWorksHist, attentions, pContrib, inFlight);
+            var phase = foldComplete
+                ? "已完成"
+                : ResolveCurrentPhase(pf, pWorksCurrent, pContrib);
+            var goal = NullIfUnknown(Val(pf, "goal"));
+            var nextStep = foldComplete
+                ? null
+                : NullIfUnknown(Val(pf, "next_step"))
+                    ?? CurrentHandlerText(pf, pWorksCurrent)
+                    ?? NullIfUnknown(Val(pf, "remaining"))
+                    ?? pWorksCurrent.Select(w => Val(w, "next_step")).FirstOrDefault(s => !IsMissing(s))
+                    ?? InferNextStep(attentions, pWorksCurrent, pContrib);
             var paused = string.Equals(Val(pf, "paused"), "true", StringComparison.OrdinalIgnoreCase)
                 || registryStatus.Equals("PAUSED", StringComparison.OrdinalIgnoreCase);
             var registryActive = registryStatus.Equals("ACTIVE", StringComparison.OrdinalIgnoreCase)
@@ -168,8 +185,20 @@ public sealed class StateProjector : IProjector
                 continue;
             }
 
-            // Explicit completion stays historical even if old AW/receipts still exist.
-            var isActive = !paused && !terminal && (hasCurrentSignal || registryActive);
+            var isActive = !paused && !foldComplete && (!terminal || blockingCurrent)
+                && (hasCurrentSignal || registryActive || blockingCurrent);
+
+            if (foldComplete)
+            {
+                workViews = workViews.Select(w => w with
+                {
+                    Quality = DataQuality.LastKnown,
+                    ActorKind = "history",
+                    Summary = w.Summary.StartsWith("[historical]", StringComparison.OrdinalIgnoreCase)
+                        ? w.Summary
+                        : "[historical] " + w.Summary
+                }).ToList();
+            }
 
             var progress = BuildProgress(pf, pContrib, pWorksCurrent);
             var targets = BuildTargets(pid, pf, pWorksCurrent);
@@ -518,22 +547,42 @@ public sealed class StateProjector : IProjector
                      "contribution_id", "registry_pointer_lag", "next_step", "current_handler",
                      "execution_blocker", "remaining_repair_dispatched", "pascal_decision_required",
                      "actor_name", "task_name", "model", "effort", "blocker", "review_assigned",
-                     "lead_source_kind", "source_adopted", "lead_run_id"
+                     "lead_source_kind", "source_adopted", "lead_run_id", "remaining",
+                     "local_delivered", "publication_complete", "product_pass",
+                     "current_package_accepted", "project_judgment"
                  }))
         {
             var av = values[key]?.GetValue<string>();
             var bv = b.Values[key]?.GetValue<string>();
+            if (key == "model")
+            {
+                var routeNow = values["route"]?.GetValue<string>();
+                if (!JobIdentity.ModelFitsRoute(routeNow, av)) av = null;
+                if (!JobIdentity.ModelFitsRoute(routeNow, bv)) bv = null;
+            }
+
             if (IsMissing(av) && !IsMissing(bv))
             {
                 values[key] = bv;
             }
             else if (!IsMissing(av) && !IsMissing(bv) && !string.Equals(av, bv, StringComparison.Ordinal))
             {
-                // Prefer more specific non-unknown; prefer failed over unknown; prefer succeeded over returned.
-                values[key] = PreferAxis(av!, bv!);
+                if (key is "route" or "model" or "effort" or "actor_name")
+                    values[key] = JobIdentity.PreferIdentityValue(av, a, bv, b) ?? av;
+                else if (key is "execution_state" or "transport_state" or "delivery_state")
+                    values[key] = PreferStructuredWorkAxis(av!, bv!);
+                else if (key is "product_pass" or "current_package_accepted")
+                    values[key] = PreferExplicitNonCompletion(av!, bv!);
+                else
+                    values[key] = PreferAxis(av!, bv!);
+            }
+            else if (key == "model" && IsMissing(av) && IsMissing(bv))
+            {
+                values.Remove("model");
             }
         }
 
+        AlignMergedIdentity(values);
         var evidence = a.Evidence.Concat(b.Evidence).ToList();
         var projectId = a.ProjectId ?? b.ProjectId;
         // Prefer entity that looks like active/successor.
@@ -551,6 +600,52 @@ public sealed class StateProjector : IProjector
         if (IsHistoricalFlag(b) && !IsHistoricalFlag(a)) return a.EntityId;
         return a.EntityId;
     }
+
+    private static void AlignMergedIdentity(JsonObject values)
+    {
+        var model = values["model"]?.GetValue<string>();
+        var inferred = JobIdentity.RouteFromModel(model);
+        var route = values["route"]?.GetValue<string>();
+        if (IsMissing(route) && !string.IsNullOrWhiteSpace(inferred))
+        {
+            values["route"] = inferred;
+            route = inferred;
+        }
+
+        if (!IsMissing(route) && !IsMissing(model) && !JobIdentity.ModelFitsRoute(route, model))
+            values.Remove("model");
+
+        var actor = values["actor_name"]?.GetValue<string>();
+        if (!IsMissing(route)
+            && (IsMissing(actor) || JobIdentity.LooksLikeRouteId(actor))
+            && !string.Equals(actor, route, StringComparison.Ordinal))
+        {
+            values["actor_name"] = route;
+        }
+    }
+
+    private static string PreferStructuredWorkAxis(string a, string b)
+    {
+        if (a == "unknown") return b;
+        if (b == "unknown") return a;
+        if (a == "failed" || b == "failed") return "failed";
+        if (IsTerminalWorkAxis(a) && !IsTerminalWorkAxis(b)) return a;
+        if (IsTerminalWorkAxis(b) && !IsTerminalWorkAxis(a)) return b;
+        if (IsActiveWorkAxis(a) && !IsActiveWorkAxis(b)) return a;
+        if (IsActiveWorkAxis(b) && !IsActiveWorkAxis(a)) return b;
+        return PreferAxis(a, b);
+    }
+
+    private static bool IsTerminalWorkAxis(string s) =>
+        s.Equals("returned", StringComparison.OrdinalIgnoreCase)
+        || s.Equals("succeeded", StringComparison.OrdinalIgnoreCase)
+        || s.Equals("complete", StringComparison.OrdinalIgnoreCase)
+        || s.Equals("completed", StringComparison.OrdinalIgnoreCase)
+        || s.Equals("delivered", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsActiveWorkAxis(string s) =>
+        s.Equals("active", StringComparison.OrdinalIgnoreCase)
+        || s.Equals("running", StringComparison.OrdinalIgnoreCase);
 
     private static string PreferAxis(string a, string b)
     {
@@ -967,8 +1062,10 @@ public sealed class StateProjector : IProjector
     /// </summary>
     private static WorkView? BuildCurrentLeadView(
         string projectId,
+        SourceFact? project,
         List<SourceFact> pLeads,
         List<SourceFact> currentWorks,
+        List<SourceFact> historicalWorks,
         List<SourceFact> contrib,
         List<WorkView> already)
     {
@@ -1104,8 +1201,69 @@ public sealed class StateProjector : IProjector
                 folded["lead_handling_state"] = Val(c, "lead_handling_state");
         }
 
+        ApplyCurrentOwnerContinuation(folded, chosen, project, currentWorks, historicalWorks);
+
         var fact = new SourceFact("lead", chosen.EntityId, projectId, chosen.Links, folded, chosen.Evidence);
         return ToWorkView(fact, DataQuality.Fresh, historical: false);
+    }
+
+    private static void ApplyCurrentOwnerContinuation(
+        JsonObject folded,
+        SourceFact chosen,
+        SourceFact? project,
+        List<SourceFact> currentWorks,
+        List<SourceFact> historicalWorks)
+    {
+        var handler = CurrentHandlerText(project, currentWorks);
+        if (!IsMissing(handler) && IsMissing(ValFrom(folded, "current_handler")))
+            folded["current_handler"] = handler;
+        if (IsMissing(ValFrom(folded, "remaining")) && !IsMissing(Val(project, "remaining")))
+            folded["remaining"] = Val(project, "remaining");
+
+        var summaryNow = ValFrom(folded, "summary");
+        var ownerText = ValFrom(folded, "current_handler") ?? handler;
+        if (IsMissing(summaryNow) && !IsMissing(ownerText))
+            folded["summary"] = ownerText;
+
+        chosen.Links.TryGetValue("lead_session_id", out var chosenSession);
+        var lifecycleOpen = historicalWorks.Concat(currentWorks).Any(w =>
+            SameLeadSession(w, chosenSession)
+            && OwnerLifecycleStillOpen(w)
+            && !IsMissing(ValFrom(folded, "current_handler") ?? handler));
+        if (lifecycleOpen && IsMissing(ValFrom(folded, "turn_state")))
+            folded["turn_state"] = "open";
+    }
+
+    private static string? CurrentHandlerText(SourceFact? project, List<SourceFact> currentWorks)
+    {
+        var fromProject = NullIfUnknown(Val(project, "current_handler"));
+        if (!IsMissing(fromProject))
+            return fromProject;
+        return currentWorks
+            .Select(w => Val(w, "current_handler"))
+            .FirstOrDefault(s => !IsMissing(s));
+    }
+
+    private static bool SameLeadSession(SourceFact w, string? session)
+    {
+        if (string.IsNullOrWhiteSpace(session))
+            return false;
+        return w.Links.TryGetValue("lead_session_id", out var sid)
+               && string.Equals(sid, session, StringComparison.Ordinal);
+    }
+
+    private static bool OwnerLifecycleStillOpen(SourceFact w)
+    {
+        if (string.Equals(Val(w, "native_turn_complete"), "false", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(Val(w, "process_exited"), "false", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var turn = Val(w, "turn_state") ?? string.Empty;
+        return string.Equals(Val(w, "process_exited"), "false", StringComparison.OrdinalIgnoreCase)
+               && (turn.Equals("incomplete", StringComparison.OrdinalIgnoreCase)
+                   || turn.Equals("open", StringComparison.OrdinalIgnoreCase));
     }
 
     private static string? ValFrom(JsonObject values, string key) =>
@@ -1382,16 +1540,103 @@ public sealed class StateProjector : IProjector
         return false;
     }
 
+    private static bool IsExplicitFalse(SourceFact? fact, string key) =>
+        string.Equals(Val(fact, key), "false", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsExplicitTrue(SourceFact? fact, string key) =>
+        string.Equals(Val(fact, key), "true", StringComparison.OrdinalIgnoreCase);
+
+    private static bool CurrentRoundAccepted(SourceFact? project, string? registryStatus)
+    {
+        if (IsExplicitTrue(project, "product_pass"))
+            return true;
+        return IsTerminalRegistryStatus(registryStatus ?? string.Empty)
+               && !IsExplicitFalse(project, "product_pass");
+    }
+
+    private static bool HasBlockingCurrentIncomplete(SourceFact? project, List<SourceFact> current)
+    {
+        if (IsExplicitFalse(project, "product_pass"))
+            return true;
+        if (IsExplicitFalse(project, "current_package_accepted"))
+            return true;
+
+        foreach (var w in current.Where(IsExecutionRole))
+        {
+            if (IsExplicitFalse(w, "product_pass")
+                || IsExplicitFalse(w, "current_package_accepted"))
+            {
+                return true;
+            }
+
+            if (IsAwaitingCurrentAcceptance(w))
+                return true;
+            if (IsFailed(Val(w, "execution_state")) && !IsHandledAxis(Val(w, "lead_handling_state") ?? string.Empty)
+                && !IsHandledAxis(Val(w, "acceptance_state") ?? string.Empty))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsAwaitingCurrentAcceptance(SourceFact w)
+    {
+        if (IsExplicitTrue(w, "current_package_accepted"))
+            return false;
+
+        var handling = Val(w, "lead_handling_state") ?? string.Empty;
+        var acceptance = Val(w, "acceptance_state") ?? string.Empty;
+        if (handling.Equals("lead_accepting", StringComparison.OrdinalIgnoreCase)
+            || handling.Equals("awaiting_lead_acceptance", StringComparison.OrdinalIgnoreCase)
+            || acceptance.Equals("acceptance_in_progress", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (!acceptance.Equals("pending", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var execution = Val(w, "execution_state");
+        var transport = Val(w, "transport_state");
+        return string.Equals(execution, "returned", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(execution, "succeeded", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(transport, "complete", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string FoldedCompleteSummary(SourceFact? project) =>
+        string.Equals(Val(project, "local_delivered"), "true", StringComparison.OrdinalIgnoreCase)
+        && string.Equals(Val(project, "publication_complete"), "true", StringComparison.OrdinalIgnoreCase)
+            ? "本机与公开交付已接受"
+            : "已完成";
+
+    private static string PreferExplicitNonCompletion(string a, string b)
+    {
+        if (a.Equals("false", StringComparison.OrdinalIgnoreCase)
+            || b.Equals("false", StringComparison.OrdinalIgnoreCase))
+        {
+            return "false";
+        }
+
+        if (a.Equals("unknown", StringComparison.OrdinalIgnoreCase)) return b;
+        if (b.Equals("unknown", StringComparison.OrdinalIgnoreCase)) return a;
+        return a;
+    }
+
     private static string BuildProjectSummary(
         SourceFact? project,
         List<SourceFact> current,
         List<SourceFact> historical,
         List<AttentionItem> attentions,
-        List<SourceFact> contrib)
+        List<SourceFact> contrib,
+        bool inFlight)
     {
-        if (Val(project, "summary") is { } s && !IsMissing(s) && !s.Contains("idle_or_registry", StringComparison.Ordinal)
+        var s = Val(project, "summary");
+        var contradict = JobIdentity.SummaryContradictsInFlight(s, inFlight);
+        if (!IsMissing(s) && !s!.Contains("idle_or_registry", StringComparison.Ordinal)
             && !s.StartsWith("current_works=", StringComparison.Ordinal)
-            && !LooksLikeTechnicalToken(s))
+            && !LooksLikeTechnicalToken(s)
+            && !contradict)
         {
             return StripStaleFreshnessPrefixes(s);
         }
@@ -1399,6 +1644,8 @@ public sealed class StateProjector : IProjector
         var parts = new List<string>();
         if (current.Count == 0 && contrib.Count == 0)
             parts.Add("本轮没有可读的当前执行或回执");
+        else if (inFlight)
+            parts.Add("当前执行仍在进行");
         else
             parts.Add("当前可读工作 " + current.Count + " 项");
         if (historical.Count > 0) parts.Add("可追溯历史 " + historical.Count + " 项");
@@ -1463,28 +1710,40 @@ public sealed class StateProjector : IProjector
         if (current.Any(IsExecutionRole))
             return "进行中";
 
-        var registryStage = Val(project, "stage");
-        if (!IsMissing(registryStage) && !LooksLikeTechnicalToken(registryStage))
+        var registryStage = HumanizeSourceStage(Val(project, "stage"));
+        if (!IsMissing(registryStage))
             return registryStage!;
 
         return "进行中";
+    }
+
+    private static string? HumanizeSourceStage(string? stage)
+    {
+        if (IsMissing(stage)) return null;
+        if (stage!.Equals("CORRECTING_STATUS_DISPLAY", StringComparison.OrdinalIgnoreCase))
+            return "正在修正状态显示";
+        if (LooksLikeTechnicalToken(stage))
+            return null;
+        return stage;
     }
 
     private static string? FirstCurrentSourceStage(List<SourceFact> current)
     {
         foreach (var w in current.Where(IsExecutionRole))
         {
-            if (string.Equals(Val(w, "authorized_current"), "true", StringComparison.OrdinalIgnoreCase)
-                && !IsMissing(Val(w, "stage")))
+            if (string.Equals(Val(w, "authorized_current"), "true", StringComparison.OrdinalIgnoreCase))
             {
-                return Val(w, "stage");
+                var stage = HumanizeSourceStage(Val(w, "stage"));
+                if (!IsMissing(stage))
+                    return stage;
             }
         }
 
         foreach (var w in current.Where(IsExecutionRole))
         {
-            if (!IsMissing(Val(w, "stage")) && Val(w, "stage") is not "unknown")
-                return Val(w, "stage");
+            var stage = HumanizeSourceStage(Val(w, "stage"));
+            if (!IsMissing(stage))
+                return stage;
         }
 
         return null;
@@ -1506,6 +1765,8 @@ public sealed class StateProjector : IProjector
                 && (string.Equals(Val(w, "execution_state"), "active", StringComparison.OrdinalIgnoreCase)
                     || string.Equals(Val(w, "execution_state"), "running", StringComparison.OrdinalIgnoreCase))))
             return "执行中";
+        if (current.Any(w => string.Equals(Val(w, "lead_handling_state"), "repair_prepared", StringComparison.OrdinalIgnoreCase)))
+            return "准备退修，待实际派出";
         if (current.Any(w =>
                 (Val(w, "acceptance_state") ?? "").Contains("fail_repair", StringComparison.OrdinalIgnoreCase)
                 || (Val(w, "lead_handling_state") ?? "").Contains("fail_repair", StringComparison.OrdinalIgnoreCase)))
@@ -1514,6 +1775,12 @@ public sealed class StateProjector : IProjector
         }
 
         if (current.Any(w =>
+                IsExecutionRole(w)
+                && string.Equals(Val(w, "authorized_current"), "true", StringComparison.OrdinalIgnoreCase)))
+        {
+            // Current authorized execution is not "continue generation".
+        }
+        else if (current.Any(w =>
                 string.Equals(Val(w, "role"), "generation", StringComparison.OrdinalIgnoreCase)
                 || !IsMissing(Val(w, "generation_pid"))
                 || string.Equals(Val(w, "progress_basis"), "世界已生成天数", StringComparison.Ordinal)))
@@ -1584,6 +1851,7 @@ public sealed class StateProjector : IProjector
             .ToList();
         var authorizedAtt = attentions.FirstOrDefault(a =>
             a.Owner == AttentionOwner.Lead
+            && IsOpenLeadNext(a)
             && authorizedIds.Any(id =>
                 a.Id.Contains(id, StringComparison.Ordinal)
                 || a.Targets.Any(t => t.EntityId is not null && t.EntityId.Contains(id, StringComparison.Ordinal))));
@@ -1595,7 +1863,7 @@ public sealed class StateProjector : IProjector
             return null;
         }
 
-        var leadAtt = attentions.FirstOrDefault(a => a.Owner == AttentionOwner.Lead);
+        var leadAtt = attentions.FirstOrDefault(a => a.Owner == AttentionOwner.Lead && IsOpenLeadNext(a));
         if (leadAtt is not null) return leadAtt.Description;
         var pascalAtt = attentions.FirstOrDefault(a => a.Owner == AttentionOwner.Pascal);
         if (pascalAtt is not null) return pascalAtt.Description;
@@ -1604,6 +1872,15 @@ public sealed class StateProjector : IProjector
         if (current.Any(w => string.Equals(Val(w, "transport_state"), "complete", StringComparison.OrdinalIgnoreCase)))
             return "待原Lead处理回执";
         return null;
+    }
+
+    private static bool IsOpenLeadNext(AttentionItem a)
+    {
+        var reason = a.Reason ?? string.Empty;
+        if (reason.StartsWith("lead_handled", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var desc = a.Description ?? string.Empty;
+        return !desc.StartsWith("已处理", StringComparison.Ordinal);
     }
 
     // --- helpers ---

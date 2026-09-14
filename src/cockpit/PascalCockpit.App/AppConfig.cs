@@ -13,6 +13,7 @@ public sealed class AppConfig
 {
     public IReadOnlyList<string> RegistryPaths { get; init; } = Array.Empty<string>();
     public IReadOnlyList<string> AdditionalSourcePaths { get; init; } = Array.Empty<string>();
+    public string? FrozenCollectionPath { get; init; }
     public int RefreshSeconds { get; init; } = 5;
     public int MaxFileBytes { get; init; } = 1_048_576;
     public int MaxFilesPerRefresh { get; init; } = 512;
@@ -66,6 +67,7 @@ public sealed class AppConfig
 
         var registry = ReadStringList(obj, "registry_paths");
         var extra = ReadStringList(obj, "additional_source_paths");
+        var frozen = obj["frozen_collection_path"]?.GetValue<string>();
         var refresh = ReadInt(obj, "refresh_seconds", 5);
         if (refresh < 1) refresh = 1;
         if (refresh > 3600) refresh = 3600;
@@ -76,6 +78,7 @@ public sealed class AppConfig
         {
             RegistryPaths = registry,
             AdditionalSourcePaths = extra,
+            FrozenCollectionPath = string.IsNullOrWhiteSpace(frozen) ? null : frozen,
             RefreshSeconds = refresh,
             MaxFileBytes = maxBytes > 0 ? maxBytes : 1_048_576,
             MaxFilesPerRefresh = maxFiles > 0 ? maxFiles : 512,

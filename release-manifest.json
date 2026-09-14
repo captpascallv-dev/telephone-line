@@ -1,7 +1,7 @@
 {
   "protocol_version": "telephone-line-release-manifest-v1",
   "product": "telephone-line",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "license": "MPL-2.0",
   "platform": "windows",
   "denominator": 8,
@@ -17,13 +17,13 @@
   ],
   "artifacts": [
     {
-      "name": "telephone-line-0.1.6-source.zip",
+      "name": "telephone-line-0.1.7-source.zip",
       "contains": "src/, schemas/, docs/, .github/, tests/, and root README.md, LICENSE, CONTRIBUTING.md, SECURITY.md, THIRD-PARTY-NOTICES.md, .gitattributes",
       "bytes": null,
       "sha256": null
     },
     {
-      "name": "telephone-line-0.1.6-windows.zip",
+      "name": "telephone-line-0.1.7-windows.zip",
       "contains": "src/, schemas/, docs/, and root README.md, LICENSE, CONTRIBUTING.md, SECURITY.md, THIRD-PARTY-NOTICES.md, .gitattributes; excludes tests/ and .github/",
       "bytes": null,
       "sha256": null
@@ -77,8 +77,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 24822,
-      "sha256": "1fffad248cb9d60d574dda1918ed6d94f4587f1f1e53724f1e67922435c53b7a"
+      "bytes": 24864,
+      "sha256": "62115459867957184df236b48fffb098a82cad9256f4a963a5964292fcfd83bb"
     },
     {
       "path": "SECURITY.md",
@@ -92,8 +92,8 @@
     },
     {
       "path": "docs/README.zh-CN.md",
-      "bytes": 23177,
-      "sha256": "f271c14ecb9ea7aa37418d4d1095a236f3db1df64975de316d77f806d1ae96ee"
+      "bytes": 23221,
+      "sha256": "62566b8e55d73edb87fd9611d56e27259977c3cd71925a7c7a9418e85fe9560f"
     },
     {
       "path": "docs/adapter-authoring.md",
@@ -301,6 +301,11 @@
       "sha256": "837161b84666c5458bbfeedbbb5f0fc363093bf80c1460f1cdefcc178dc6a478"
     },
     {
+      "path": "docs/releases/v0.1.7.md",
+      "bytes": 2085,
+      "sha256": "9103a0ffe68f58e89967941f8c0a248f1c3bcfc4dec6f098a4436e54d6e51c35"
+    },
+    {
       "path": "docs/routes.md",
       "bytes": 1719,
       "sha256": "015360fa16b23dbb19238b72eba6d06cc8be488d7750a3a6f8d61cf15e76dde2"
@@ -493,7 +498,7 @@
     {
       "path": "schemas/release-manifest.schema.json",
       "bytes": 3669,
-      "sha256": "4039f541468a43ec5bc3b3485a255eb373c3a35abb792fbaf88d939ddac776dc"
+      "sha256": "8ec1127fe021f0ca4fe2e7ed0b3b329276808a45fd755d80aa9491941b7f7bcb"
     },
     {
       "path": "schemas/telephone-line-batch.schema.json",
@@ -782,18 +787,23 @@
     },
     {
       "path": "src/cockpit/PascalCockpit.App/App.xaml.cs",
-      "bytes": 3196,
-      "sha256": "7d1550a29f9545f612b6d89c81398baef2f77faa3fb288ad5f24e23af86bf04f"
+      "bytes": 3441,
+      "sha256": "ba9346f3c050b0d161108af0063441df6d8e0c7a9e3bf3642a61241c891d366a"
     },
     {
       "path": "src/cockpit/PascalCockpit.App/AppConfig.cs",
-      "bytes": 5200,
-      "sha256": "82abe72b7749af0b287de6d154333ec03387a76f70f35ca982f910344553e9bd"
+      "bytes": 5413,
+      "sha256": "3332d5b28587b5c7cbf1178568c65fe3eecee14db2f1b5c12c42702fb49f4b25"
     },
     {
       "path": "src/cockpit/PascalCockpit.App/CockpitHostModel.cs",
       "bytes": 2178,
       "sha256": "a7f9d33e388705f53e308b7b9495bbc64c15e2747ef9ddc10e506e4473c697fc"
+    },
+    {
+      "path": "src/cockpit/PascalCockpit.App/FrozenCollectionCollector.cs",
+      "bytes": 2549,
+      "sha256": "c8e56b93920278c8c5836e5b717527fd1b3bbe1179a17e24309b4e583f8067c4"
     },
     {
       "path": "src/cockpit/PascalCockpit.App/HelpSendGuard.cs",
@@ -862,8 +872,8 @@
     },
     {
       "path": "src/cockpit/PascalCockpit.Collection/FileCollector.cs",
-      "bytes": 49370,
-      "sha256": "0e4d7819edaf03b65a959fd603e3685f666225e73c49c53b4f61bd9f31b02f91"
+      "bytes": 52012,
+      "sha256": "2fb24aeaec92175e03d3b8141e5e5dcfff7efe9c271de2cdf6d19fbbfb0af4a6"
     },
     {
       "path": "src/cockpit/PascalCockpit.Collection/PascalCockpit.Collection.csproj",
@@ -882,18 +892,23 @@
     },
     {
       "path": "src/cockpit/PascalCockpit.Normalization/DocumentNormalizers.cs",
-      "bytes": 85331,
-      "sha256": "9995d3680d5e64a5f06722a7fbb83dbad797484701199d5fac8311af9ef02a98"
+      "bytes": 94927,
+      "sha256": "e07e769c328c75fdfa74b3f42c7f9e95fe6948aaeaf9d792bcee7f3b1dfd78fb"
     },
     {
       "path": "src/cockpit/PascalCockpit.Normalization/EvidenceNormalizer.cs",
-      "bytes": 18541,
-      "sha256": "e81a3ec7adef4da8c3cfc0accf1587792cc078f65bccf3e4b1f184e6591c3606"
+      "bytes": 24970,
+      "sha256": "1eec43164dee744d0cd21dcf550ba79cfc1323930077f244e51a091c878744ff"
     },
     {
       "path": "src/cockpit/PascalCockpit.Normalization/HandlingLogic.cs",
       "bytes": 33147,
       "sha256": "78fae58a3b19d834b3234c2b81e47d02fb5be2f2c6e876fb5beac8ad2320346c"
+    },
+    {
+      "path": "src/cockpit/PascalCockpit.Normalization/JobIdentity.cs",
+      "bytes": 12943,
+      "sha256": "b50d48caaf52853cf758d872ad5e8ad59a6baeb99ee503fea604fd25de867472"
     },
     {
       "path": "src/cockpit/PascalCockpit.Normalization/JsonField.cs",
@@ -902,8 +917,8 @@
     },
     {
       "path": "src/cockpit/PascalCockpit.Normalization/NormUtil.cs",
-      "bytes": 10343,
-      "sha256": "9340660d7034005544e899c861d67032b3eb0634d7a10688a2e2eff07e48ed52"
+      "bytes": 11735,
+      "sha256": "b1048b676545739b2eb57e3480d9042db2a2eb11ddfa6b45e03b14d93d16d0ed"
     },
     {
       "path": "src/cockpit/PascalCockpit.Normalization/PascalCockpit.Normalization.csproj",
@@ -922,18 +937,18 @@
     },
     {
       "path": "src/cockpit/PascalCockpit.Projection/PascalCockpit.Projection.csproj",
-      "bytes": 227,
-      "sha256": "4d498b23f5bede4be1187f9c722b1bca1759c9fd67c0453ca6ada91c2dd7dfa3"
+      "bytes": 351,
+      "sha256": "f174cb1d68777959074692b5d26ec80c5f7c2e82ced017495e70a387b96ded7a"
     },
     {
       "path": "src/cockpit/PascalCockpit.Projection/StateProjector.cs",
-      "bytes": 75883,
-      "sha256": "70e1fc0c53d9f18ce2473bd19f10b6543dba25654d02548052c2a820eecfd830"
+      "bytes": 87800,
+      "sha256": "6488694dbbab41a75595ffafafa031109a277e1df6191f5022a73e43cf0f7f33"
     },
     {
       "path": "src/cockpit/PascalCockpit.Views/ConsumerCopy.cs",
-      "bytes": 30191,
-      "sha256": "444ff6d7a03dc5881fc72cddd9776685aac93b8fd11903ac1c7437e5be7d0de9"
+      "bytes": 30636,
+      "sha256": "2cb0863a37102fa7b0ad31975790226ac5a70cc4d989607f3b95f87213f07016"
     },
     {
       "path": "src/cockpit/PascalCockpit.Views/CurrentList.cs",
@@ -942,8 +957,8 @@
     },
     {
       "path": "src/cockpit/PascalCockpit.Views/DetailsPresentation.cs",
-      "bytes": 16959,
-      "sha256": "2aedbea1f6752ddce3941bbcbeeb3e49e65dfce0fa701bb61135b9a918ffa64b"
+      "bytes": 18335,
+      "sha256": "6be73eb68e645e57e151e0167d09a36efe87e385a1997e4514dc65c9be19e68b"
     },
     {
       "path": "src/cockpit/PascalCockpit.Views/DetailsView.xaml",
@@ -982,13 +997,13 @@
     },
     {
       "path": "src/cockpit/PascalCockpit.Views/RolePresentation.cs",
-      "bytes": 11377,
-      "sha256": "6b588e85f52966cf80f5b5d01b71c72ed8602fd3e9f7298eac86a57cbe5bc3b8"
+      "bytes": 13433,
+      "sha256": "0a13b718b6468d233d841a200212b49e87a2260c9da46b117cc528ce5e407ef1"
     },
     {
       "path": "src/cockpit/PascalCockpit.Views/StatusLanguage.cs",
-      "bytes": 57845,
-      "sha256": "69eea826ca3c6f28e0bbbe96f4299d4d340f06808f2f891b4ade8476468942a5"
+      "bytes": 60971,
+      "sha256": "7ffc837deafcb71d74eb1382dcdf3718a4eb41c618bd4c7b61ede8bd19a405b8"
     },
     {
       "path": "src/cockpit/README.md",
@@ -1077,48 +1092,48 @@
     },
     {
       "path": "src/cockpit/runtime/win-x64/PascalCockpit.App.deps.json",
-      "bytes": 37870,
-      "sha256": "82fa3cb47b8993ab87f93f6532fbec126eccad95401c172ba62f499adbaa2ec8"
+      "bytes": 36799,
+      "sha256": "7976f5c215f19c189fec053db909d90264dac364433164541ac16c13ca55fbe9"
     },
     {
       "path": "src/cockpit/runtime/win-x64/PascalCockpit.App.dll",
-      "bytes": 55808,
-      "sha256": "97652de9ecaa333a09fc018f3d697b9e3126ada67caf343143114a4d3cc0a787"
+      "bytes": 58368,
+      "sha256": "77378142d905bc1ede7a513174bce0ad05172d9006bfd56a84aa3a5be9d246ea"
     },
     {
       "path": "src/cockpit/runtime/win-x64/PascalCockpit.App.exe",
       "bytes": 152064,
-      "sha256": "22122504de9994c652caf0ce39b0c5fa35012702896d6150e05cb572536c5e35"
+      "sha256": "d0bbe0a8b311f2934cc4b5a26b38f4832b9748a2adbd8b8d8314ff97add8a6eb"
     },
     {
       "path": "src/cockpit/runtime/win-x64/PascalCockpit.App.runtimeconfig.json",
-      "bytes": 468,
-      "sha256": "04a7260789dc6b24aae58564860d6f913d887cccc0419f43171adc3a85b88a68"
+      "bytes": 450,
+      "sha256": "6b9ee3cd3e3fb77d663625028b4825d76249b26cab7bbf508e53755b2d982b70"
     },
     {
       "path": "src/cockpit/runtime/win-x64/PascalCockpit.Collection.dll",
-      "bytes": 47104,
-      "sha256": "0bf2f49dd79af013fc22edccede544be3c439b29bcc01518565682ca2fe7d3a5"
+      "bytes": 48640,
+      "sha256": "735c192f3e893f0d375fe4227f74ea43d010f18c7a5f05922e2d4d55ab2a3747"
     },
     {
       "path": "src/cockpit/runtime/win-x64/PascalCockpit.Contracts.dll",
       "bytes": 49152,
-      "sha256": "bca65c2ff35aa868c8cb2352482d68a8aa85b8431cd78f8dc728c2f4414b1d54"
+      "sha256": "63f9543a1f8f973e05fc2c7ae54685a236de1c7cc4e8d6f61d0b094aecfe15a1"
     },
     {
       "path": "src/cockpit/runtime/win-x64/PascalCockpit.Normalization.dll",
-      "bytes": 86016,
-      "sha256": "181796b579b2e8a2dde9d1596d3459e8ab250ff9e2021567da6c82c3501abe4e"
+      "bytes": 98304,
+      "sha256": "2b38f0cac2b3099a6fa4ef8a2b112facc79833baffff1b10430826f7d79476c8"
     },
     {
       "path": "src/cockpit/runtime/win-x64/PascalCockpit.Projection.dll",
-      "bytes": 47616,
-      "sha256": "509d6d2c59e76b497364dd764b464b997645e94bb3c53a673b52cf07ef83e33c"
+      "bytes": 53248,
+      "sha256": "51ad6afdb27af589ded442827c099fb821a98c32417440564b8817fa55e8da56"
     },
     {
       "path": "src/cockpit/runtime/win-x64/PascalCockpit.Views.dll",
-      "bytes": 156672,
-      "sha256": "3c211a184257946b21ece8289462f68173905e575f79757b993ace920fc81db1"
+      "bytes": 160768,
+      "sha256": "a0327d573595206775499128230b94ecd4b2449bc6148e70318a80deb021852b"
     },
     {
       "path": "src/cockpit/runtime/win-x64/PenImc_cor3.dll",
@@ -2458,7 +2473,7 @@
     {
       "path": "src/packaging/TelephonePackaging.Common.ps1",
       "bytes": 22453,
-      "sha256": "71e6f9db1f55fe807c75864d517ac25976d5a0545f22476eaab40f2e62f490b5"
+      "sha256": "8ef15d81e6f5825c5ecf2018455e314e37dc6b89426dc1dd28c815c210c45830"
     },
     {
       "path": "src/packaging/Test-TelephoneOpenSourceReadiness.ps1",
@@ -3046,6 +3061,21 @@
       "sha256": "1f29bdd4bcbfdf4822968ed886c4f8aee021281354a278b2d85e9b8a4a47932a"
     },
     {
+      "path": "tests/dashboard/.gitignore",
+      "bytes": 10,
+      "sha256": "6c5082c7e6de3e350189c67a1aacf757485ecc26e0a3cf96683528565f3e5f12"
+    },
+    {
+      "path": "tests/dashboard/status-fixes/PascalCockpit.StatusFixes.Tests.csproj",
+      "bytes": 1454,
+      "sha256": "1eb518251aabc2158d3d24047605a1d4a99586ab7853bdeee04d7c376b97a493"
+    },
+    {
+      "path": "tests/dashboard/status-fixes/Program.cs",
+      "bytes": 57301,
+      "sha256": "9b061de742d9bec19510d7911f3f5250ff3aaa5fcde68c441175aeb5e03a2f8e"
+    },
+    {
       "path": "tests/dashboard/test_dashboard.ps1",
       "bytes": 221869,
       "sha256": "fd4cbe9eaf3605d6ebe07c4c6261062ef9151caf6627d88a4809fd069b39ec83"
@@ -3092,8 +3122,8 @@
     },
     {
       "path": "tests/packaging/test_packaging.ps1",
-      "bytes": 36581,
-      "sha256": "69cb8a192bf0929d0499c0ccea52cad50645b1a5ec6462e8983dab08ad337b33"
+      "bytes": 36651,
+      "sha256": "df25415716d725c78cf4e23fbcea5165e5ba90518c3577da8473de79f2e566d6"
     },
     {
       "path": "tests/supervisor/fixtures/Invoke-MaintenanceStateRoutingProbe.ps1",
@@ -3127,8 +3157,8 @@
     }
   ],
   "counts": {
-    "files": 619,
-    "bytes": 157578319
+    "files": 625,
+    "bytes": 157719401
   },
   "excluded": [
     ".control/**",

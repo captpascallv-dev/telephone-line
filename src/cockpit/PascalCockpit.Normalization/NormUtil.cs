@@ -150,8 +150,22 @@ internal static class NormUtil
                || a.Equals("acceptance_in_progress", StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Preparing for a later dispatch is a Lead gap, not proof a model is running.
+    /// PREPARED_FOR_DISPATCH and other PREPARED tokens share that gap.
+    /// DISPATCHED / RUNNING / ACTUALLY remain in-flight; the word DISPATCH
+    /// inside "prepared for dispatch" is the intended next act, not a send.
+    /// </summary>
+    public static bool LooksPreparedNotDispatched(string? s) =>
+        !string.IsNullOrWhiteSpace(s)
+        && s.Contains("PREPARED", StringComparison.OrdinalIgnoreCase)
+        && !s.Contains("DISPATCHED", StringComparison.OrdinalIgnoreCase)
+        && !s.Contains("RUNNING", StringComparison.OrdinalIgnoreCase)
+        && !s.Contains("ACTUALLY", StringComparison.OrdinalIgnoreCase);
+
     public static bool LooksInFlightDispatch(string? s) =>
         !string.IsNullOrWhiteSpace(s)
+        && !LooksPreparedNotDispatched(s)
         && (s.Contains("DISPATCH", StringComparison.OrdinalIgnoreCase)
             || s.Contains("GENERATION", StringComparison.OrdinalIgnoreCase)
             || s.Contains("CORRECTION", StringComparison.OrdinalIgnoreCase)
@@ -163,11 +177,22 @@ internal static class NormUtil
         if (string.IsNullOrWhiteSpace(state)) return "unknown";
         if (LooksLeadRepair(state)) return "returned";
         if (LooksPlatformBlock(state) || LooksLeadAccepting(state)) return "returned";
+        if (LooksPreparedNotDispatched(state)) return "unknown";
         if (LooksInFlightDispatch(state)) return "active";
         if (LooksFailed(state) && !LooksPlatformBlock(state)) return "failed";
+        if (LooksWaitingNotInFlight(state)) return "waiting";
         if (LooksCompleted(state)) return "succeeded";
         return "active";
     }
+
+    public static bool LooksWaitingNotInFlight(string? s) =>
+        !string.IsNullOrWhiteSpace(s)
+        && !LooksInFlightDispatch(s)
+        && !LooksLeadAccepting(s)
+        && (s.Contains("WAITING_EXTERNAL", StringComparison.OrdinalIgnoreCase)
+            || (s.Contains("WAITING", StringComparison.OrdinalIgnoreCase)
+                && !s.Contains("DISPATCH", StringComparison.OrdinalIgnoreCase)
+                && !s.Contains("ROUTE_RESULT", StringComparison.OrdinalIgnoreCase)));
 
     public static string? InferDirectRoute(JsonObject data)
     {

@@ -1,5 +1,7 @@
+using System.IO;
 using System.Windows;
 using PascalCockpit.Collection;
+using PascalCockpit.Contracts;
 using PascalCockpit.Normalization;
 using PascalCockpit.Projection;
 
@@ -30,7 +32,10 @@ public partial class App : Application
         var preferences = _prefs.Load();
 
         var probe = new WindowsProcessProbe();
-        var collector = new FileCollector(probe);
+        var frozenPath = config.FrozenCollectionPath;
+        ICollector collector = !string.IsNullOrWhiteSpace(frozenPath) && File.Exists(frozenPath)
+            ? new FrozenCollectionCollector(frozenPath)
+            : new FileCollector(probe);
         var normalizer = new EvidenceNormalizer();
         var projector = new StateProjector();
         _refresh = new RefreshService(collector, normalizer, projector);

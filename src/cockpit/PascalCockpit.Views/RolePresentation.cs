@@ -53,14 +53,18 @@ public static class RolePresentation
     {
         var handling = lead.Axes.LeadHandling ?? "";
         var acceptance = lead.Axes.Acceptance ?? "";
+        var others = siblings ?? Array.Empty<WorkView>();
         if (handling.Equals("blocked_after_acceptance", StringComparison.OrdinalIgnoreCase))
             return "验收后待派出退修";
         if (handling.Equals("callback_wait", StringComparison.OrdinalIgnoreCase))
             return "等待回叫";
         if (handling.Equals("repair_dispatched", StringComparison.OrdinalIgnoreCase))
             return "已派出退修";
-        if (handling.Equals("repair_prepared", StringComparison.OrdinalIgnoreCase))
-            return "验收发现问题，等待退修";
+        if (handling.Equals("repair_prepared", StringComparison.OrdinalIgnoreCase)
+            && !others.Any(o => KindOf(o) == "executor"
+                                && (o.Axes.Execution.Equals("active", StringComparison.OrdinalIgnoreCase)
+                                    || o.Axes.Execution.Equals("running", StringComparison.OrdinalIgnoreCase))))
+            return "正在准备退修，待实际派出";
         if (handling.Equals("lead_accepting", StringComparison.OrdinalIgnoreCase)
             || acceptance.Equals("acceptance_in_progress", StringComparison.OrdinalIgnoreCase))
             return "正在验收";
@@ -72,7 +76,6 @@ public static class RolePresentation
         if (acceptance.Equals("handled_accepted", StringComparison.OrdinalIgnoreCase)
             || StatusLanguage.IsExplicitAccepted(acceptance))
             return "已验收";
-        var others = siblings ?? Array.Empty<WorkView>();
         if (others.Any(o => KindOf(o) == "executor"
                             && (o.Axes.LeadHandling.Equals("lead_accepting", StringComparison.OrdinalIgnoreCase)
                                 || o.Axes.Acceptance.Equals("acceptance_in_progress", StringComparison.OrdinalIgnoreCase))))
@@ -81,8 +84,10 @@ public static class RolePresentation
                             && o.Axes.LeadHandling.Equals("repair_dispatched", StringComparison.OrdinalIgnoreCase)))
             return "已派出退修";
         if (others.Any(o => KindOf(o) == "executor"
-                            && o.Axes.LeadHandling.Equals("repair_prepared", StringComparison.OrdinalIgnoreCase)))
-            return "验收发现问题，等待退修";
+                            && o.Axes.LeadHandling.Equals("repair_prepared", StringComparison.OrdinalIgnoreCase)
+                            && !o.Axes.Execution.Equals("active", StringComparison.OrdinalIgnoreCase)
+                            && !o.Axes.Execution.Equals("running", StringComparison.OrdinalIgnoreCase)))
+            return "正在准备退修，待实际派出";
         if (others.Any(o => KindOf(o) == "executor"
                             && o.Axes.LeadHandling.Equals("dispatch_pending_native", StringComparison.OrdinalIgnoreCase)))
             return "等待回叫";
@@ -92,8 +97,11 @@ public static class RolePresentation
             return "等待执行者交回";
         if (others.Any(o => KindOf(o) == "executor"
                             && (o.Axes.Execution.Equals("returned", StringComparison.OrdinalIgnoreCase)
-                                || o.Axes.Execution.Equals("succeeded", StringComparison.OrdinalIgnoreCase))))
+                                || o.Axes.Execution.Equals("succeeded", StringComparison.OrdinalIgnoreCase))
+                            && !StatusLanguage.IsExplicitAccepted(o.Axes.Acceptance)))
             return "等待负责人处理";
+        if (StatusLanguage.IsConsumerPhrase(lead.Summary))
+            return lead.Summary.Trim();
         if (IsUnknown(handling) && IsUnknown(acceptance)
             && IsUnknown(lead.Axes.Turn) && IsUnknown(lead.Axes.Execution))
             return "未获取";
@@ -105,12 +113,36 @@ public static class RolePresentation
 
     public static string ActorDisplay(WorkView w, UiLang lang)
     {
+        var route = w.Route;
+        if (LooksRouteId(w.ActorName))
+            return RouteEntry(IsUnknown(route) ? w.ActorName! : route!, lang);
         if (!string.IsNullOrWhiteSpace(w.ActorName) && !IsUnknown(w.ActorName))
             return w.ActorName!;
-        if (!string.IsNullOrWhiteSpace(w.Route) && !IsUnknown(w.Route))
-            return w.Route!;
+        if (!string.IsNullOrWhiteSpace(route) && !IsUnknown(route))
+            return RouteEntry(route, lang);
         return Missing(lang);
     }
+
+    static bool LooksRouteId(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || IsUnknown(value)) return false;
+        return value.StartsWith("direct-", StringComparison.OrdinalIgnoreCase)
+               || value.StartsWith("deepsea-", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static string RouteEntry(string route, UiLang lang) =>
+        route.ToLowerInvariant() switch
+        {
+            "direct-cursor" => ConsumerCopy.L(lang, "直达游标", "Direct Cursor"),
+            "direct-grok-cli" => ConsumerCopy.L(lang, "直达格格", "Direct Grok CLI"),
+            "direct-claude-code" => ConsumerCopy.L(lang, "直达 Claude Code", "Direct Claude Code"),
+            "direct-codex-cli" => ConsumerCopy.L(lang, "直达 Codex", "Direct Codex CLI"),
+            "direct-pi" => ConsumerCopy.L(lang, "直达 Pi", "Direct Pi"),
+            "deepsea-codex-cli" => ConsumerCopy.L(lang, "深海 Codex", "DeepSea Codex CLI"),
+            "deepsea-grok-cli" => ConsumerCopy.L(lang, "深海格格", "DeepSea Grok CLI"),
+            "deepsea-v4" => ConsumerCopy.L(lang, "深海 v4", "DeepSea v4"),
+            _ => route
+        };
 
     public static string FieldOrMissing(string? value, UiLang lang) =>
         string.IsNullOrWhiteSpace(value) || IsUnknown(value) ? Missing(lang) : value!;
@@ -121,6 +153,9 @@ public static class RolePresentation
         var status = historical
             ? ConsumerCopy.Localize(StatusLanguage.WorkStatusPhrase(w), lang)
             : WorkStatus(w, lang, siblings);
+        var summary = historical
+            ? ConsumerCopy.Localize(StatusLanguage.WorkStatusPhrase(w), lang)
+            : status;
         var blocker = FieldOrMissing(w.Blocker, lang);
         if (string.Equals(blocker, Missing(lang), StringComparison.Ordinal)
             && status.Contains("失败", StringComparison.Ordinal))
@@ -145,7 +180,7 @@ public static class RolePresentation
             status,
             string.Equals(blocker, Missing(lang), StringComparison.Ordinal) ? string.Empty : blocker,
             w.Route,
-            ConsumerCopy.Localize(StatusLanguage.WorkStatusPhrase(w), lang),
+            summary,
             string.Empty,
             qualityLabel,
             historical,
